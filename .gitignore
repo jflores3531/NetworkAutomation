@@ -4,5 +4,8 @@ __pycache__/
 
 backups/
 
+# Ad-hoc command files passed to push_config.py
+commands*.txt
+
 .idea/
 .claude/
