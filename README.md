@@ -4,7 +4,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 
 ## What's here
 
-- **`netauto.py`** — Shared helpers: loads the device inventory from `inventory.yaml` and opens a Netmiko SSH connection with error handling for auth failures, timeouts, and unreachable hosts.
+- **`netauto.py`** — Shared helpers: loads the device inventory from `inventory.yaml`, validates device names, prompts for SSH credentials, and opens a Netmiko SSH connection with error handling for auth failures, timeouts, and unreachable hosts.
 - **`show_command.py`** — Run a show command against one or more devices from the inventory.
 - **`config_loopback.py`** — Create or update a loopback interface on a device from the inventory.
 - **`backup_config.py`** — Back up the running-config for one device (or all devices) in the inventory. Saves a "latest" copy per device plus a timestamped archive, pruned to the 5 most recent per device.
