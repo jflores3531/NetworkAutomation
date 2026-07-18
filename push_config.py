@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+"""Push a set of config commands from a file to one or more devices from inventory.yaml."""
 
 import argparse
 import netauto

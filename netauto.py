@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+"""Shared helpers for connecting to devices in inventory.yaml: inventory loading,
+device-name validation, credential prompting, and Netmiko SSH connection handling."""
 
 from getpass import getpass
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+"""Back up the running-config for one device (or all devices) in inventory.yaml,
+keeping a "latest" copy per device plus a pruned, timestamped archive."""
 
 import argparse
 import glob

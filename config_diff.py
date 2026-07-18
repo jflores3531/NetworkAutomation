@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+"""Compare a device's current running-config against its last backup_config.py backup."""
 
 import argparse
 import difflib
@@ -53,4 +54,4 @@ diff = list(difflib.unified_diff(
 if diff:
     print('\n'.join(diff))
 else:
-    print(f'No differences — {device_name} matches its last backup ({backup_path}).')
+    print(f'No differences - {device_name} matches its last backup ({backup_path}).')
