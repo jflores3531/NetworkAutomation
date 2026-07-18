@@ -8,7 +8,6 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`show_command.py`** — Run a show command against one or more devices from the inventory.
 - **`config_loopback.py`** — Create or update a loopback interface on a device from the inventory.
 - **`backup_config.py`** — Back up the running-config for one device (or all devices) in the inventory. Saves a "latest" copy per device plus a timestamped archive, pruned to the 5 most recent per device.
-- **`SSH.py`** — Standalone script that pushes a batch of config commands (from `commands_file`) to a list of devices (from a `devices_file`, not included) over SSH.
 - **`inventory.yaml`** — Device inventory (name, host, device_type) used by `netauto.py`. No credentials are stored here — username/password are always prompted at runtime.
 
 ## Requirements
