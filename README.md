@@ -20,7 +20,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`config_diff.py`** — Compare a device's current running-config and VLANs against its last `backup_config.py` backup and print a unified diff, to catch drift or unexpected changes.
 - **`L2_stig_audit.py`** — Audit a device's running-config against the DISA Cisco IOS Switch L2S/NDM STIG rules in `New Layer 2 switch Checklist.cklb`, reporting PASS/FAIL for rules checkable from config text alone (rules needing external infrastructure or manual review are reported as NOT AUTOMATED).
 - **`NXOS_stig_audit.py`** — Same as `L2_stig_audit.py`, but for the DISA Cisco NX-OS Switch L2S/NDM STIG rules in `New NXOS Checklist.cklb`.
-- **`Router_stig_audit.py`** — Same as `L2_stig_audit.py`, but for the DISA Cisco IOS Router NDM/RTR STIG rules in `New IOS Router Checklist.cklb`. Most RTR rules describe perimeter/BGP/MPLS/multicast topology and policy decisions that can't be verified from a single device's config, so the majority are reported as NOT AUTOMATED.
+- **`IOS_Router_audit.py`** — Same as `L2_stig_audit.py`, but for the DISA Cisco IOS Router NDM/RTR STIG rules in `New IOS Router Checklist.cklb`. Most RTR rules describe perimeter/BGP/MPLS/multicast topology and policy decisions that can't be verified from a single device's config, so the majority are reported as NOT AUTOMATED.
 
 ## Requirements
 
@@ -61,7 +61,7 @@ python3 L2_stig_audit.py R1
 python3 NXOS_stig_audit.py NXCore1
 
 # Audit a device against the DISA STIG checklist (IOS routers)
-python3 Router_stig_audit.py R1
+python3 IOS_Router_audit.py R1
 ```
 
 ## Notes
