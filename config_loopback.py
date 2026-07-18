@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+"""Create or update a loopback interface on a device from inventory.yaml."""
 
 import argparse
 import netauto

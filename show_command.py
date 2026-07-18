@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+"""Run a show command against one or more devices from inventory.yaml."""
 
 import argparse
 import netauto
