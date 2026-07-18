@@ -26,8 +26,10 @@ if not os.path.exists(backup_path):
 
 with open(backup_path) as f:
     # Drop the 3-line header backup_config.py adds (hostname/IP/timestamp) so it
-    # doesn't show up as noise in every diff
-    backup_lines = f.readlines()[3:]
+    # doesn't show up as noise in every diff. Rebuilt the same way current_lines
+    # is below, so a missing trailing newline on the last line of the file
+    # doesn't show up as a false diff.
+    backup_lines = [line + '\n' for line in f.read().splitlines()[3:]]
 
 # Prompt for credentials
 username, password = netauto.get_credentials()
