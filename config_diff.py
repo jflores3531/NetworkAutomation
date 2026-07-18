@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Compare a device's current running-config and VLANs against its last backup_config.py backup."""
+"""Compare a device's current running-config (plus VLANs) against its last backup_config.py backup."""
 
 import argparse
 import difflib
@@ -18,20 +18,16 @@ all_devices = netauto.load_inventory()
 device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 ip_address_of_device = device_info['host']
 
+# Find the last backup taken for this device (written by backup_config.py)
+backup_path = os.path.join('backups', f'{device_name}_{ip_address_of_device}.cfg')
+if not os.path.exists(backup_path):
+    print(f'No existing backup found at {backup_path} - run backup_config.py first.')
+    raise SystemExit(1)
 
-def load_backup(label):
-    """Read a backup file written by backup_config.py, stripping its 3-line header
-    (hostname/IP/timestamp) so it doesn't show up as noise in every diff."""
-    backup_path = os.path.join('backups', f'{device_name}_{ip_address_of_device}{label}.cfg')
-    if not os.path.exists(backup_path):
-        print(f'No existing backup found at {backup_path} - run backup_config.py first.')
-        raise SystemExit(1)
-    with open(backup_path) as f:
-        return backup_path, f.readlines()[3:]
-
-
-running_backup_path, running_backup_lines = load_backup('')
-vlan_backup_path, vlan_backup_lines = load_backup('_vlans')
+with open(backup_path) as f:
+    # Drop the 3-line header backup_config.py adds (hostname/IP/timestamp) so it
+    # doesn't show up as noise in every diff
+    backup_lines = f.readlines()[3:]
 
 # Prompt for credentials
 username, password = netauto.get_credentials()
@@ -42,28 +38,22 @@ if net_connect is None:
     raise SystemExit(1)
 
 # Pull the current running config and VLANs, then close the session
-current_running = str(net_connect.send_command('show running-config'))
-current_vlans = str(net_connect.send_command('show vlan brief'))
+running_config = str(net_connect.send_command('show running-config'))
+vlan_brief = str(net_connect.send_command('show vlan brief'))
 net_connect.disconnect()
 
+current_output = running_config + '\n! --- show vlan brief ---\n' + vlan_brief
+current_lines = [line + '\n' for line in current_output.splitlines()]
 
-def print_diff(label, backup_path, backup_lines, current_output):
-    current_lines = [line + '\n' for line in current_output.splitlines()]
-    diff = list(difflib.unified_diff(
-        backup_lines,
-        current_lines,
-        fromfile=backup_path,
-        tofile=f'{device_name} current {label}',
-        lineterm=''
-    ))
+diff = list(difflib.unified_diff(
+    backup_lines,
+    current_lines,
+    fromfile=backup_path,
+    tofile=f'{device_name} current running-config',
+    lineterm=''
+))
 
-    print(f'=== {label} ===')
-    if diff:
-        print('\n'.join(diff))
-    else:
-        print(f'No differences - {device_name} matches its last backup ({backup_path}).')
-    print()
-
-
-print_diff('running-config', running_backup_path, running_backup_lines, current_running)
-print_diff('vlan brief', vlan_backup_path, vlan_backup_lines, current_vlans)
+if diff:
+    print('\n'.join(diff))
+else:
+    print(f'No differences - {device_name} matches its last backup ({backup_path}).')

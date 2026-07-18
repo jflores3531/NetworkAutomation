@@ -8,8 +8,8 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`show_command.py`** — Run a show command against one or more devices from the inventory.
 - **`config_loopback.py`** — Create or update a loopback interface on a device from the inventory.
 - **`push_config.py`** — Push a set of config commands (one per line, from a file) to one or more devices from the inventory.
-- **`backup_config.py`** — Back up the running-config and VLANs (`show vlan brief`) for one device (or all devices) in the inventory. Saves a "latest" copy per device plus a timestamped archive, pruned to the 5 most recent per device.
-- **`config_diff.py`** — Compare a device's current running-config and VLANs against its last `backup_config.py` backup and print a unified diff for each, to catch drift or unexpected changes. Note: VLANs created via `vlan <id>` often live in the VLAN database rather than the running-config text, which is why they're diffed separately via `show vlan brief`.
+- **`backup_config.py`** — Back up the running-config for one device (or all devices) in the inventory, including VLANs (`show vlan brief`, appended to the same backup since VLANs created via `vlan <id>` often live in the VLAN database rather than the running-config text). Saves a "latest" copy per device plus a timestamped archive, pruned to the 5 most recent per device.
+- **`config_diff.py`** — Compare a device's current running-config and VLANs against its last `backup_config.py` backup and print a unified diff, to catch drift or unexpected changes.
 - **`inventory.yaml`** — Device inventory (name, host, device_type) used by `netauto.py`. No credentials are stored here — username/password are always prompted at runtime.
 
 ## Requirements
@@ -48,4 +48,4 @@ python config_diff.py R1
 ## Notes
 
 - Devices are defined in `inventory.yaml` by name, host, and Netmiko `device_type` (e.g. `cisco_ios`, `cisco_nxos`).
-- Backups are written to `backups/`, with dated copies kept in `backups/archive/`.
+- Backups (running-config + VLANs) are written to `backups/`, with dated copies kept in `backups/archive/`.
