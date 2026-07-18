@@ -7,7 +7,7 @@ import netauto
 # Parse the show command and target device(s) from the command line
 parser = argparse.ArgumentParser(description='Run a show command against one or more devices from inventory.yaml')
 parser.add_argument('command', help='Show command to run (e.g. "show ip interface brief")')
-parser.add_argument('devices', nargs='*', help='Device name(s) as they appear in inventory.yaml (e.g. R1 R2). Omit to run against all devices.')
+parser.add_argument('devices', nargs='+', help='Device name(s) as they appear in inventory.yaml (e.g. R1 R2)')
 args = parser.parse_args()
 
 # Prompt for credentials used against every device
@@ -16,14 +16,11 @@ password = getpass()
 
 # Load target devices from the YAML inventory (name -> {host, device_type})
 all_devices = netauto.load_inventory()
-if args.devices:
-    unknown = [name for name in args.devices if name not in all_devices]
-    if unknown:
-        print(f'Device(s) not found in inventory.yaml: {", ".join(unknown)}')
-        raise SystemExit(1)
-    devices_list = {name: all_devices[name] for name in args.devices}
-else:
-    devices_list = all_devices
+unknown = [name for name in args.devices if name not in all_devices]
+if unknown:
+    print(f'Device(s) not found in inventory.yaml: {", ".join(unknown)}')
+    raise SystemExit(1)
+devices_list = {name: all_devices[name] for name in args.devices}
 
 for device_name, device_info in devices_list.items():
     # Connect, skipping to the next device if it fails
