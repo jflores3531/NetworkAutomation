@@ -19,6 +19,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`backup_config.py`** — Back up the running-config for one device (or all devices) in the inventory, including VLANs (`show vlan brief`, appended to the same backup since VLANs created via `vlan <id>` often live in the VLAN database rather than the running-config text). Saves a "latest" copy per device plus a timestamped archive, pruned to the 5 most recent per device.
 - **`config_diff.py`** — Compare a device's current running-config and VLANs against its last `backup_config.py` backup and print a unified diff, to catch drift or unexpected changes.
 - **`L2_stig_audit.py`** — Audit a device's running-config against the DISA Cisco IOS Switch L2S/NDM STIG rules in `New Layer 2 switch Checklist.cklb`, reporting PASS/FAIL for rules checkable from config text alone (rules needing external infrastructure or manual review are reported as NOT AUTOMATED).
+- **`NXOS_stig_audit.py`** — Same as `L2_stig_audit.py`, but for the DISA Cisco NX-OS Switch L2S/NDM STIG rules in `New NXOS Checklist.cklb`.
 
 ## Requirements
 
@@ -52,8 +53,11 @@ python3 backup_config.py
 # Diff a device's current running-config against its last backup
 python3 config_diff.py R1
 
-# Audit a device against the DISA STIG checklist
+# Audit a device against the DISA STIG checklist (IOS switches)
 python3 L2_stig_audit.py R1
+
+# Audit a device against the DISA STIG checklist (NX-OS switches)
+python3 NXOS_stig_audit.py NXCore1
 ```
 
 ## Notes
