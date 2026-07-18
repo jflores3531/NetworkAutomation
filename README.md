@@ -5,7 +5,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 ## What's here
 
 - **`netauto.py`** — Shared helpers: loads the device inventory from `inventory.yaml` and opens a Netmiko SSH connection with error handling for auth failures, timeouts, and unreachable hosts.
-- **`show_command.py`** — Run a single show command against one device from the inventory.
+- **`show_command.py`** — Run a show command against one, several, or all devices in the inventory.
 - **`config_loopback.py`** — Create or update a loopback interface on a device from the inventory.
 - **`backup_config.py`** — Back up the running-config for one device (or all devices) in the inventory. Saves a "latest" copy per device plus a timestamped archive, pruned to the 5 most recent per device.
 - **`SSH.py`** — Standalone script that pushes a batch of config commands (from `commands_file`) to a list of devices (from a `devices_file`, not included) over SSH.
@@ -22,8 +22,14 @@ pip install -r requirements.txt
 Each script prompts for your SSH username and password (via `getpass`, so the password isn't echoed or stored).
 
 ```bash
-# Run a show command against a device defined in inventory.yaml
-python show_command.py R1 "show ip interface brief"
+# Run a show command against one device
+python show_command.py "show ip interface brief" R1
+
+# Run a show command against several devices
+python show_command.py "show ip interface brief" R1 R2 S1
+
+# Run a show command against every device in the inventory
+python show_command.py "show ip interface brief"
 
 # Configure a loopback interface with parameters to select the device you want to configure
 python config_loopback.py R1 1.1.1.1 255.255.255.255 --interface 0
