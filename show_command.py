@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import argparse
-from getpass import getpass
 import netauto
 
 # Parse the show command and target device(s) from the command line
@@ -11,16 +10,11 @@ parser.add_argument('devices', nargs='+', help='Device name(s) as they appear in
 args = parser.parse_args()
 
 # Prompt for credentials used against every device
-username = input('Enter your SSH username: ')
-password = getpass()
+username, password = netauto.get_credentials()
 
 # Load target devices from the YAML inventory (name -> {host, device_type})
 all_devices = netauto.load_inventory()
-unknown = [name for name in args.devices if name not in all_devices]
-if unknown:
-    print(f'Device(s) not found in inventory.yaml: {", ".join(unknown)}')
-    raise SystemExit(1)
-devices_list = {name: all_devices[name] for name in args.devices}
+devices_list = netauto.require_devices(all_devices, args.devices)
 
 for device_name, device_info in devices_list.items():
     # Connect, skipping to the next device if it fails

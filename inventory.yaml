@@ -5,8 +5,8 @@
 #   cisco_nxos -> NXCore1, NXCore2 (NX-OS)
 #
 # NOTE: No credentials live in this file on purpose.
-# Usernames/passwords are pulled from environment variables at runtime
-# by pull_configs.py (see NET_USERNAME / NET_PASSWORD / NET_SECRET below).
+# Usernames/passwords are prompted for interactively at runtime
+# (see netauto.get_credentials()).
 # This file only defines WHICH devices exist and HOW to reach them.
 
 devices:

@@ -4,7 +4,6 @@ import argparse
 import glob
 import os
 from datetime import datetime
-from getpass import getpass
 import netauto
 
 # Optional device name to back up just one device; omit to back up all of them
@@ -13,16 +12,12 @@ parser.add_argument('device', nargs='?', default=None, help='Device name as it a
 args = parser.parse_args()
 
 # Prompt for credentials used against every device being backed up
-username = input('Enter your SSH username: ')
-password = getpass()
+username, password = netauto.get_credentials()
 
 # Load target devices from the YAML inventory (name -> {host, device_type})
 all_devices = netauto.load_inventory()
 if args.device:
-    if args.device not in all_devices:
-        print(f'Device "{args.device}" not found in inventory.yaml')
-        raise SystemExit(1)
-    devices_list = {args.device: all_devices[args.device]}
+    devices_list = netauto.require_devices(all_devices, [args.device])
 else:
     devices_list = all_devices
 
