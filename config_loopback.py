@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import argparse
-from getpass import getpass
 import netauto
 
 # Parse the target device and loopback config from the command line
@@ -19,12 +18,11 @@ commands = [
 ]
 
 # Prompt for credentials
-username = input('Enter your SSH username: ')
-password = getpass()
+username, password = netauto.get_credentials()
 
 # Load the target device from the YAML inventory
 devices = netauto.load_inventory()
-device_info = devices[device_name]
+device_info = netauto.require_devices(devices, [device_name])[device_name]
 
 # Connect, bailing out if it fails
 net_connect = netauto.connect(device_name, device_info, username, password)
