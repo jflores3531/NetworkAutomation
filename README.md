@@ -24,25 +24,25 @@ Each script prompts for your SSH username and password (via `getpass`, so the pa
 
 ```bash
 # Run a show command against one device
-python show_command.py "show ip interface brief" R1
+python3 show_command.py "show ip interface brief" R1
 
 # Run a show command against several devices
-python show_command.py "show ip interface brief" R1 R2 S1
+python3 show_command.py "show ip interface brief" R1 R2 S1
 
 # Configure a loopback interface with parameters to select the device you want to configure
-python config_loopback.py R1 1.1.1.1 255.255.255.255 --interface 0
+python3 config_loopback.py R1 1.1.1.1 255.255.255.255 --interface 0
 
 # Push a set of config commands (one per line in commands.txt) to one or more devices
-python push_config.py commands.txt R1 R2
+python3 push_config.py commands.txt R1 R2
 
 # Back up one device's running-config
-python backup_config.py R1
+python3 backup_config.py R1
 
 # Back up every device in the inventory
-python backup_config.py
+python3 backup_config.py
 
 # Diff a device's current running-config against its last backup
-python config_diff.py R1
+python3 config_diff.py R1
 ```
 
 ## Notes
