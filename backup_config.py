@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-"""Back up the running-config for one device (or all devices) in inventory.yaml,
-keeping a "latest" copy per device plus a pruned, timestamped archive."""
+"""Back up the running-config and VLANs for one device (or all devices) in
+inventory.yaml, keeping a "latest" copy per device plus a pruned, timestamped archive."""
 
 import argparse
 import glob
@@ -39,9 +39,10 @@ for device_name, device_info in devices_list.items():
     if net_connect is None:
         continue
 
-    # Pull the running config and close the session
+    # Pull the running config and VLANs, then close the session
     hostname = net_connect.base_prompt
-    output = str(net_connect.send_command('show running-config'))
+    running_config = str(net_connect.send_command('show running-config'))
+    vlan_brief = str(net_connect.send_command('show vlan brief'))
     net_connect.disconnect()
 
     # Header noting hostname, IP, and when the backup was taken
@@ -51,18 +52,22 @@ for device_name, device_info in devices_list.items():
         f'! Backup Date/Time: {run_time.strftime("%Y-%m-%d %H:%M:%S")}\n'
     )
 
-    # Write the "latest" backup to disk, named by inventory name/IP so reruns overwrite in place
-    filename = os.path.join(backup_dir, f'{device_name}_{ip_address_of_device}.cfg')
-    with open(filename, 'w') as backup_file:
-        backup_file.write(header + output)
-    print('Saved backup to ' + filename)
+    def save_backup(label, content):
+        """Write a "latest" backup file and a pruned, timestamped archive copy for one config source."""
+        filename = os.path.join(backup_dir, f'{device_name}_{ip_address_of_device}{label}.cfg')
+        with open(filename, 'w') as backup_file:
+            backup_file.write(header + content)
+        print('Saved backup to ' + filename)
 
-    # Also keep a dated archive copy, pruned to the N most recent per device
-    archive_glob = os.path.join(archive_dir, f'{device_name}_{ip_address_of_device}_*.cfg')
-    archive_filename = os.path.join(archive_dir, f'{device_name}_{ip_address_of_device}_{timestamp}.cfg')
-    with open(archive_filename, 'w') as archive_file:
-        archive_file.write(header + output)
+        archive_glob = os.path.join(archive_dir, f'{device_name}_{ip_address_of_device}{label}_*.cfg')
+        archive_filename = os.path.join(archive_dir, f'{device_name}_{ip_address_of_device}{label}_{timestamp}.cfg')
+        with open(archive_filename, 'w') as archive_file:
+            archive_file.write(header + content)
 
-    device_archives = sorted(glob.glob(archive_glob))
-    for old_archive in device_archives[:-max_archives_per_device]:
-        os.remove(old_archive)
+        device_archives = sorted(glob.glob(archive_glob))
+        for old_archive in device_archives[:-max_archives_per_device]:
+            os.remove(old_archive)
+
+    # Running-config keeps its original filename for backward compatibility; VLANs get a "_vlans" suffix
+    save_backup('', running_config)
+    save_backup('_vlans', vlan_brief)
