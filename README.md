@@ -9,6 +9,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`config_loopback.py`** — Create or update a loopback interface on a device from the inventory.
 - **`push_config.py`** — Push a set of config commands (one per line, from a file) to one or more devices from the inventory.
 - **`backup_config.py`** — Back up the running-config for one device (or all devices) in the inventory. Saves a "latest" copy per device plus a timestamped archive, pruned to the 5 most recent per device.
+- **`config_diff.py`** — Compare a device's current running-config against its last `backup_config.py` backup and print a unified diff, to catch drift or unexpected changes.
 - **`inventory.yaml`** — Device inventory (name, host, device_type) used by `netauto.py`. No credentials are stored here — username/password are always prompted at runtime.
 
 ## Requirements
@@ -39,6 +40,9 @@ python backup_config.py R1
 
 # Back up every device in the inventory
 python backup_config.py
+
+# Diff a device's current running-config against its last backup
+python config_diff.py R1
 ```
 
 ## Notes
