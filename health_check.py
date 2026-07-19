@@ -6,7 +6,8 @@ For each device, reports:
   - Interface health  — any interfaces that are down but NOT admin-down?
   - Error counters    — any nonzero input/CRC errors on any interface?
   - CPU utilization   — flagged if over 80% (IOS) or 85% (NX-OS)
-  - Optical power     — any fiber transceiver with low Rx power?
+  - Optical health    — any fiber transceiver with temp/voltage/Tx/Rx power
+                        outside warning range?
   - Default route     — present on IOS routers? (skipped for switches/NX-OS)
 
 Usage:
@@ -26,11 +27,18 @@ import netauto
 CPU_WARN_IOS = 80
 CPU_WARN_NXOS = 85
 
-# Rx power threshold (dBm) below which an IOS transceiver is flagged as unhealthy.
-# IOS's "transceiver detail" output doesn't include per-optic thresholds, so this
-# is a conservative generic floor. NX-OS is checked against each optic's own
-# low-warning threshold instead, since NX-OS reports it directly.
-RX_POWER_WARN_DBM = -15.0
+# Generic transceiver DOM warning thresholds used for IOS, whose "transceiver
+# detail" output has no per-optic thresholds (typical SFP/SFP+ DDM defaults).
+# NX-OS is checked against each optic's own warning thresholds instead, since
+# NX-OS reports them directly.
+TEMP_LOW_WARN_C = 0.0
+TEMP_HIGH_WARN_C = 70.0
+VOLTAGE_LOW_WARN_V = 3.13
+VOLTAGE_HIGH_WARN_V = 3.46
+TX_POWER_LOW_WARN_DBM = -9.0
+TX_POWER_HIGH_WARN_DBM = 1.0
+RX_POWER_LOW_WARN_DBM = -15.0
+RX_POWER_HIGH_WARN_DBM = 1.0
 
 # Device names that should have a default route (routers, not switches)
 IOS_ROUTER_NAMES = {'R1', 'R2'}  # add more router names here as your lab grows
@@ -47,7 +55,7 @@ def check_ios(device_name, net_connect):
         'error_interfaces': [],
         'cpu_pct': None,
         'cpu_flagged': False,
-        'optical_low_power': [],
+        'optical_alerts': [],
         'default_route': None,
     }
 
@@ -87,7 +95,7 @@ def check_ios(device_name, net_connect):
         findings['cpu_pct'] = int(cpu_match.group(1))
         findings['cpu_flagged'] = findings['cpu_pct'] > CPU_WARN_IOS
 
-    # --- Optical power: flag transceivers with Rx power below RX_POWER_WARN_DBM ---
+    # --- Optical: flag transceivers with temp/voltage/Tx/Rx outside generic warning bounds ---
     transceiver_output = net_connect.send_command('show interfaces transceiver detail')
     for line in transceiver_output.splitlines():
         optics_match = re.match(
@@ -95,10 +103,23 @@ def check_ios(device_name, net_connect):
         )
         if not optics_match:
             continue
-        iface, _temp, _voltage, _tx_power, rx_power = optics_match.groups()
-        rx_power = float(rx_power)
-        if rx_power < RX_POWER_WARN_DBM:
-            findings['optical_low_power'].append(f'{iface} (Rx: {rx_power} dBm)')
+        iface, temp, voltage, tx_power, rx_power = optics_match.groups()
+        temp, voltage, tx_power, rx_power = (
+            float(temp), float(voltage), float(tx_power), float(rx_power)
+        )
+
+        alerts = []
+        if temp < TEMP_LOW_WARN_C or temp > TEMP_HIGH_WARN_C:
+            alerts.append(f'temp: {temp}C')
+        if voltage < VOLTAGE_LOW_WARN_V or voltage > VOLTAGE_HIGH_WARN_V:
+            alerts.append(f'voltage: {voltage}V')
+        if tx_power < TX_POWER_LOW_WARN_DBM or tx_power > TX_POWER_HIGH_WARN_DBM:
+            alerts.append(f'Tx power: {tx_power}dBm')
+        if rx_power < RX_POWER_LOW_WARN_DBM or rx_power > RX_POWER_HIGH_WARN_DBM:
+            alerts.append(f'Rx power: {rx_power}dBm')
+
+        if alerts:
+            findings['optical_alerts'].append(f"{iface} ({', '.join(alerts)})")
 
     # --- Default route (routers only) ---
     if device_name in IOS_ROUTER_NAMES:
@@ -117,7 +138,7 @@ def check_nxos(device_name, net_connect):
         'error_interfaces': [],
         'cpu_pct': None,
         'cpu_flagged': False,
-        'optical_low_power': [],
+        'optical_alerts': [],
         'default_route': None,  # not checked for NX-OS switches
     }
 
@@ -158,27 +179,42 @@ def check_nxos(device_name, net_connect):
         findings['cpu_pct'] = int(cpu_match.group(1))
         findings['cpu_flagged'] = findings['cpu_pct'] > CPU_WARN_NXOS
 
-    # --- Optical power: flag transceivers with Rx power at/below their own low-warning threshold ---
+    # --- Optical: flag transceivers with temp/voltage/Tx/Rx outside their own
+    # device-reported warning thresholds. Each metric line under a "SFP Detail
+    # Diagnostics" block is: Current Measurement, High Alarm, Low Alarm,
+    # High Warning, Low Warning (units vary by metric, e.g. C, V, dBm). ---
+    metric_labels = {'Temperature': 'C', 'Voltage': 'V', 'Tx Power': 'dBm', 'Rx Power': 'dBm'}
     transceiver_output = net_connect.send_command('show interface transceiver details')
     current_iface = None
+    current_alerts = []
+
+    def flush():
+        if current_iface and current_alerts:
+            findings['optical_alerts'].append(f"{current_iface} ({', '.join(current_alerts)})")
+
     for line in transceiver_output.splitlines():
         iface_match = re.match(r'^(Eth\S+|mgmt\S+|Po\S+)', line)
         if iface_match:
+            flush()
             current_iface = iface_match.group(1)
+            current_alerts = []
             continue
-        rx_match = re.search(
-            r'Rx Power\s+(-?[\d.]+)\s*dBm\s+(-?[\d.]+)\s*dBm\s+(-?[\d.]+)\s*dBm\s+'
-            r'(-?[\d.]+)\s*dBm\s+(-?[\d.]+)\s*dBm',
+
+        metric_match = re.match(
+            r'\s*(Temperature|Voltage|Tx Power|Rx Power)\s+(-?[\d.]+)\s*\S*\s+'
+            r'(-?[\d.]+)\s*\S*\s+(-?[\d.]+)\s*\S*\s+(-?[\d.]+)\s*\S*\s+(-?[\d.]+)\s*\S*\s*$',
             line
         )
-        if rx_match and current_iface:
-            rx_current = float(rx_match.group(1))
-            low_warn = float(rx_match.group(5))
-            if rx_current <= low_warn:
-                findings['optical_low_power'].append(
-                    f'{current_iface} (Rx: {rx_current} dBm, low warn: {low_warn} dBm)'
+        if metric_match and current_iface:
+            label, current, _alarm_high, _alarm_low, warn_high, warn_low = metric_match.groups()
+            current, warn_high, warn_low = float(current), float(warn_high), float(warn_low)
+            if current >= warn_high or current <= warn_low:
+                unit = metric_labels[label]
+                current_alerts.append(
+                    f'{label}: {current}{unit} (warn range {warn_low}{unit} to {warn_high}{unit})'
                 )
-            current_iface = None
+
+    flush()
 
     return findings
 
@@ -209,8 +245,8 @@ def print_report(results):
                 flags.append(f"errors on: {', '.join(findings['error_interfaces'])}")
             if findings['cpu_flagged']:
                 flags.append(f"CPU: {findings['cpu_pct']}%")
-            if findings['optical_low_power']:
-                flags.append(f"low optical power: {', '.join(findings['optical_low_power'])}")
+            if findings['optical_alerts']:
+                flags.append(f"optical alerts: {', '.join(findings['optical_alerts'])}")
             if findings.get('default_route') is False:
                 flags.append('default route MISSING')
 
@@ -235,9 +271,9 @@ def print_report(results):
                 print(f'  Interfaces with errors:')
                 for iface in findings['error_interfaces']:
                     print(f'    - {iface}')
-            if findings['optical_low_power']:
-                print(f'  Transceivers with low Rx power:')
-                for iface in findings['optical_low_power']:
+            if findings['optical_alerts']:
+                print(f'  Transceiver alerts:')
+                for iface in findings['optical_alerts']:
                     print(f'    - {iface}')
             if findings.get('default_route') is False:
                 print(f'  WARNING: Default route not found in routing table')
