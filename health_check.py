@@ -6,6 +6,7 @@ For each device, reports:
   - Interface health  — any interfaces that are down but NOT admin-down?
   - Error counters    — any nonzero input/CRC errors on any interface?
   - CPU utilization   — flagged if over 80% (IOS) or 85% (NX-OS)
+  - Optical power     — any fiber transceiver with low Rx power?
   - Default route     — present on IOS routers? (skipped for switches/NX-OS)
 
 Usage:
@@ -25,6 +26,12 @@ import netauto
 CPU_WARN_IOS = 80
 CPU_WARN_NXOS = 85
 
+# Rx power threshold (dBm) below which an IOS transceiver is flagged as unhealthy.
+# IOS's "transceiver detail" output doesn't include per-optic thresholds, so this
+# is a conservative generic floor. NX-OS is checked against each optic's own
+# low-warning threshold instead, since NX-OS reports it directly.
+RX_POWER_WARN_DBM = -15.0
+
 # Device names that should have a default route (routers, not switches)
 IOS_ROUTER_NAMES = {'R1', 'R2'}  # add more router names here as your lab grows
 
@@ -40,6 +47,7 @@ def check_ios(device_name, net_connect):
         'error_interfaces': [],
         'cpu_pct': None,
         'cpu_flagged': False,
+        'optical_low_power': [],
         'default_route': None,
     }
 
@@ -79,6 +87,19 @@ def check_ios(device_name, net_connect):
         findings['cpu_pct'] = int(cpu_match.group(1))
         findings['cpu_flagged'] = findings['cpu_pct'] > CPU_WARN_IOS
 
+    # --- Optical power: flag transceivers with Rx power below RX_POWER_WARN_DBM ---
+    transceiver_output = net_connect.send_command('show interfaces transceiver detail')
+    for line in transceiver_output.splitlines():
+        optics_match = re.match(
+            r'^(\S+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*$', line
+        )
+        if not optics_match:
+            continue
+        iface, _temp, _voltage, _tx_power, rx_power = optics_match.groups()
+        rx_power = float(rx_power)
+        if rx_power < RX_POWER_WARN_DBM:
+            findings['optical_low_power'].append(f'{iface} (Rx: {rx_power} dBm)')
+
     # --- Default route (routers only) ---
     if device_name in IOS_ROUTER_NAMES:
         route_output = net_connect.send_command('show ip route 0.0.0.0')
@@ -96,6 +117,7 @@ def check_nxos(device_name, net_connect):
         'error_interfaces': [],
         'cpu_pct': None,
         'cpu_flagged': False,
+        'optical_low_power': [],
         'default_route': None,  # not checked for NX-OS switches
     }
 
@@ -136,6 +158,28 @@ def check_nxos(device_name, net_connect):
         findings['cpu_pct'] = int(cpu_match.group(1))
         findings['cpu_flagged'] = findings['cpu_pct'] > CPU_WARN_NXOS
 
+    # --- Optical power: flag transceivers with Rx power at/below their own low-warning threshold ---
+    transceiver_output = net_connect.send_command('show interface transceiver details')
+    current_iface = None
+    for line in transceiver_output.splitlines():
+        iface_match = re.match(r'^(Eth\S+|mgmt\S+|Po\S+)', line)
+        if iface_match:
+            current_iface = iface_match.group(1)
+            continue
+        rx_match = re.search(
+            r'Rx Power\s+(-?[\d.]+)\s*dBm\s+(-?[\d.]+)\s*dBm\s+(-?[\d.]+)\s*dBm\s+'
+            r'(-?[\d.]+)\s*dBm\s+(-?[\d.]+)\s*dBm',
+            line
+        )
+        if rx_match and current_iface:
+            rx_current = float(rx_match.group(1))
+            low_warn = float(rx_match.group(5))
+            if rx_current <= low_warn:
+                findings['optical_low_power'].append(
+                    f'{current_iface} (Rx: {rx_current} dBm, low warn: {low_warn} dBm)'
+                )
+            current_iface = None
+
     return findings
 
 
@@ -165,6 +209,8 @@ def print_report(results):
                 flags.append(f"errors on: {', '.join(findings['error_interfaces'])}")
             if findings['cpu_flagged']:
                 flags.append(f"CPU: {findings['cpu_pct']}%")
+            if findings['optical_low_power']:
+                flags.append(f"low optical power: {', '.join(findings['optical_low_power'])}")
             if findings.get('default_route') is False:
                 flags.append('default route MISSING')
 
@@ -188,6 +234,10 @@ def print_report(results):
             if findings['error_interfaces']:
                 print(f'  Interfaces with errors:')
                 for iface in findings['error_interfaces']:
+                    print(f'    - {iface}')
+            if findings['optical_low_power']:
+                print(f'  Transceivers with low Rx power:')
+                for iface in findings['optical_low_power']:
                     print(f'    - {iface}')
             if findings.get('default_route') is False:
                 print(f'  WARNING: Default route not found in routing table')
