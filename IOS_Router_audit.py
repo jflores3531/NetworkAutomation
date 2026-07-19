@@ -6,6 +6,7 @@ rules that can be checked from config text alone."""
 import argparse
 import re
 import netauto
+import stig_common
 
 CHECKLIST_PATH = 'New IOS Router Checklist.cklb'
 
@@ -57,7 +58,7 @@ device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 # Prompt for credentials
 username, password = netauto.get_credentials()
 
-netauto.run_stig_audit(
+stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,
     title='IOS Router STIG audit',
     username=username, password=password,
