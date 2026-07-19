@@ -8,6 +8,8 @@ For each device, reports:
   - CPU utilization   — flagged if over 80% (IOS) or 85% (NX-OS)
   - Optical health    — any fiber transceiver with temp/voltage/Tx/Rx power
                         outside warning range?
+  - Environment       — temperature/power/fan warnings from `show environment`
+                        (reported as not supported on virtual/emulated platforms)
   - Default route     — present on IOS routers? (skipped for switches/NX-OS)
 
 Usage:
@@ -40,6 +42,10 @@ TX_POWER_HIGH_WARN_DBM = 1.0
 RX_POWER_LOW_WARN_DBM = -15.0
 RX_POWER_HIGH_WARN_DBM = 1.0
 
+# Keywords in `show environment` output that indicate a temp/power/fan problem
+ENV_WARNING_WORDS_IOS = ('warning', 'critical', 'failed', 'not present')
+ENV_WARNING_WORDS_NXOS = ('minor-alarm', 'major-alarm', 'critical', 'failed', 'absent', 'failure')
+
 # Device names that should have a default route (routers, not switches)
 IOS_ROUTER_NAMES = {'R1', 'R2'}  # add more router names here as your lab grows
 
@@ -56,6 +62,8 @@ def check_ios(device_name, net_connect):
         'cpu_pct': None,
         'cpu_flagged': False,
         'optical_alerts': [],
+        'env_supported': True,
+        'env_warnings': [],
         'default_route': None,
     }
 
@@ -121,6 +129,16 @@ def check_ios(device_name, net_connect):
         if alerts:
             findings['optical_alerts'].append(f"{iface} ({', '.join(alerts)})")
 
+    # --- Environment: temperature, power supply, and fan state ---
+    env_output = net_connect.send_command('show environment all')
+    if not env_output.strip() or 'no environment' in env_output.lower():
+        findings['env_supported'] = False
+    else:
+        for line in env_output.splitlines():
+            line_lower = line.lower()
+            if any(word in line_lower for word in ENV_WARNING_WORDS_IOS):
+                findings['env_warnings'].append(line.strip())
+
     # --- Default route (routers only) ---
     if device_name in IOS_ROUTER_NAMES:
         route_output = net_connect.send_command('show ip route 0.0.0.0')
@@ -139,6 +157,8 @@ def check_nxos(device_name, net_connect):
         'cpu_pct': None,
         'cpu_flagged': False,
         'optical_alerts': [],
+        'env_supported': True,
+        'env_warnings': [],
         'default_route': None,  # not checked for NX-OS switches
     }
 
@@ -216,6 +236,19 @@ def check_nxos(device_name, net_connect):
 
     flush()
 
+    # --- Environment: temperature, power, and fan state. Uses the three focused
+    # commands rather than the combined `show environment` since it can be very
+    # long on chassis-based Nexus platforms. ---
+    for cmd in ('show environment temperature', 'show environment power', 'show environment fan'):
+        env_output = net_connect.send_command(cmd)
+        if not env_output.strip() or 'not supported' in env_output.lower():
+            findings['env_supported'] = False
+            continue
+        for line in env_output.splitlines():
+            line_lower = line.lower()
+            if any(word in line_lower for word in ENV_WARNING_WORDS_NXOS):
+                findings['env_warnings'].append(line.strip())
+
     return findings
 
 
@@ -247,6 +280,8 @@ def print_report(results):
                 flags.append(f"CPU: {findings['cpu_pct']}%")
             if findings['optical_alerts']:
                 flags.append(f"optical alerts: {', '.join(findings['optical_alerts'])}")
+            if findings['env_warnings']:
+                flags.append(f"environment: {len(findings['env_warnings'])} warning(s)")
             if findings.get('default_route') is False:
                 flags.append('default route MISSING')
 
@@ -275,6 +310,12 @@ def print_report(results):
                 print(f'  Transceiver alerts:')
                 for iface in findings['optical_alerts']:
                     print(f'    - {iface}')
+            if not findings['env_supported']:
+                print(f'  Environment: not supported on this platform (virtual/emulated)')
+            elif findings['env_warnings']:
+                print(f'  Environment warnings:')
+                for warning in findings['env_warnings']:
+                    print(f'    - {warning}')
             if findings.get('default_route') is False:
                 print(f'  WARNING: Default route not found in routing table')
 
