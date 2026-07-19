@@ -4,12 +4,10 @@ STIG rules in New IOS Router Checklist.cklb, reporting PASS/FAIL for the
 rules that can be checked from config text alone."""
 
 import argparse
-import json
 import re
 import netauto
 
 CHECKLIST_PATH = 'New IOS Router Checklist.cklb'
-SEVERITY_ORDER = {'high': 0, 'medium': 1, 'low': 2}
 
 
 def aux_port_disabled(cfg):
@@ -56,38 +54,12 @@ device_name = args.device
 all_devices = netauto.load_inventory()
 device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 
-# Load the STIG rules from both benchmarks in the checklist file
-with open(CHECKLIST_PATH, encoding='utf-8') as f:
-    checklist = json.load(f)
-rules = [rule for stig in checklist['stigs'] for rule in stig['rules']]
-rules.sort(key=lambda rule: SEVERITY_ORDER.get(rule['severity'], 99))
-
 # Prompt for credentials
 username, password = netauto.get_credentials()
 
-# Connect, bailing out if it fails
-net_connect = netauto.connect(device_name, device_info, username, password)
-if net_connect is None:
-    raise SystemExit(1)
-
-# Pull the running config and close the session
-running_config = str(net_connect.send_command('show running-config'))
-net_connect.disconnect()
-
-results = {'PASS': 0, 'FAIL': 0, 'NOT AUTOMATED': 0}
-
-print(f'IOS Router STIG audit for {device_name}\n')
-
-for rule in rules:
-    group_id = rule['group_id']
-    check = CHECKS.get(group_id)
-
-    if check is None:
-        status = 'NOT AUTOMATED'
-    else:
-        status = 'PASS' if check(running_config) else 'FAIL'
-    results[status] += 1
-
-    print(f"[{rule['severity'].upper():6}] {status:14} {group_id}  {rule['rule_title']}")
-
-print(f"\n{results['PASS']} passed, {results['FAIL']} failed, {results['NOT AUTOMATED']} not automated (need manual review, topology/policy context, or external infrastructure) out of {len(rules)} rules.")
+netauto.run_stig_audit(
+    device_name, device_info, CHECKLIST_PATH, CHECKS,
+    title='IOS Router STIG audit',
+    username=username, password=password,
+    not_automated_note='need manual review, topology/policy context, or external infrastructure',
+)
