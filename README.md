@@ -23,7 +23,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`L2_stig_audit.py`** — Audit a device against the DISA Cisco IOS Switch L2S/NDM STIG (`New Layer 2 switch Checklist.cklb`).
 - **`NXOS_stig_audit.py`** — Audit a device against the DISA Cisco NX-OS Switch L2S/NDM STIG (`New NXOS Checklist.cklb`).
 - **`IOS_Router_audit.py`** — Audit a device against the DISA Cisco IOS Router NDM/RTR STIG (`New IOS Router Checklist.cklb`). Most RTR rules require topology/policy context and are reported as NOT AUTOMATED.
-- **`L2_stig_harden.py`** — Push global L2S STIG hardening fixes to an IOS switch (BPDU Guard, Loop Guard, Rapid-PVST, UDLD, IGMP snooping, DHCP snooping, optional VTP auth). Interface-specific rules are intentionally skipped and listed in the output.
+- **`L2_stig_harden.py`** — Push global L2S STIG hardening fixes to an IOS switch (BPDU Guard, Loop Guard, Rapid-PVST, UDLD, IGMP snooping, DHCP snooping). Prompts for VTP password at runtime — leave blank to skip. Interface-specific rules are intentionally skipped and listed in the output.
 - **`NXOS_stig_harden.py`** — Same as `L2_stig_harden.py` for NX-OS, enabling required features (`feature udld`, `feature dhcp`, `feature vtp`) before applying fixes.
 - **`IOS_Router_stig_harden.py`** — Push global RTR STIG hardening fixes to an IOS router (disable gratuitous ARPs, CDP, AUX port; enable CEF). Interface-specific rules are intentionally skipped and listed in the output.
 
@@ -35,7 +35,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-Each script prompts for your SSH username and password (via `getpass`, so the password isn't echoed or stored).
+Each script prompts for your SSH username and password (via `getpass`, so the password isn't echoed or stored). Hardening scripts additionally prompt for a VTP domain password — leave blank to skip VTP configuration.
 
 ```bash
 # Run a show command against one or more devices
@@ -65,8 +65,8 @@ python3 NXOS_stig_audit.py NXCore1
 python3 IOS_Router_audit.py R1
 
 # STIG hardening — global fixes only (interface-specific rules listed but skipped)
-python3 L2_stig_harden.py S1 --vtp-password S3cr3tPass
-python3 NXOS_stig_harden.py NXCore1 --vtp-password S3cr3tPass
+python3 L2_stig_harden.py S1
+python3 NXOS_stig_harden.py NXCore1
 python3 IOS_Router_stig_harden.py R1
 ```
 

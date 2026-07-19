@@ -31,10 +31,9 @@ SKIPPED_RULES = [
     'V-220646 (native VLAN)',
 ]
 
-# Parse the target device and optional VTP password from the command line
+# Parse the target device from the command line
 parser = argparse.ArgumentParser(description='Push global L2S STIG hardening fixes to a device from inventory.yaml')
 parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. S1)')
-parser.add_argument('--vtp-password', help='VTP domain password to configure (V-220624). Omit to skip VTP authentication.')
 args = parser.parse_args()
 
 device_name = args.device
@@ -45,6 +44,9 @@ device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 
 # Prompt for credentials
 username, password = netauto.get_credentials()
+
+# Prompt for VTP password (V-220624) — leave blank to skip
+vtp_password = input('Enter VTP domain password (V-220624) — leave blank to skip: ').strip()
 
 # Connect, bailing out if it fails
 net_connect = netauto.connect(device_name, device_info, username, password)
@@ -57,14 +59,14 @@ vlan_ids = stig_common.discover_user_vlans(net_connect)
 applied_fixes = dict(BASE_FIXES)
 if vlan_ids:
     applied_fixes['V-220633 (DHCP snooping)'] = f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
-if args.vtp_password:
-    applied_fixes['V-220624 (VTP authentication)'] = f'vtp password {args.vtp_password}'
+if vtp_password:
+    applied_fixes['V-220624 (VTP authentication)'] = f'vtp password {vtp_password}'
 
 commands = list(BASE_FIXES.values())
 if vlan_ids:
     commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}']
-if args.vtp_password:
-    commands.append(f'vtp password {args.vtp_password}')
+if vtp_password:
+    commands.append(f'vtp password {vtp_password}')
 
 # Push the hardening commands and close the session
 output = net_connect.send_config_set(commands)
@@ -80,8 +82,8 @@ print(f'\nRules addressed by this pass:')
 for rule in applied_fixes:
     print('  - ' + rule)
 
-if not args.vtp_password:
-    print('\nSkipped V-220624 (VTP authentication) - pass --vtp-password to include it.')
+if not vtp_password:
+    print('\nSkipped V-220624 (VTP authentication) — enter a VTP password at the prompt to include it.')
 
 print('\nRules requiring interface targeting (not pushed by this script):')
 for rule in SKIPPED_RULES:
