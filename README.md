@@ -10,6 +10,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 
 ### Read-only / diagnostics
 - **`show_command.py`** — Run a show command against one or more devices from the inventory.
+- **`health_check.py`** — Check operational health of one or more devices (or the whole inventory): reachability, interfaces down but not admin-down, nonzero input/CRC error counters, CPU utilization (flagged over 80% on IOS / 85% on NX-OS), and default route presence on IOS routers.
 
 ### Configuration
 - **`config_loopback.py`** — Create or update a loopback interface on a device from the inventory.
@@ -41,6 +42,12 @@ python3 show_command.py "show ip interface brief" R1
 
 # Run a show command against several devices
 python3 show_command.py "show ip interface brief" R1 R2 S1
+
+# Check operational health of every device in the inventory
+python3 health_check.py
+
+# Check operational health of specific devices
+python3 health_check.py R1 S1
 
 # Configure a loopback interface with parameters to select the device you want to configure
 python3 config_loopback.py R1 1.1.1.1 255.255.255.255 --interface 0
