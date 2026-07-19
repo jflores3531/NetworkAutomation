@@ -48,6 +48,23 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
     print(f"\n{results['PASS']} passed, {results['FAIL']} failed, {results['NOT AUTOMATED']} not automated ({not_automated_note}) out of {len(rules)} rules.")
 
 
+def exec_timeout_ok(cfg, max_minutes=5):
+    """True if every exec-timeout line sets a nonzero value no longer than
+    max_minutes. 'exec-timeout 0 0' disables the timeout entirely, which is
+    non-compliant, not a pass - it's excluded even though its minutes field
+    (0) would otherwise be <= max_minutes."""
+    matches = re.findall(r'exec-timeout (\d+) (\d+)', cfg)
+    if not matches:
+        return False
+    for minutes, seconds in matches:
+        minutes, seconds = int(minutes), int(seconds)
+        if minutes == 0 and seconds == 0:
+            return False
+        if minutes > max_minutes:
+            return False
+    return True
+
+
 def discover_user_vlans(net_connect):
     """Return a switch's user VLAN IDs from `show vlan brief`, excluding the
     reserved fddi/token-ring VLAN range (1002-1005)."""
