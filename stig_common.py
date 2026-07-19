@@ -4,6 +4,7 @@ NXOS_stig_audit.py: loads a DISA .cklb checklist, checks a device's
 running-config against it, and prints a PASS/FAIL/NOT AUTOMATED report."""
 
 import json
+import re
 
 import netauto
 
@@ -45,3 +46,10 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
         print(f"[{rule['severity'].upper():6}] {status:14} {group_id}  {rule['rule_title']}")
 
     print(f"\n{results['PASS']} passed, {results['FAIL']} failed, {results['NOT AUTOMATED']} not automated ({not_automated_note}) out of {len(rules)} rules.")
+
+
+def discover_user_vlans(net_connect):
+    """Return a switch's user VLAN IDs from `show vlan brief`, excluding the
+    reserved fddi/token-ring VLAN range (1002-1005)."""
+    vlan_brief = str(net_connect.send_command('show vlan brief'))
+    return [vid for vid in re.findall(r'^(\d+)\s+\S+', vlan_brief, re.M) if not (1002 <= int(vid) <= 1005)]

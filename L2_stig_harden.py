@@ -5,8 +5,8 @@ access VLAN, native VLAN, etc.) need to know which ports are host-facing vs.
 trunk/uplink and are intentionally left out of this pass."""
 
 import argparse
-import re
 import netauto
+import stig_common
 
 # Global (non-interface-specific) fixes always pushed by this script
 BASE_FIXES = {
@@ -50,10 +50,8 @@ net_connect = netauto.connect(device_name, device_info, username, password)
 if net_connect is None:
     raise SystemExit(1)
 
-# Discover the switch's user VLANs (V-220633: DHCP snooping) from show vlan brief,
-# excluding the reserved fddi/token-ring VLAN range (1002-1005)
-vlan_brief = str(net_connect.send_command('show vlan brief'))
-vlan_ids = [vid for vid in re.findall(r'^(\d+)\s+\S+', vlan_brief, re.M) if not (1002 <= int(vid) <= 1005)]
+# Discover the switch's user VLANs (V-220633: DHCP snooping)
+vlan_ids = stig_common.discover_user_vlans(net_connect)
 
 applied_fixes = dict(BASE_FIXES)
 if vlan_ids:
