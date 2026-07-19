@@ -15,20 +15,21 @@ CHECKLIST_PATH = 'New NXOS Checklist.cklb'
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
 CHECKS = {
     # --- L2S (Layer 2 Switch) ---
+    # V-220683/685/687/691/692/694/695 (unicast flood blocking, IP source guard,
+    # storm control, default VLAN on host ports, default VLAN pruned from trunks,
+    # access ports, native VLAN) are per-interface: finding the string anywhere in
+    # the config doesn't mean every relevant interface has it (or, for V-220691,
+    # its absence doesn't prove no port is on the default VLAN, since NX-OS often
+    # omits "switchport access vlan 1" when it's already the default). They're
+    # deliberately left out and reported as NOT AUTOMATED (same reasoning
+    # NXOS_stig_harden.py already uses to skip them as needing interface targeting).
     'V-220676': lambda cfg: bool(re.search(r'^vtp password \S+', cfg, re.M)),
     'V-220681': lambda cfg: bool(re.search(r'spanning-tree port type edge bpduguard default|spanning-tree bpduguard enable', cfg)),
     'V-220682': lambda cfg: 'spanning-tree loopguard default' in cfg,
-    'V-220683': lambda cfg: bool(re.search(r'switchport block unicast', cfg)),
     'V-220684': lambda cfg: 'feature dhcp' in cfg and bool(re.search(r'^ip dhcp snooping$', cfg, re.M)) and bool(re.search(r'ip dhcp snooping vlan', cfg)),
-    'V-220685': lambda cfg: bool(re.search(r'ip verify source dhcp-snooping-vlan', cfg)),
     'V-220686': lambda cfg: bool(re.search(r'ip arp inspection vlan', cfg)),
-    'V-220687': lambda cfg: bool(re.search(r'storm-control (broadcast|multicast|unicast) level', cfg)),
     'V-220688': lambda cfg: 'no ip igmp snooping' not in cfg,
     'V-220689': lambda cfg: 'feature udld' in cfg and bool(re.search(r'udld (enable|aggressive)', cfg)),
-    'V-220691': lambda cfg: not bool(re.search(r'switchport access vlan 1\b', cfg)),
-    'V-220692': lambda cfg: bool(re.search(r'switchport trunk allowed vlan (?!.*\b1\b)\S+', cfg)),
-    'V-220694': lambda cfg: bool(re.search(r'switchport mode access', cfg)),
-    'V-220695': lambda cfg: bool(re.search(r'switchport trunk native vlan (?!1\b)\d+', cfg)),
 
     # --- NDM (Network Device Management) ---
     'V-220481': lambda cfg: bool(re.search(r'banner (login|motd)', cfg)),
@@ -36,7 +37,7 @@ CHECKS = {
     'V-220490': lambda cfg: 'password strength-check' in cfg,
     'V-220491': lambda cfg: 'password strength-check' in cfg,
     'V-220492': lambda cfg: 'password strength-check' in cfg,
-    'V-220493': lambda cfg: bool(re.search(r'exec-timeout [0-5] ', cfg)),
+    'V-220493': stig_common.exec_timeout_ok,
 }
 
 # Parse the target device from the command line

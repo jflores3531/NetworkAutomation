@@ -27,20 +27,19 @@ CHECKS = {
     'V-215669': lambda cfg: bool(re.search(r'banner (login|motd)', cfg)),
     'V-215681': lambda cfg: bool(re.search(r'min-length (1[5-9]|[2-9]\d)', cfg)),
     'V-215687': lambda cfg: 'service password-encryption' in cfg,
-    'V-215688': lambda cfg: bool(re.search(r'exec-timeout [0-5] ', cfg)),
+    'V-215688': stig_common.exec_timeout_ok,
     'V-215699': lambda cfg: 'ip ssh version 2' in cfg and bool(re.search(r'ip ssh server algorithm mac\s+\S*hmac-sha2', cfg)),
     'V-215700': lambda cfg: bool(re.search(r'ip ssh server algorithm encryption\s+\S*aes', cfg)),
 
     # --- RTR (Router) ---
+    # V-216564/565/566/567/584/586 (directed broadcast, ICMP unreachables/mask-reply/
+    # redirects, LLDP transmit, proxy ARP) are per-interface commands: finding the
+    # "no ip ..." string anywhere in the config doesn't mean every interface has it,
+    # so they're deliberately left out and reported as NOT AUTOMATED (same reasoning
+    # IOS_Router_stig_harden.py already uses to skip them as needing interface targeting).
     'V-216563': lambda cfg: 'no ip gratuitous-arps' in cfg,
-    'V-216564': lambda cfg: 'no ip directed-broadcast' in cfg,
-    'V-216565': lambda cfg: 'no ip unreachables' in cfg,
-    'V-216566': lambda cfg: 'no ip mask-reply' in cfg,
-    'V-216567': lambda cfg: 'no ip redirects' in cfg,
     'V-216571': aux_port_disabled,
-    'V-216584': lambda cfg: 'no lldp transmit' in cfg,
     'V-216585': lambda cfg: 'no cdp run' in cfg or 'no cdp enable' in cfg,
-    'V-216586': lambda cfg: 'no ip proxy-arp' in cfg,
     'V-229030': lambda cfg: 'no ip cef' not in cfg,
 }
 

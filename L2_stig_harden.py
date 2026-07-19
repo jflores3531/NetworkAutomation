@@ -23,6 +23,7 @@ SKIPPED_RULES = [
     'V-220632 (Unknown Unicast Flood Blocking)',
     'V-220634 (IP Source Guard)',
     'V-220635 (Dynamic ARP Inspection)',
+    'V-220636 (storm control)',
     'V-220640 (static trunk links)',
     'V-220642 (default VLAN on host ports)',
     'V-220643 (default VLAN pruned from trunks)',
