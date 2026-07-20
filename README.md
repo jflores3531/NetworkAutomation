@@ -82,6 +82,7 @@ python3 IOS_Router_stig_harden.py R1
 - [x] Environment checks in `health_check.py` (temperature, power supply, fans via `show environment`)
 - [x] Audit logging to file (timestamped record of who ran what and when)
 - [ ] Config push dry-run / diff-before-push mode
+- [ ] Config removal/undo mode — no script currently has a way to revert what it pushed (`config_loopback.py` can't delete a loopback, the `*_stig_harden.py` scripts have no "unharden" pass)
 - [ ] Interface-scoped L2S STIG hardening (IP Source Guard, DAI, storm control, native/access VLAN) — needs host-facing vs. trunk/uplink port classification, currently listed as skipped by `L2_stig_harden.py`/`NXOS_stig_harden.py`
 - [ ] Interface-scoped RTR STIG hardening (directed broadcast, ICMP redirects/unreachables/mask-reply, proxy ARP, LLDP transmit) — currently listed as skipped by `IOS_Router_stig_harden.py`
 - [ ] Expand STIG audit coverage for rules currently reported as NOT AUTOMATED (RADIUS, syslog, NTP, PKI, manual/topology review)
