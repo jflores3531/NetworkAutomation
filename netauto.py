@@ -2,12 +2,17 @@
 """Shared helpers for connecting to devices in inventory.yaml: inventory loading,
 device-name validation, credential prompting, and Netmiko SSH connection handling."""
 
+import json
+import os
+from datetime import datetime
 from getpass import getpass
 
 import yaml
 from netmiko import ConnectHandler
 from netmiko.exceptions import NetmikoTimeoutException, NetmikoAuthenticationException
 from paramiko.ssh_exception import SSHException
+
+AUDIT_LOG_PATH = os.path.join('audit_logs', 'audit.log')
 
 
 def load_inventory(path='inventory.yaml'):
@@ -58,3 +63,17 @@ def connect(device_name, device_info, username, password):
         print('Some other error: ' + str(unknown_error))
 
     return None
+
+
+def log_push(script_name, device_name, username, commands):
+    """Append a JSON-line audit record for a config push to audit_logs/audit.log."""
+    os.makedirs(os.path.dirname(AUDIT_LOG_PATH), exist_ok=True)
+    record = {
+        'timestamp': datetime.now().isoformat(timespec='seconds'),
+        'script': script_name,
+        'device': device_name,
+        'username': username,
+        'commands': commands,
+    }
+    with open(AUDIT_LOG_PATH, 'a') as f:
+        f.write(json.dumps(record) + '\n')

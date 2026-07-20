@@ -56,6 +56,7 @@ commands = list(BASE_FIXES.values()) + AUX_PORT_FIX
 # Push the hardening commands and close the session
 output = net_connect.send_config_set(commands)
 net_connect.disconnect()
+netauto.log_push('IOS_Router_stig_harden.py', device_name, username, commands)
 
 print(f'Hardening commands pushed to {device_name}:')
 for command in commands:
