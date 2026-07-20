@@ -79,7 +79,6 @@ python3 IOS_Router_stig_harden.py R1
 ## Roadmap
 
 - [x] Environment checks in `health_check.py` (temperature, power supply, fans via `show environment`)
-- [ ] Structured health output via NAPALM getters for cross-platform consistency
 - [ ] Config push dry-run / diff-before-push mode
 - [ ] Audit logging to file (timestamped record of who ran what and when)
 - [ ] Nornir-based parallel execution for larger inventories
