@@ -75,11 +75,12 @@ python3 IOS_Router_stig_harden.py R1
 - Devices are defined in `inventory.yaml` by name, host, and Netmiko `device_type` (e.g. `cisco_ios`, `cisco_nxos`).
 - Backups are written to `backups/`, with dated copies in `backups/archive/`.
 - STIG rules that require external infrastructure (RADIUS, syslog, NTP, PKI) or manual/topology review are reported as NOT AUTOMATED rather than guessed at.
+- Scripts that push config (`push_config.py`, `config_loopback.py`, the `*_stig_harden.py` scripts) append a JSON-line audit record (timestamp, script, device, username, commands) to `audit_logs/audit.log` for each device. Not tracked in git — local to the machine that ran the script.
 
 ## Roadmap
 
 - [x] Environment checks in `health_check.py` (temperature, power supply, fans via `show environment`)
+- [x] Audit logging to file (timestamped record of who ran what and when)
 - [ ] Config push dry-run / diff-before-push mode
-- [ ] Audit logging to file (timestamped record of who ran what and when)
 - [ ] Nornir-based parallel execution for larger inventories
 - [ ] Ansible playbook equivalents for core workflows

@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 
 backups/
+audit_logs/
 
 # Ad-hoc command files passed to push_config.py
 commands*.txt

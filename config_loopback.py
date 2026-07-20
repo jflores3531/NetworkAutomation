@@ -33,5 +33,6 @@ if net_connect is None:
 # Push the loopback config and close the session
 output = net_connect.send_config_set(commands)
 net_connect.disconnect()
+netauto.log_push('config_loopback.py', device_name, username, commands)
 
 print(output)
