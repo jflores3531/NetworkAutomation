@@ -30,6 +30,19 @@ CHECKS = {
     'V-220686': lambda cfg: bool(re.search(r'ip arp inspection vlan', cfg)),
     'V-220688': lambda cfg: 'no ip igmp snooping' not in cfg,
     'V-220689': lambda cfg: 'feature udld' in cfg and bool(re.search(r'udld (enable|aggressive)', cfg)),
+    'V-220498': lambda cfg: 'feature ntp' in cfg and len(re.findall(r'^ntp server \S+', cfg, re.M)) >= 2,
+    'V-220502': lambda cfg: (
+        'feature ntp' in cfg
+        and 'ntp authenticate' in cfg
+        and bool(re.search(r'ntp authentication-key \d+ md5 \S+', cfg))
+        and bool(re.search(r'ntp trusted-key \d+', cfg))
+        and bool(re.search(r'ntp server \S+ key \d+', cfg))
+    ),
+    # V-220499 (log time stamps mappable to UTC/GMT) is deliberately left out: UTC
+    # is the default zone, so the checklist itself notes "clock timezone" may not
+    # appear in the config even when compliant. Its absence doesn't indicate a
+    # finding, so this can't be turned into a meaningful PASS/FAIL from config text
+    # alone and is reported as NOT AUTOMATED.
 
     # --- NDM (Network Device Management) ---
     'V-220481': lambda cfg: bool(re.search(r'banner (login|motd)', cfg)),

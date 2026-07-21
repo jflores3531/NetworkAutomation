@@ -31,6 +31,13 @@ CHECKS = {
     'V-220637': lambda cfg: 'no ip igmp snooping' not in cfg,
     'V-220638': lambda cfg: bool(re.search(r'spanning-tree mode rapid-pvst', cfg)),
     'V-220639': lambda cfg: bool(re.search(r'udld (enable|aggressive)', cfg)),
+    'V-220601': lambda cfg: len(re.findall(r'^ntp server \S+', cfg, re.M)) >= 2,
+    'V-220606': lambda cfg: (
+        'ntp authenticate' in cfg
+        and bool(re.search(r'ntp authentication-key \d+ md5 \S+', cfg))
+        and bool(re.search(r'ntp trusted-key \d+', cfg))
+        and bool(re.search(r'ntp server \S+ key \d+', cfg))
+    ),
 
     # --- NDM (Network Device Management) ---
     'V-220577': lambda cfg: bool(re.search(r'banner (login|motd)', cfg)),
