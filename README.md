@@ -20,12 +20,12 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`backup_config.py`** — Back up running-config (+ VLANs via `show vlan brief`) for one device or all devices. Saves a "latest" copy per device plus a timestamped archive, pruned to the 5 most recent.
 - **`config_diff.py`** — Compare a device's current running-config and VLANs against its last backup to catch drift or unexpected changes.
 - **`stig_common.py`** — Shared STIG audit engine used by the audit scripts below: loads a DISA `.cklb` checklist, checks running-config against it, and prints a PASS/FAIL/NOT AUTOMATED report sorted by severity.
-- **`L2_stig_audit.py`** — Audit a device against the DISA Cisco IOS Switch L2S/NDM STIG (`New Layer 2 switch Checklist.cklb`).
-- **`NXOS_stig_audit.py`** — Audit a device against the DISA Cisco NX-OS Switch L2S/NDM STIG (`New NXOS Checklist.cklb`).
-- **`IOS_Router_audit.py`** — Audit a device against the DISA Cisco IOS Router NDM/RTR STIG (`New IOS Router Checklist.cklb`). Most RTR rules require topology/policy context and are reported as NOT AUTOMATED.
-- **`L2_stig_harden.py`** — Push global L2S STIG hardening fixes to an IOS switch (BPDU Guard, Loop Guard, Rapid-PVST, UDLD, IGMP snooping, DHCP snooping). Prompts for VTP password at runtime — leave blank to skip. Interface-specific rules are intentionally skipped and listed in the output.
-- **`NXOS_stig_harden.py`** — Same as `L2_stig_harden.py` for NX-OS, enabling required features (`feature udld`, `feature dhcp`, `feature vtp`) before applying fixes.
-- **`IOS_Router_stig_harden.py`** — Push global RTR STIG hardening fixes to an IOS router (disable gratuitous ARPs, CDP, AUX port; enable CEF). Interface-specific rules are intentionally skipped and listed in the output.
+- **`L2_stig_audit.py`** — Audit a device against the DISA Cisco IOS Switch L2S/NDM STIG (`New Layer 2 switch Checklist.cklb`). Includes NTP time-sync and NTP authentication checks.
+- **`NXOS_stig_audit.py`** — Audit a device against the DISA Cisco NX-OS Switch L2S/NDM STIG (`New NXOS Checklist.cklb`). Includes NTP time-sync and NTP authentication checks.
+- **`IOS_Router_audit.py`** — Audit a device against the DISA Cisco IOS Router NDM/RTR STIG (`New IOS Router Checklist.cklb`). Includes NTP time-sync and NTP authentication checks. Most RTR rules require topology/policy context and are reported as NOT AUTOMATED.
+- **`L2_stig_harden.py`** — Push global L2S STIG hardening fixes to an IOS switch (BPDU Guard, Loop Guard, Rapid-PVST, UDLD, IGMP snooping, DHCP snooping, NTP). Prompts for a VTP password, then (once the SSH session is up) NTP server IP(s) and an NTP authentication key — leave any blank to skip. Interface-specific rules are intentionally skipped and listed in the output.
+- **`NXOS_stig_harden.py`** — Same as `L2_stig_harden.py` for NX-OS, enabling required features (`feature udld`, `feature dhcp`, `feature vtp`, `feature ntp`) before applying fixes.
+- **`IOS_Router_stig_harden.py`** — Push global RTR STIG hardening fixes to an IOS router (disable gratuitous ARPs, CDP, AUX port; enable CEF; configure NTP). Prompts (once the SSH session is up) for NTP server IP(s) and an NTP authentication key — leave either blank to skip. Interface-specific rules are intentionally skipped and listed in the output.
 
 ## Requirements
 
@@ -35,7 +35,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-Each script prompts for your SSH username and password (via `getpass`, so the password isn't echoed or stored). Hardening scripts additionally prompt for a VTP domain password — leave blank to skip VTP configuration.
+Each script prompts for your SSH username and password (via `getpass`, so the password isn't echoed or stored). Hardening scripts additionally prompt for a VTP domain password, and — once connected — NTP server IP(s) (space-separated, for redundant time sources) and an NTP authentication key ID/MD5 value. Leave any of these blank to skip.
 
 ```bash
 # Run a show command against one or more devices
@@ -64,7 +64,8 @@ python3 L2_stig_audit.py S1
 python3 NXOS_stig_audit.py NXCore1
 python3 IOS_Router_audit.py R1
 
-# STIG hardening — global fixes only (interface-specific rules listed but skipped)
+# STIG hardening — global fixes only (interface-specific rules listed but skipped).
+# NTP server IP(s) and authentication key are prompted for once the SSH session is up.
 python3 L2_stig_harden.py S1
 python3 NXOS_stig_harden.py NXCore1
 python3 IOS_Router_stig_harden.py R1
@@ -74,7 +75,7 @@ python3 IOS_Router_stig_harden.py R1
 
 - Devices are defined in `inventory.yaml` by name, host, and Netmiko `device_type` (e.g. `cisco_ios`, `cisco_nxos`).
 - Backups are written to `backups/`, with dated copies in `backups/archive/`.
-- STIG rules that require external infrastructure (RADIUS, syslog, NTP, PKI) or manual/topology review are reported as NOT AUTOMATED rather than guessed at.
+- STIG rules that require external infrastructure (RADIUS, syslog, PKI) or manual/topology review are reported as NOT AUTOMATED rather than guessed at. NTP time-sync and NTP authentication are now audited and can be pushed by the hardening scripts.
 - Scripts that push config (`push_config.py`, `config_loopback.py`, the `*_stig_harden.py` scripts) append a JSON-line audit record (timestamp, script, device, username, commands) to `audit_logs/audit.log` for each device. Not tracked in git — local to the machine that ran the script.
 
 ## Roadmap
@@ -85,6 +86,7 @@ python3 IOS_Router_stig_harden.py R1
 - [ ] Config removal/undo mode — no script currently has a way to revert what it pushed (`config_loopback.py` can't delete a loopback, the `*_stig_harden.py` scripts have no "unharden" pass)
 - [ ] Interface-scoped L2S STIG hardening (IP Source Guard, DAI, storm control, native/access VLAN) — needs host-facing vs. trunk/uplink port classification, currently listed as skipped by `L2_stig_harden.py`/`NXOS_stig_harden.py`
 - [ ] Interface-scoped RTR STIG hardening (directed broadcast, ICMP redirects/unreachables/mask-reply, proxy ARP, LLDP transmit) — currently listed as skipped by `IOS_Router_stig_harden.py`
-- [ ] Expand STIG audit coverage for rules currently reported as NOT AUTOMATED (RADIUS, syslog, NTP, PKI, manual/topology review)
+- [x] NTP portion of the STIGs — audit (time sync, authentication) across `L2_stig_audit.py`/`NXOS_stig_audit.py`/`IOS_Router_audit.py`, and hardening via post-connect prompts (server IP(s), authentication key) in their `*_stig_harden.py` counterparts
+- [ ] Expand STIG audit coverage for rules currently reported as NOT AUTOMATED (RADIUS, syslog, PKI, manual/topology review)
 - [ ] Nornir-based parallel execution for larger inventories
 - [ ] Ansible playbook equivalents for core workflows

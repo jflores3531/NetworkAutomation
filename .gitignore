@@ -10,3 +10,5 @@ commands*.txt
 
 .idea/
 .claude/
+.agents/
+skills-lock.json

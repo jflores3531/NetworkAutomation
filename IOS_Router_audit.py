@@ -30,6 +30,13 @@ CHECKS = {
     'V-215688': stig_common.exec_timeout_ok,
     'V-215699': lambda cfg: 'ip ssh version 2' in cfg and bool(re.search(r'ip ssh server algorithm mac\s+\S*hmac-sha2', cfg)),
     'V-215700': lambda cfg: bool(re.search(r'ip ssh server algorithm encryption\s+\S*aes', cfg)),
+    'V-215693': lambda cfg: len(re.findall(r'^ntp server \S+', cfg, re.M)) >= 2,
+    'V-215698': lambda cfg: (
+        'ntp authenticate' in cfg
+        and bool(re.search(r'ntp authentication-key \d+ md5 \S+', cfg))
+        and bool(re.search(r'ntp trusted-key \d+', cfg))
+        and bool(re.search(r'ntp server \S+ key \d+', cfg))
+    ),
 
     # --- RTR (Router) ---
     # V-216564/565/566/567/584/586 (directed broadcast, ICMP unreachables/mask-reply/
