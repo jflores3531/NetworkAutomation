@@ -23,6 +23,15 @@ CHECKS = {
     # often omits "switchport access vlan 1" when it's already the default). They're
     # deliberately left out and reported as NOT AUTOMATED (same reasoning
     # L2_stig_harden.py already uses to skip them as needing interface targeting).
+    # V-220586: presence of any of these directives (not "no "-prefixed) is a
+    # finding — unnecessary/nonsecure services that should stay disabled by default.
+    'V-220586': lambda cfg: not bool(re.search(
+        r'^\s*(boot network|ip boot server|ip bootp server|ip dns server|ip identd|'
+        r'ip finger|ip http server|ip rcmd rcp-enable|ip rcmd rsh-enable|'
+        r'service config|service finger|service tcp-small-servers|'
+        r'service udp-small-servers|service pad|service call-home)\s*$',
+        cfg, re.M
+    )),
     'V-220624': lambda cfg: bool(re.search(r'^vtp password \S+', cfg, re.M)),
     'V-220630': lambda cfg: bool(re.search(r'spanning-tree bpduguard enable|spanning-tree portfast bpduguard default', cfg)),
     'V-220631': lambda cfg: 'spanning-tree loopguard default' in cfg,
