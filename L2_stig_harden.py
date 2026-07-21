@@ -35,6 +35,17 @@ def parse_switchports(cfg):
     return access, trunk
 
 
+def shutdown_access_ports(cfg, access_names):
+    """Return the subset of access_names whose interface block has 'shutdown' —
+    used by V-220641 to reassign only ports that are already disabled."""
+    shutdown = []
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if m and m.group(1) in access_names and re.search(r'^\s*shutdown\s*$', chunk, re.M):
+            shutdown.append(m.group(1))
+    return shutdown
+
+
 # Pushed to every host-facing/access-classified interface
 ACCESS_PORT_FIXES = [
     'switchport block unicast',       # V-220632 (UUFB)
@@ -143,6 +154,13 @@ vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=netauto.load_non
 running_config = str(net_connect.send_command('show running-config'))
 access_ports, trunk_ports = parse_switchports(running_config)
 
+# V-220641: already-shutdown access ports get reassigned to the designated
+# unused VLAN (safe - they're not passing traffic), and that VLAN gets pruned
+# from every trunk (additive "remove", not "except" - avoids overwriting the
+# V-220643 prune-VLAN-1 list already pushed to the same trunk)
+unused_vlan = netauto.load_unused_vlan()
+disabled_ports = shutdown_access_ports(running_config, access_ports) if unused_vlan else []
+
 # Prompt for a non-default native VLAN for trunk ports (V-220646) — leave blank to skip
 native_vlan_id = input('Enter a native VLAN ID (not 1) for trunk ports, V-220646 '
                         '— leave blank to skip: ').strip()
@@ -175,6 +193,8 @@ if ntp_servers:
 trunk_fixes = list(TRUNK_PORT_FIXES)
 if native_vlan_id:
     trunk_fixes.append(f'switchport trunk native vlan {native_vlan_id}')
+if unused_vlan:
+    trunk_fixes.append(f'switchport trunk allowed vlan remove {unused_vlan}')
 
 interface_commands = []
 for name in access_ports:
@@ -183,6 +203,9 @@ for name in access_ports:
 for name in trunk_ports:
     interface_commands.append(f'interface {name}')
     interface_commands += trunk_fixes
+for name in disabled_ports:
+    interface_commands.append(f'interface {name}')
+    interface_commands.append(f'switchport access vlan {unused_vlan}')
 
 applied_fixes = dict(BASE_FIXES)
 applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICES_FIX)
@@ -203,6 +226,10 @@ if trunk_ports:
     applied_fixes['V-220643 (default VLAN pruned from trunks)'] = f'switchport trunk allowed vlan except 1 (on {len(trunk_ports)} trunk port(s))'
     if native_vlan_id:
         applied_fixes['V-220646 (native VLAN)'] = f'switchport trunk native vlan {native_vlan_id} (on {len(trunk_ports)} trunk port(s))'
+    if unused_vlan:
+        applied_fixes['V-220641b (unused VLAN pruned from trunks)'] = f'switchport trunk allowed vlan remove {unused_vlan} (on {len(trunk_ports)} trunk port(s))'
+if disabled_ports:
+    applied_fixes['V-220641a (disabled ports to unused VLAN)'] = f'switchport access vlan {unused_vlan} (on {len(disabled_ports)} disabled port(s): {", ".join(disabled_ports)})'
 if ntp_servers:
     applied_fixes['V-220601 (NTP time sync)'] = '; '.join(
         f'ntp server {ip}' + (f' key {ntp_key_id}' if ntp_key_id else '') for ip in ntp_servers)
@@ -242,6 +269,10 @@ if not trunk_ports:
     print('\nNo trunk switchports found — nothing to push for V-220640/643/646.')
 if trunk_ports and not native_vlan_id:
     print('\nSkipped V-220646 (native VLAN) — enter a non-default VLAN ID at the prompt to include it.')
+if not unused_vlan:
+    print('\nSkipped V-220641 (unused VLAN) — add unused_vlan to inventory.yaml to include it.')
+elif not disabled_ports:
+    print('\nNo disabled (shutdown) access ports found — nothing to reassign for V-220641.')
 if not vtp_password:
     print('\nSkipped V-220624 (VTP authentication) — enter a VTP password at the prompt to include it.')
 if not ntp_servers:

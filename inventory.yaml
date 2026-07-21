@@ -63,3 +63,7 @@ non_user_vlans:
 # the vty ACL doesn't permit anything outside this range - a single host inside
 # it (e.g. the automation host) is fine, "permit any" is not.
 management_subnet: 10.10.50.0/24
+
+# Designated "unused ports" VLAN for V-220641. Disabled (shutdown) access ports
+# must be assigned here, and this VLAN must be pruned from all trunk links.
+unused_vlan: 999
