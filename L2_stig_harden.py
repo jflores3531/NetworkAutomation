@@ -55,6 +55,10 @@ BASE_FIXES = {
     'V-220638 (Rapid-PVST)': 'spanning-tree mode rapid-pvst',
     'V-220639 (UDLD)': 'udld enable',
     'V-220637 (IGMP snooping)': 'ip igmp snooping',
+    'V-220580 (log timestamps)': 'service timestamps log datetime localtime',
+    'V-220599 (logging buffer size)': 'logging buffered 64000 informational',
+    'V-220612a (log on-failure)': 'login on-failure log',
+    'V-220612b (log on-success)': 'login on-success log',
 }
 
 # V-220608: SSH encryption algorithm — includes "ip ssh version 2" too, since
