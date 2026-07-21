@@ -17,6 +17,26 @@ BASE_FIXES = {
     'V-220637 (IGMP snooping)': 'ip igmp snooping',
 }
 
+# V-220586: disable unnecessary/nonsecure services — idempotent, safe to push
+# unconditionally even when a service is already disabled
+UNNECESSARY_SERVICES_FIX = [
+    'no boot network',
+    'no ip boot server',
+    'no ip bootp server',
+    'no ip dns server',
+    'no ip identd',
+    'no ip finger',
+    'no ip http server',
+    'no ip rcmd rcp-enable',
+    'no ip rcmd rsh-enable',
+    'no service config',
+    'no service finger',
+    'no service tcp-small-servers',
+    'no service udp-small-servers',
+    'no service pad',
+    'no service call-home',
+]
+
 # Rules that need per-interface targeting (host-facing vs. trunk/uplink) and are
 # intentionally not pushed by this global-only pass
 SKIPPED_RULES = [
@@ -78,6 +98,7 @@ if ntp_servers:
     ntp_commands += [f'ntp server {ip}{key_suffix}' for ip in ntp_servers]
 
 applied_fixes = dict(BASE_FIXES)
+applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICES_FIX)
 if vlan_ids:
     applied_fixes['V-220633 (DHCP snooping)'] = f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
 if vtp_password:
@@ -89,7 +110,7 @@ if ntp_key_id:
     applied_fixes['V-220606 (NTP authentication)'] = '; '.join([
         f'ntp authentication-key {ntp_key_id} md5 {ntp_key_value}', 'ntp authenticate', f'ntp trusted-key {ntp_key_id}'])
 
-commands = list(BASE_FIXES.values())
+commands = list(BASE_FIXES.values()) + UNNECESSARY_SERVICES_FIX
 if vlan_ids:
     commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}']
 if vtp_password:
