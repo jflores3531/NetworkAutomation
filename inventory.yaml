@@ -67,3 +67,8 @@ management_subnet: 10.10.50.0/24
 # Designated "unused ports" VLAN for V-220641. Disabled (shutdown) access ports
 # must be assigned here, and this VLAN must be pruned from all trunk links.
 unused_vlan: 999
+
+# Native VLAN for all 802.1q trunk links, V-220646 (must not be the default VLAN).
+# Set to the same ID as unused_vlan on purpose - a dedicated black-hole VLAN as
+# native prevents double-tagging/VLAN-hopping via untagged native-VLAN traffic.
+native_vlan: 999
