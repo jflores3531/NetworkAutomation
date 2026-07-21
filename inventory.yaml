@@ -37,3 +37,16 @@ devices:
   NXCore2:
     host: 10.10.50.22
     device_type: cisco_nxos
+
+# Non-Netmiko infrastructure (Linux servers) — reference IPs only, no device_type,
+# never connected to by netauto.connect(). Used to pre-fill hardening script
+# prompts (e.g. NTP server IPs) instead of asking for them interactively.
+services:
+  ntp_servers:
+    - 192.168.100.10
+    - 192.168.100.11
+  syslog_servers:
+    - 192.168.100.10
+    - 192.168.100.11
+  radius_servers:
+    - 192.168.100.10

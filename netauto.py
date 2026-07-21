@@ -22,6 +22,15 @@ def load_inventory(path='inventory.yaml'):
     return inventory['devices']
 
 
+def load_services(path='inventory.yaml'):
+    """Load the services section of the YAML inventory (ntp_servers/syslog_servers/
+    radius_servers -> list of IPs). Returns an empty dict if the inventory has no
+    services section, so callers can .get(...) with a default."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('services', {})
+
+
 def get_credentials():
     """Prompt for the SSH username/password used to connect to devices."""
     username = input('Enter your SSH username: ')
