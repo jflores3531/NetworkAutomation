@@ -54,8 +54,9 @@ net_connect = netauto.connect(device_name, device_info, username, password)
 if net_connect is None:
     raise SystemExit(1)
 
-# Discover the switch's user VLANs (V-220684: DHCP snooping)
-vlan_ids = stig_common.discover_user_vlans(net_connect)
+# Discover the switch's user VLANs (V-220684: DHCP snooping), excluding
+# management/servers/unused VLANs from inventory.yaml's non_user_vlans
+vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=netauto.load_non_user_vlans())
 
 # NTP server IPs (V-220498) come from inventory.yaml's services section instead of
 # a prompt. Still prompt for the authentication key — that's credential-like, not

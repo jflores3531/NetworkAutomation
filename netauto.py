@@ -31,6 +31,15 @@ def load_services(path='inventory.yaml'):
     return inventory.get('services', {})
 
 
+def load_non_user_vlans(path='inventory.yaml'):
+    """Load the non_user_vlans list from the YAML inventory — VLAN IDs to exclude
+    when discovering "user VLANs" for DHCP snooping/DAI pushes (management,
+    servers, unused default VLAN, etc). Returns an empty list if not defined."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('non_user_vlans', [])
+
+
 def get_credentials():
     """Prompt for the SSH username/password used to connect to devices."""
     username = input('Enter your SSH username: ')
