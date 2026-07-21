@@ -48,9 +48,10 @@ net_connect = netauto.connect(device_name, device_info, username, password)
 if net_connect is None:
     raise SystemExit(1)
 
-# Prompt for NTP parameters now that the SSH session is up — leave either blank to skip
-ntp_servers = input('Enter NTP server IP(s) for V-215693, space-separated '
-                     '(e.g. "10.1.12.10 10.1.22.13") — leave blank to skip: ').strip().split()
+# NTP server IPs (V-215693) come from inventory.yaml's services section instead of
+# a prompt. Still prompt for the authentication key — that's credential-like, not
+# an address, and doesn't belong in inventory.yaml.
+ntp_servers = netauto.load_services().get('ntp_servers', [])
 ntp_auth = input('Enter NTP authentication key ID and MD5 value for V-215698, '
                   'space-separated (e.g. "1 MyStrongKey123") — leave blank to skip: ').strip()
 ntp_key_id, _, ntp_key_value = ntp_auth.partition(' ')
@@ -96,7 +97,7 @@ for rule in applied_fixes:
     print('  - ' + rule)
 
 if not ntp_servers:
-    print('\nSkipped V-215693 (NTP time sync) — enter NTP server IP(s) at the prompt to include it.')
+    print('\nSkipped V-215693 (NTP time sync) — add ntp_servers to inventory.yaml\'s services section to include it.')
 if not ntp_key_id:
     print('\nSkipped V-215698 (NTP authentication) — enter an NTP key ID/MD5 value at the prompt to include it.')
 
