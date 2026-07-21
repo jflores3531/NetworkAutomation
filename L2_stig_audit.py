@@ -223,6 +223,21 @@ def _single_local_account_check(cfg):
     return True, f'exactly 1 local account (`{usernames[0]}`), configured as fallback after the AAA server group'
 
 
+# V-220617: at least 2 RADIUS servers, actually used as the primary auth source
+# (not just configured but unused)
+def _radius_redundancy_check(cfg):
+    if 'aaa new-model' not in cfg:
+        return False, 'missing `aaa new-model`'
+    if not re.search(r'^aaa authentication \S+ \S+ group radius( local)?\s*$', cfg, re.M):
+        return False, 'missing an `aaa authentication ... group radius ...` line using RADIUS as the primary source'
+    servers = sorted(set(re.findall(r'^radius-server host (\S+)', cfg, re.M) + re.findall(r'^radius host (\S+)', cfg, re.M)))
+    if len(servers) >= 2:
+        return True, f'found {len(servers)} RADIUS server(s): {", ".join(servers)}'
+    if servers:
+        return False, f'only {len(servers)} of 2+ required RADIUS server(s) found: {", ".join(servers)}'
+    return False, 'no `radius-server host <ip>` lines found (need 2+)'
+
+
 # V-220576: exactly 3 consecutive invalid attempts, blocked for >= 900s (15 min)
 def _login_block_check(cfg):
     m = re.search(r'^login block-for (\d+) attempts (\d+) within (\d+)', cfg, re.M)
@@ -297,6 +312,7 @@ CHECKS = {
     'V-220611': _archive_logging_enabled,
     'V-220613': _archive_logging_enabled,
     'V-220587': _single_local_account_check,
+    'V-220617': _radius_redundancy_check,
     'V-220590': lambda cfg: _cc_policy_check(cfg, r'^\s*upper-case (\d+)', 1, '`upper-case <n>`'),
     'V-220591': lambda cfg: _cc_policy_check(cfg, r'^\s*lower-case (\d+)', 1, '`lower-case <n>`'),
     'V-220592': lambda cfg: _cc_policy_check(cfg, r'^\s*numeric-count (\d+)', 1, '`numeric-count <n>`'),
