@@ -199,6 +199,30 @@ def _archive_logging_enabled(cfg):
     return False, 'missing `archive` block (with `log config` / `logging enable`)'
 
 
+# V-220590/591/592/593/594: password complexity, each is one sub-command inside
+# an `aaa common-criteria policy <name>` block.
+def _cc_policy_check(cfg, pattern, min_value, what):
+    if 'aaa new-model' not in cfg:
+        return False, 'missing `aaa new-model`'
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if not chunk.startswith('aaa common-criteria policy'):
+            continue
+        m = re.search(pattern, chunk, re.M)
+        if m and int(m.group(1)) >= min_value:
+            return True, f'found: `{m.group(0).strip()}`'
+    return False, f'no `aaa common-criteria policy` block with {what} >= {min_value}'
+
+
+def _single_local_account_check(cfg):
+    usernames = re.findall(r'^username (\S+)', cfg, re.M)
+    if len(usernames) != 1:
+        found = ', '.join(usernames) if usernames else 'none'
+        return False, f'found {len(usernames)} `username` line(s) (need exactly 1): {found}'
+    if not re.search(r'^aaa authentication \S+ \S+ group \S+ local\s*$', cfg, re.M):
+        return False, f'exactly 1 local account (`{usernames[0]}`) found, but no `aaa authentication ... group <server> local` fallback line'
+    return True, f'exactly 1 local account (`{usernames[0]}`), configured as fallback after the AAA server group'
+
+
 def _exec_timeout_reason(cfg):
     matches = re.findall(r'exec-timeout (\d+) (\d+)', cfg)
     ok = stig_common.exec_timeout_ok(cfg)
@@ -258,6 +282,12 @@ CHECKS = {
     'V-220597': _archive_logging_enabled,
     'V-220611': _archive_logging_enabled,
     'V-220613': _archive_logging_enabled,
+    'V-220587': _single_local_account_check,
+    'V-220590': lambda cfg: _cc_policy_check(cfg, r'^\s*upper-case (\d+)', 1, '`upper-case <n>`'),
+    'V-220591': lambda cfg: _cc_policy_check(cfg, r'^\s*lower-case (\d+)', 1, '`lower-case <n>`'),
+    'V-220592': lambda cfg: _cc_policy_check(cfg, r'^\s*numeric-count (\d+)', 1, '`numeric-count <n>`'),
+    'V-220593': lambda cfg: _cc_policy_check(cfg, r'^\s*special-case (\d+)', 1, '`special-case <n>`'),
+    'V-220594': lambda cfg: _cc_policy_check(cfg, r'^\s*char-changes (\d+)', 8, '`char-changes <n>`'),
     'V-220577': lambda cfg: _presence(cfg, r'banner (login|motd)', what='a `banner login` or `banner motd`'),
     'V-220589': lambda cfg: _presence(cfg, r'security passwords min-length (1[5-9]|[2-9]\d)', what='`security passwords min-length` of 15+'),
     'V-220595': lambda cfg: _all_of(cfg, [
