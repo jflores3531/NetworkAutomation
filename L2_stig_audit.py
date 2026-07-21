@@ -4,6 +4,7 @@ STIG rules in New Layer 2 switch Checklist.cklb, reporting PASS/FAIL for the
 rules that can be checked from config text alone."""
 
 import argparse
+import ipaddress
 import re
 import netauto
 import stig_common
@@ -184,6 +185,61 @@ def _dhcp_snooping_check(cfg, user_vlans):
     )
 
 
+# V-220575: vty access-class ACL must actually be scoped to the management
+# subnet, not just present. A "permit any" or out-of-subnet source doesn't
+# satisfy "controlling the flow of management information."
+def _acl_source_in_subnet(source_spec, subnet):
+    if source_spec.strip() == 'any':
+        return False
+    m = re.match(r'host (\S+)$', source_spec.strip())
+    if m:
+        try:
+            return ipaddress.ip_address(m.group(1)) in subnet
+        except ValueError:
+            return False
+    m = re.match(r'(\S+)\s+(\S+)$', source_spec.strip())
+    if m:
+        addr, wildcard = m.groups()
+        try:
+            netmask = ipaddress.ip_address(int(ipaddress.ip_address(wildcard)) ^ 0xFFFFFFFF)
+            acl_net = ipaddress.ip_network(f'{addr}/{netmask}', strict=False)
+            return acl_net.subnet_of(subnet)
+        except ValueError:
+            return False
+    return False
+
+
+def _vty_management_acl_check(cfg, subnet_str):
+    if not subnet_str:
+        return False, 'no `management_subnet` configured in inventory.yaml'
+    subnet = ipaddress.ip_network(subnet_str, strict=False)
+
+    acl_name = None
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if chunk.startswith('line vty'):
+            m = re.search(r'access-class (\S+) in', chunk)
+            if m:
+                acl_name = m.group(1)
+                break
+    if not acl_name:
+        return False, 'no `access-class <name> in` found under any `line vty` block'
+
+    permits = None
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if chunk.startswith(f'ip access-list extended {acl_name}'):
+            permits = re.findall(r'^\s*(?:\d+\s+)?permit ip (.+?)\s+any\s*$', chunk, re.M)
+            break
+    if permits is None:
+        return False, f'`access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found'
+    if not permits:
+        return False, f'`{acl_name}` has no `permit ip <source> any` lines'
+
+    bad = [src for src in permits if not _acl_source_in_subnet(src, subnet)]
+    if bad:
+        return False, f'`{acl_name}` (via `access-class {acl_name} in`) permits source(s) outside {subnet_str}: {", ".join(bad)}'
+    return True, f'`{acl_name}` (via `access-class {acl_name} in`) permits only sources within {subnet_str}: {", ".join(permits)}'
+
+
 # V-220571/572/573/574/582/597/611/613: DISA reuses the exact same evidence
 # (archive / log config / logging enable) for 8 different audit-logging rules
 # (account creation/modification/disabling/removal/enabling, privileges deleted,
@@ -339,6 +395,7 @@ CHECKS = {
     'V-220613': _archive_logging_enabled,
     'V-220578': _admin_activity_logged,
     'V-220570': _session_limit_check,
+    'V-220575': lambda cfg: _vty_management_acl_check(cfg, netauto.load_management_subnet()),
     'V-220587': _single_local_account_check,
     'V-220617': _radius_redundancy_check,
     'V-220590': lambda cfg: _cc_policy_check(cfg, r'^\s*upper-case (\d+)', 1, '`upper-case <n>`'),

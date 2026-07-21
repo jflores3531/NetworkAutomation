@@ -58,3 +58,8 @@ non_user_vlans:
   - 1    # default VLAN, unused
   - 10   # management / automation host segment
   - 100  # servers VLAN
+
+# Management network for V-220575 (vty access-class ACL scope). Used to verify
+# the vty ACL doesn't permit anything outside this range - a single host inside
+# it (e.g. the automation host) is fine, "permit any" is not.
+management_subnet: 10.10.50.0/24
