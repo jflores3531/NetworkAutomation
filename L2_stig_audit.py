@@ -10,19 +10,98 @@ import stig_common
 
 CHECKLIST_PATH = 'New Layer 2 switch Checklist.cklb'
 
+# Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
+# excluded since "switchport mode trunk" can never appear in their blocks and they'd
+# otherwise be misclassified as host-facing/access.
+SWITCHPORT_PREFIXES = ('GigabitEthernet', 'FastEthernet', 'TenGigabitEthernet', 'Ethernet', 'Port-channel')
+
+
+def parse_switchports(cfg):
+    """Classify every switchport-capable interface as trunk or host-facing/access:
+    an interface counts as trunk only if its block has 'switchport mode trunk';
+    anything else (access mode, unset mode, dynamic negotiation) is host-facing.
+    Returns (access_blocks, trunk_blocks), each {interface_name: block_text}."""
+    access, trunk = {}, {}
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m or not m.group(1).startswith(SWITCHPORT_PREFIXES):
+            continue
+        name = m.group(1)
+        if re.search(r'^\s*switchport mode trunk\s*$', chunk, re.M):
+            trunk[name] = chunk
+        else:
+            access[name] = chunk
+    return access, trunk
+
+
+def _all_access_ports_have(cfg, pattern):
+    access, _ = parse_switchports(cfg)
+    return bool(access) and all(re.search(pattern, block) for block in access.values())
+
+
+def _all_trunk_ports_have(cfg, pattern):
+    _, trunk = parse_switchports(cfg)
+    return bool(trunk) and all(re.search(pattern, block) for block in trunk.values())
+
+
+def _vlan_in_spec(vlan, spec):
+    """True if vlan appears in a comma-separated list of VLAN IDs/ranges, e.g. '2-4094'."""
+    for part in spec.split(','):
+        part = part.strip()
+        if '-' in part:
+            lo, hi = part.split('-')
+            if int(lo) <= vlan <= int(hi):
+                return True
+        elif part.isdigit() and int(part) == vlan:
+            return True
+    return False
+
+
+def default_vlan_pruned_from_trunks(cfg):
+    """PASS only if every trunk interface explicitly excludes VLAN 1 from its
+    allowed-VLAN list (via 'except'/'remove', or an explicit list that omits 1).
+    A trunk with no 'switchport trunk allowed vlan' line defaults to allowing every
+    VLAN including 1, so that's a finding. An 'add ...' spec is additive to an
+    unknown existing list and can't be reliably evaluated from config text alone,
+    so it's conservatively treated as a finding too."""
+    _, trunk = parse_switchports(cfg)
+    if not trunk:
+        return False
+    for block in trunk.values():
+        m = re.search(r'switchport trunk allowed vlan (.+)$', block, re.M)
+        if not m:
+            return False
+        spec = m.group(1).strip()
+        if spec.startswith('except') and _vlan_in_spec(1, spec[len('except'):].strip()):
+            continue
+        if spec.startswith('remove') and _vlan_in_spec(1, spec[len('remove'):].strip()):
+            continue
+        if not spec.startswith(('except', 'remove', 'add')) and not _vlan_in_spec(1, spec):
+            continue
+        return False
+    return True
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Rules with no entry here need external infrastructure (RADIUS, syslog,
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
 CHECKS = {
     # --- L2S (Layer 2 Switch) ---
-    # V-220632/634/636/640/642/643/645/646 (unicast flood blocking, IP source guard,
-    # storm control, static trunks, default VLAN on host ports, default VLAN pruned
-    # from trunks, access ports, native VLAN) are per-interface: finding the string
-    # anywhere in the config doesn't mean every relevant interface has it (or, for
-    # V-220642, its absence doesn't prove no port is on the default VLAN, since IOS
-    # often omits "switchport access vlan 1" when it's already the default). They're
-    # deliberately left out and reported as NOT AUTOMATED (same reasoning
-    # L2_stig_harden.py already uses to skip them as needing interface targeting).
+    # V-220642 (default VLAN on host-facing ports) and V-220645 (user-facing ports
+    # must be access) are deliberately left NOT AUTOMATED. V-220642: IOS omits
+    # "switchport access vlan 1" when it's already the default, so a port's absence
+    # of that line can't be distinguished from an explicit (and non-compliant)
+    # assignment to VLAN 1 — same false-pass risk fixed in ee04718. V-220645: under
+    # this file's own host-facing/trunk classification (host-facing = "lacks
+    # switchport mode trunk"), every access-classified port is host-facing *and*
+    # already non-trunk by definition — the check could never fail, so it isn't a
+    # real verification.
+    'V-220632': lambda cfg: _all_access_ports_have(cfg, r'switchport block unicast'),
+    'V-220634': lambda cfg: _all_access_ports_have(cfg, r'ip verify source'),
+    'V-220636': lambda cfg: _all_access_ports_have(cfg, r'storm-control broadcast level'),
+    'V-220640': lambda cfg: _all_trunk_ports_have(cfg, r'switchport nonegotiate'),
+    'V-220643': lambda cfg: default_vlan_pruned_from_trunks(cfg),
+    'V-220646': lambda cfg: _all_trunk_ports_have(cfg, r'switchport trunk native vlan (?!1\s*$)\d+'),
     # V-220586: presence of any of these directives (not "no "-prefixed) is a
     # finding — unnecessary/nonsecure services that should stay disabled by default.
     'V-220586': lambda cfg: not bool(re.search(
