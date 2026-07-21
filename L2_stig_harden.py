@@ -53,10 +53,10 @@ ACCESS_PORT_FIXES = [
     'storm-control broadcast level bps 20000000',  # V-220636 (storm control)
 ]
 
-# Pushed to every trunk/uplink-classified interface (native VLAN line added separately if provided)
+# Pushed to every trunk/uplink-classified interface (allowed-vlan list, native VLAN
+# line, added separately below once the device's actual VLAN database is known)
 TRUNK_PORT_FIXES = [
-    'switchport nonegotiate',              # V-220640 (static trunk, no DTP negotiation)
-    'switchport trunk allowed vlan except 1',  # V-220643 (prune default VLAN)
+    'switchport nonegotiate',  # V-220640 (static trunk, no DTP negotiation)
 ]
 
 # Global (non-interface-specific) fixes always pushed by this script
@@ -155,11 +155,17 @@ running_config = str(net_connect.send_command('show running-config'))
 access_ports, trunk_ports = parse_switchports(running_config)
 
 # V-220641: already-shutdown access ports get reassigned to the designated
-# unused VLAN (safe - they're not passing traffic), and that VLAN gets pruned
-# from every trunk (additive "remove", not "except" - avoids overwriting the
-# V-220643 prune-VLAN-1 list already pushed to the same trunk)
+# unused VLAN (safe - they're not passing traffic)
 unused_vlan = netauto.load_unused_vlan()
 disabled_ports = shutdown_access_ports(running_config, access_ports) if unused_vlan else []
+
+# V-220643/641: trunks should carry only VLANs that actually exist in the switch's
+# VLAN database, minus the default VLAN (1) and the designated unused VLAN - not
+# just "everything except 1/999", which would still leave every undefined VLAN ID
+# allowed too. An explicit list also sidesteps the except/remove semantics
+# entirely (no risk of clobbering a pre-existing restriction on first run).
+trunk_vlan_exclude = [1] + ([unused_vlan] if unused_vlan else [])
+allowed_trunk_vlans = stig_common.discover_user_vlans(net_connect, exclude=trunk_vlan_exclude)
 
 # Prompt for a non-default native VLAN for trunk ports (V-220646) — leave blank to skip
 native_vlan_id = input('Enter a native VLAN ID (not 1) for trunk ports, V-220646 '
@@ -191,10 +197,10 @@ if ntp_servers:
 
 # Build the per-interface command blocks now that ports are classified
 trunk_fixes = list(TRUNK_PORT_FIXES)
+if allowed_trunk_vlans:
+    trunk_fixes.append(f'switchport trunk allowed vlan {",".join(allowed_trunk_vlans)}')
 if native_vlan_id:
     trunk_fixes.append(f'switchport trunk native vlan {native_vlan_id}')
-if unused_vlan:
-    trunk_fixes.append(f'switchport trunk allowed vlan remove {unused_vlan}')
 
 interface_commands = []
 for name in access_ports:
@@ -223,11 +229,13 @@ if access_ports:
     applied_fixes['V-220636 (storm control)'] = '; '.join(ACCESS_PORT_FIXES[2:3]) + f' (on {len(access_ports)} access port(s))'
 if trunk_ports:
     applied_fixes['V-220640 (static trunk)'] = f'switchport nonegotiate (on {len(trunk_ports)} trunk port(s))'
-    applied_fixes['V-220643 (default VLAN pruned from trunks)'] = f'switchport trunk allowed vlan except 1 (on {len(trunk_ports)} trunk port(s))'
+    if allowed_trunk_vlans:
+        applied_fixes['V-220643/641b (trunks scoped to real VLANs only)'] = (
+            f'switchport trunk allowed vlan {",".join(allowed_trunk_vlans)} '
+            f'(on {len(trunk_ports)} trunk port(s))'
+        )
     if native_vlan_id:
         applied_fixes['V-220646 (native VLAN)'] = f'switchport trunk native vlan {native_vlan_id} (on {len(trunk_ports)} trunk port(s))'
-    if unused_vlan:
-        applied_fixes['V-220641b (unused VLAN pruned from trunks)'] = f'switchport trunk allowed vlan remove {unused_vlan} (on {len(trunk_ports)} trunk port(s))'
 if disabled_ports:
     applied_fixes['V-220641a (disabled ports to unused VLAN)'] = f'switchport access vlan {unused_vlan} (on {len(disabled_ports)} disabled port(s): {", ".join(disabled_ports)})'
 if ntp_servers:
@@ -267,6 +275,8 @@ if not access_ports:
     print('\nNo access/host-facing switchports found — nothing to push for V-220632/634/636.')
 if not trunk_ports:
     print('\nNo trunk switchports found — nothing to push for V-220640/643/646.')
+if trunk_ports and not allowed_trunk_vlans:
+    print('\nSkipped V-220643/641b (trunk VLAN scoping) — no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
 if trunk_ports and not native_vlan_id:
     print('\nSkipped V-220646 (native VLAN) — enter a non-default VLAN ID at the prompt to include it.')
 if not unused_vlan:
