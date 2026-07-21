@@ -409,7 +409,9 @@ CHECKS = {
     'V-220641': lambda cfg: _disabled_ports_unused_vlan_check(cfg, netauto.load_unused_vlan()),
     'V-220586': _no_unnecessary_services,
     'V-220624': lambda cfg: _presence(cfg, r'^vtp password \S+', re.M, 'a `vtp password <value>` line'),
-    'V-220630': lambda cfg: _presence(cfg, r'spanning-tree bpduguard enable|spanning-tree portfast bpduguard default', what='`spanning-tree bpduguard enable` or `spanning-tree portfast bpduguard default`'),
+    # IOS 15.x rewrites "spanning-tree portfast bpduguard default" to include
+    # "edge" in running-config ("...portfast edge bpduguard default") - accept both.
+    'V-220630': lambda cfg: _presence(cfg, r'spanning-tree bpduguard enable|spanning-tree portfast (edge )?bpduguard default', what='`spanning-tree bpduguard enable` or `spanning-tree portfast bpduguard default`'),
     'V-220631': lambda cfg: _presence(cfg, r'spanning-tree loopguard default', what='`spanning-tree loopguard default`'),
     # V-220633/635 (DHCP snooping/DAI VLAN coverage) are added below, after
     # discovering the device's genuine user VLANs — a plain presence check can't
@@ -458,7 +460,7 @@ CHECKS = {
     'V-220577': lambda cfg: _presence(cfg, r'banner (login|motd)', what='a `banner login` or `banner motd`'),
     'V-220589': lambda cfg: _presence(cfg, r'security passwords min-length (1[5-9]|[2-9]\d)', what='`security passwords min-length` of 15+'),
     'V-220595': lambda cfg: _all_of(cfg, [
-        ('service password-encryption', r'service password-encryption'),
+        ('service password-encryption', r'^\s*service password-encryption\s*$'),
         ('enable secret', r'enable secret'),
     ]),
     'V-220596': _exec_timeout_reason,
