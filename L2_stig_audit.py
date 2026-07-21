@@ -142,6 +142,47 @@ def default_vlan_pruned_from_trunks(cfg):
     return True, f'VLAN 1 pruned on all {len(trunk)} trunk port(s): {", ".join(sorted(trunk))}'
 
 
+# V-220641: disabled (shutdown) access ports must be assigned to the designated
+# unused VLAN, and that VLAN must be pruned from all trunk links (same pruning
+# logic as default_vlan_pruned_from_trunks, but for the unused VLAN instead of 1).
+def _disabled_ports_unused_vlan_check(cfg, unused_vlan):
+    if unused_vlan is None:
+        return False, 'no `unused_vlan` configured in inventory.yaml'
+    access, trunk = parse_switchports(cfg)
+
+    bad_access = []
+    disabled_count = 0
+    for name, block in sorted(access.items()):
+        if not re.search(r'^\s*shutdown\s*$', block, re.M):
+            continue
+        disabled_count += 1
+        m = re.search(r'switchport access vlan (\d+)', block)
+        actual = m.group(1) if m else 'default (untagged, VLAN 1)'
+        if not m or int(m.group(1)) != unused_vlan:
+            bad_access.append(f'{name} (VLAN {actual})')
+    if bad_access:
+        return False, f'disabled access port(s) not assigned to VLAN {unused_vlan}: {", ".join(bad_access)}'
+
+    bad_trunk = []
+    for name, block in sorted(trunk.items()):
+        m = re.search(r'switchport trunk allowed vlan (.+)$', block, re.M)
+        if not m:
+            bad_trunk.append(f'{name} (no allowed-vlan restriction, VLAN {unused_vlan} allowed by default)')
+            continue
+        spec = m.group(1).strip()
+        pruned = (
+            (spec.startswith('except') and _vlan_in_spec(unused_vlan, spec[len('except'):].strip()))
+            or (spec.startswith('remove') and _vlan_in_spec(unused_vlan, spec[len('remove'):].strip()))
+            or (not spec.startswith(('except', 'remove', 'add')) and not _vlan_in_spec(unused_vlan, spec))
+        )
+        if not pruned:
+            bad_trunk.append(f'{name} (`switchport trunk allowed vlan {spec}` still allows VLAN {unused_vlan})')
+    if bad_trunk:
+        return False, f'VLAN {unused_vlan} not pruned from trunk(s): {"; ".join(bad_trunk)}'
+
+    return True, f'{disabled_count} disabled access port(s) correctly assigned to VLAN {unused_vlan}, pruned from all {len(trunk)} trunk port(s)'
+
+
 # V-220586: presence of any of these directives (not "no "-prefixed) is a finding —
 # unnecessary/nonsecure services that should stay disabled by default.
 UNNECESSARY_SERVICES_PATTERN = (
@@ -365,6 +406,7 @@ CHECKS = {
     'V-220640': lambda cfg: _all_trunk_ports_have(cfg, r'switchport nonegotiate', '`switchport nonegotiate`'),
     'V-220643': lambda cfg: default_vlan_pruned_from_trunks(cfg),
     'V-220646': lambda cfg: _all_trunk_ports_have(cfg, r'switchport trunk native vlan (?!1\s*$)\d+', 'a non-default native VLAN'),
+    'V-220641': lambda cfg: _disabled_ports_unused_vlan_check(cfg, netauto.load_unused_vlan()),
     'V-220586': _no_unnecessary_services,
     'V-220624': lambda cfg: _presence(cfg, r'^vtp password \S+', re.M, 'a `vtp password <value>` line'),
     'V-220630': lambda cfg: _presence(cfg, r'spanning-tree bpduguard enable|spanning-tree portfast bpduguard default', what='`spanning-tree bpduguard enable` or `spanning-tree portfast bpduguard default`'),
