@@ -57,6 +57,14 @@ BASE_FIXES = {
     'V-220637 (IGMP snooping)': 'ip igmp snooping',
 }
 
+# V-220608: SSH encryption algorithm — includes "ip ssh version 2" too, since
+# V-220608's own audit check requires both and this makes V-220607 pass as a
+# side effect
+SSH_ENCRYPTION_FIX = [
+    'ip ssh version 2',
+    'ip ssh server algorithm encryption aes256-ctr aes192-ctr aes128-ctr',
+]
+
 # V-220586: disable unnecessary/nonsecure services — idempotent, safe to push
 # unconditionally even when a service is already disabled
 UNNECESSARY_SERVICES_FIX = [
@@ -116,10 +124,12 @@ access_ports, trunk_ports = parse_switchports(running_config)
 native_vlan_id = input('Enter a native VLAN ID (not 1) for trunk ports, V-220646 '
                         '— leave blank to skip: ').strip()
 
-# NTP server IPs (V-220601) come from inventory.yaml's services section instead of
-# a prompt. Still prompt for the authentication key — that's credential-like, not
-# an address, and doesn't belong in inventory.yaml.
-ntp_servers = netauto.load_services().get('ntp_servers', [])
+# NTP/syslog server IPs (V-220601, V-220620) come from inventory.yaml's services
+# section instead of a prompt. Still prompt for the NTP authentication key — that's
+# credential-like, not an address, and doesn't belong in inventory.yaml.
+services = netauto.load_services()
+ntp_servers = services.get('ntp_servers', [])
+syslog_servers = services.get('syslog_servers', [])
 ntp_auth = input('Enter NTP authentication key ID and MD5 value for V-220606, '
                   'space-separated (e.g. "1 MyStrongKey123") — leave blank to skip: ').strip()
 ntp_key_id, _, ntp_key_value = ntp_auth.partition(' ')
@@ -153,6 +163,7 @@ for name in trunk_ports:
 
 applied_fixes = dict(BASE_FIXES)
 applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICES_FIX)
+applied_fixes['V-220608 (SSH encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
 if vlan_ids:
     applied_fixes['V-220633 (DHCP snooping)'] = f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
     applied_fixes['V-220635 (DAI)'] = f'ip arp inspection vlan {",".join(vlan_ids)}'
@@ -173,14 +184,17 @@ if ntp_servers:
 if ntp_key_id:
     applied_fixes['V-220606 (NTP authentication)'] = '; '.join([
         f'ntp authentication-key {ntp_key_id} md5 {ntp_key_value}', 'ntp authenticate', f'ntp trusted-key {ntp_key_id}'])
+if syslog_servers:
+    applied_fixes['V-220620 (dual syslog servers)'] = '; '.join(f'logging host {ip}' for ip in syslog_servers)
 
-commands = list(BASE_FIXES.values()) + UNNECESSARY_SERVICES_FIX
+commands = list(BASE_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX
 if vlan_ids:
     commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}', f'ip arp inspection vlan {",".join(vlan_ids)}']
 if vtp_password:
     commands.append(f'vtp password {vtp_password}')
 commands += interface_commands
 commands += ntp_commands
+commands += [f'logging host {ip}' for ip in syslog_servers]
 
 # Push the hardening commands and close the session
 output = net_connect.send_config_set(commands)
@@ -207,6 +221,8 @@ if not vtp_password:
     print('\nSkipped V-220624 (VTP authentication) — enter a VTP password at the prompt to include it.')
 if not ntp_servers:
     print('\nSkipped V-220601 (NTP time sync) — add ntp_servers to inventory.yaml\'s services section to include it.')
+if not syslog_servers:
+    print('\nSkipped V-220620 (dual syslog servers) — add syslog_servers to inventory.yaml\'s services section to include it.')
 if not ntp_key_id:
     print('\nSkipped V-220606 (NTP authentication) — enter an NTP key ID/MD5 value at the prompt to include it.')
 
