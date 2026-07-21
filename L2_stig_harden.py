@@ -59,6 +59,7 @@ BASE_FIXES = {
     'V-220599 (logging buffer size)': 'logging buffered 64000 informational',
     'V-220612a (log on-failure)': 'login on-failure log',
     'V-220612b (log on-success)': 'login on-success log',
+    'V-220576 (lockout after 3 failed attempts)': 'login block-for 900 attempts 3 within 120',
 }
 
 # V-220608: SSH encryption algorithm — includes "ip ssh version 2" too, since
