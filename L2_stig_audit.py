@@ -199,6 +199,32 @@ def _archive_logging_enabled(cfg):
     return False, 'missing `archive` block (with `log config` / `logging enable`)'
 
 
+# V-220578: administrator activity logging — logging userinfo (privilege escalation)
+# plus the same archive block as the 8-rule cluster above
+def _admin_activity_logged(cfg):
+    if 'logging userinfo' not in cfg:
+        return False, 'missing `logging userinfo`'
+    archive_ok, archive_reason = _archive_logging_enabled(cfg)
+    if not archive_ok:
+        return False, f'`logging userinfo` present, but {archive_reason}'
+    return True, f'found: `logging userinfo`, {archive_reason}'
+
+
+# V-220570: concurrent management sessions limited via either ip http
+# max-connections or line vty session-limit (either is sufficient per DISA)
+def _session_limit_check(cfg):
+    http_m = re.search(r'^ip http max-connections (\d+)', cfg, re.M)
+    session_m = re.search(r'^\s*session-limit (\d+)', cfg, re.M)
+    if http_m or session_m:
+        found = []
+        if http_m:
+            found.append(f'ip http max-connections {http_m.group(1)}')
+        if session_m:
+            found.append(f'session-limit {session_m.group(1)}')
+        return True, f'found: {", ".join(found)}'
+    return False, 'missing both `ip http max-connections <n>` and `line vty ... session-limit <n>` (need at least one)'
+
+
 # V-220590/591/592/593/594: password complexity, each is one sub-command inside
 # an `aaa common-criteria policy <name>` block.
 def _cc_policy_check(cfg, pattern, min_value, what):
@@ -311,6 +337,8 @@ CHECKS = {
     'V-220597': _archive_logging_enabled,
     'V-220611': _archive_logging_enabled,
     'V-220613': _archive_logging_enabled,
+    'V-220578': _admin_activity_logged,
+    'V-220570': _session_limit_check,
     'V-220587': _single_local_account_check,
     'V-220617': _radius_redundancy_check,
     'V-220590': lambda cfg: _cc_policy_check(cfg, r'^\s*upper-case (\d+)', 1, '`upper-case <n>`'),

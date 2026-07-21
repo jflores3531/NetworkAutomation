@@ -60,7 +60,12 @@ BASE_FIXES = {
     'V-220612a (log on-failure)': 'login on-failure log',
     'V-220612b (log on-success)': 'login on-success log',
     'V-220576 (lockout after 3 failed attempts)': 'login block-for 900 attempts 3 within 120',
+    'V-220578 (admin activity logging)': 'logging userinfo',
+    'V-220570a (HTTP session limit)': 'ip http max-connections 2',
 }
+
+# V-220570: session-limit needs its own "line vty 0 4" context
+VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 2']
 
 # V-220608: SSH encryption algorithm — includes "ip ssh version 2" too, since
 # V-220608's own audit check requires both and this makes V-220607 pass as a
@@ -182,6 +187,7 @@ applied_fixes = dict(BASE_FIXES)
 applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICES_FIX)
 applied_fixes['V-220608 (SSH encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
 applied_fixes['V-220571/572/573/574/582/597/611/613 (archive logging)'] = '; '.join(ARCHIVE_LOGGING_FIX)
+applied_fixes['V-220570b (VTY session limit)'] = '; '.join(VTY_SESSION_LIMIT_FIX)
 if vlan_ids:
     applied_fixes['V-220633 (DHCP snooping)'] = f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
     applied_fixes['V-220635 (DAI)'] = f'ip arp inspection vlan {",".join(vlan_ids)}'
@@ -205,7 +211,7 @@ if ntp_key_id:
 if syslog_servers:
     applied_fixes['V-220620 (dual syslog servers)'] = '; '.join(f'logging host {ip}' for ip in syslog_servers)
 
-commands = list(BASE_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX
+commands = list(BASE_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX
 if vlan_ids:
     commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}', f'ip arp inspection vlan {",".join(vlan_ids)}']
 if vtp_password:
