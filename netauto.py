@@ -57,6 +57,14 @@ def load_unused_vlan(path='inventory.yaml'):
     return inventory.get('unused_vlan')
 
 
+def load_native_vlan(path='inventory.yaml'):
+    """Load the native_vlan ID from the YAML inventory — the VLAN to assign as
+    native on 802.1q trunk links (V-220646). Returns None if not defined."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('native_vlan')
+
+
 def get_credentials():
     """Prompt for the SSH username/password used to connect to devices."""
     username = input('Enter your SSH username: ')

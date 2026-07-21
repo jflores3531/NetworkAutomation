@@ -167,9 +167,8 @@ disabled_ports = shutdown_access_ports(running_config, access_ports) if unused_v
 trunk_vlan_exclude = [1] + ([unused_vlan] if unused_vlan else [])
 allowed_trunk_vlans = stig_common.discover_user_vlans(net_connect, exclude=trunk_vlan_exclude)
 
-# Prompt for a non-default native VLAN for trunk ports (V-220646) — leave blank to skip
-native_vlan_id = input('Enter a native VLAN ID (not 1) for trunk ports, V-220646 '
-                        '— leave blank to skip: ').strip()
+# Native VLAN for trunk ports (V-220646) comes from inventory.yaml instead of a prompt
+native_vlan_id = netauto.load_native_vlan()
 
 # NTP/syslog server IPs (V-220601, V-220620) come from inventory.yaml's services
 # section instead of a prompt. Still prompt for the NTP authentication key — that's
@@ -278,7 +277,7 @@ if not trunk_ports:
 if trunk_ports and not allowed_trunk_vlans:
     print('\nSkipped V-220643/641b (trunk VLAN scoping) — no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
 if trunk_ports and not native_vlan_id:
-    print('\nSkipped V-220646 (native VLAN) — enter a non-default VLAN ID at the prompt to include it.')
+    print('\nSkipped V-220646 (native VLAN) — add native_vlan to inventory.yaml to include it.')
 if not unused_vlan:
     print('\nSkipped V-220641 (unused VLAN) — add unused_vlan to inventory.yaml to include it.')
 elif not disabled_ports:
