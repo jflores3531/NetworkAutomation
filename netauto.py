@@ -40,6 +40,15 @@ def load_non_user_vlans(path='inventory.yaml'):
     return inventory.get('non_user_vlans', [])
 
 
+def load_management_subnet(path='inventory.yaml'):
+    """Load the management_subnet string (e.g. '10.10.50.0/24') from the YAML
+    inventory, used to verify vty access-class ACLs are actually scoped to the
+    management network (V-220575). Returns None if not defined."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('management_subnet')
+
+
 def get_credentials():
     """Prompt for the SSH username/password used to connect to devices."""
     username = input('Enter your SSH username: ')
