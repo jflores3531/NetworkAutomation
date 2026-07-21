@@ -223,6 +223,20 @@ def _single_local_account_check(cfg):
     return True, f'exactly 1 local account (`{usernames[0]}`), configured as fallback after the AAA server group'
 
 
+# V-220576: exactly 3 consecutive invalid attempts, blocked for >= 900s (15 min)
+def _login_block_check(cfg):
+    m = re.search(r'^login block-for (\d+) attempts (\d+) within (\d+)', cfg, re.M)
+    if not m:
+        return False, 'missing `login block-for <secs> attempts <n> within <secs>` line'
+    block_secs, attempts, within_secs = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    found = f'`login block-for {block_secs} attempts {attempts} within {within_secs}`'
+    if attempts != 3:
+        return False, f'found {found} but attempts must be exactly 3'
+    if block_secs < 900:
+        return False, f'found {found} but block-for must be >= 900 (15 min)'
+    return True, f'found: {found}'
+
+
 def _exec_timeout_reason(cfg):
     matches = re.findall(r'exec-timeout (\d+) (\d+)', cfg)
     ok = stig_common.exec_timeout_ok(cfg)
@@ -294,6 +308,7 @@ CHECKS = {
         ('login on-failure log', r'login on-failure log'),
         ('login on-success log', r'login on-success log'),
     ]),
+    'V-220576': _login_block_check,
     'V-220577': lambda cfg: _presence(cfg, r'banner (login|motd)', what='a `banner login` or `banner motd`'),
     'V-220589': lambda cfg: _presence(cfg, r'security passwords min-length (1[5-9]|[2-9]\d)', what='`security passwords min-length` of 15+'),
     'V-220595': lambda cfg: _all_of(cfg, [
