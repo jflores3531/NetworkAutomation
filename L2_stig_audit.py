@@ -133,6 +133,14 @@ CHECKS = {
     'V-220595': lambda cfg: 'service password-encryption' in cfg and 'enable secret' in cfg,
     'V-220596': stig_common.exec_timeout_ok,
     'V-220607': lambda cfg: bool(re.search(r'ip ssh version 2', cfg)),
+    'V-220608': lambda cfg: 'ip ssh version 2' in cfg and bool(re.search(r'ip ssh server algorithm encryption\s+\S*aes', cfg)),
+    # V-220620: matches "logging host x.x.x.x" or the bare legacy "logging x.x.x.x"
+    # form. Deliberately excludes non-IP "logging ..." directives (buffered, trap,
+    # on, console, etc.) by requiring the token after "logging"/"logging host" to
+    # look like an IPv4 address.
+    'V-220620': lambda cfg: len(set(re.findall(
+        r'^logging (?:host )?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', cfg, re.M
+    ))) >= 2,
 }
 
 # Parse the target device from the command line
