@@ -288,6 +288,12 @@ CHECKS = {
     'V-220592': lambda cfg: _cc_policy_check(cfg, r'^\s*numeric-count (\d+)', 1, '`numeric-count <n>`'),
     'V-220593': lambda cfg: _cc_policy_check(cfg, r'^\s*special-case (\d+)', 1, '`special-case <n>`'),
     'V-220594': lambda cfg: _cc_policy_check(cfg, r'^\s*char-changes (\d+)', 8, '`char-changes <n>`'),
+    'V-220580': lambda cfg: _presence(cfg, r'service timestamps log datetime localtime', what='`service timestamps log datetime localtime`'),
+    'V-220599': lambda cfg: _presence(cfg, r'logging buffered \d+', what='a `logging buffered <size> ...` line'),
+    'V-220612': lambda cfg: _all_of(cfg, [
+        ('login on-failure log', r'login on-failure log'),
+        ('login on-success log', r'login on-success log'),
+    ]),
     'V-220577': lambda cfg: _presence(cfg, r'banner (login|motd)', what='a `banner login` or `banner motd`'),
     'V-220589': lambda cfg: _presence(cfg, r'security passwords min-length (1[5-9]|[2-9]\d)', what='`security passwords min-length` of 15+'),
     'V-220595': lambda cfg: _all_of(cfg, [
