@@ -43,7 +43,8 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
             status = 'PASS' if check(running_config) else 'FAIL'
         results[status] += 1
 
-        print(f"[{rule['severity'].upper():6}] {status:14} {group_id}  {rule['rule_title']}")
+        rule_title = re.sub(r'^The Cisco switch\s+', '', rule['rule_title'])
+        print(f"[{rule['severity'].upper():6}] {status:14} {group_id}  {rule_title}")
 
     print(f"\n{results['PASS']} passed, {results['FAIL']} failed, {results['NOT AUTOMATED']} not automated ({not_automated_note}) out of {len(rules)} rules.")
 
