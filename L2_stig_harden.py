@@ -62,6 +62,7 @@ BASE_FIXES = {
     'V-220576 (lockout after 3 failed attempts)': 'login block-for 900 attempts 3 within 120',
     'V-220578 (admin activity logging)': 'logging userinfo',
     'V-220570a (HTTP session limit)': 'ip http max-connections 2',
+    'V-220625 (QoS enabled)': 'mls qos',
 }
 
 # V-220570: session-limit needs its own "line vty 0 4" context

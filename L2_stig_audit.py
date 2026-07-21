@@ -353,6 +353,9 @@ CHECKS = {
         ('login on-success log', r'login on-success log'),
     ]),
     'V-220576': _login_block_check,
+    'V-220625': lambda cfg: _presence(cfg, r'^mls qos\s*$', re.M, what='`mls qos`'),
+    'V-220604': lambda cfg: _presence(cfg, r'snmp-server group \S+ v3 (auth|priv)', what='an `snmp-server group <name> v3 auth` or `v3 priv` line'),
+    'V-220605': lambda cfg: _presence(cfg, r'snmp-server group \S+ v3 priv', what='an `snmp-server group <name> v3 priv` line'),
     'V-220577': lambda cfg: _presence(cfg, r'banner (login|motd)', what='a `banner login` or `banner motd`'),
     'V-220589': lambda cfg: _presence(cfg, r'security passwords min-length (1[5-9]|[2-9]\d)', what='`security passwords min-length` of 15+'),
     'V-220595': lambda cfg: _all_of(cfg, [
