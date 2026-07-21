@@ -30,7 +30,7 @@ CHECKS = {
     'V-220686': lambda cfg: bool(re.search(r'ip arp inspection vlan', cfg)),
     'V-220688': lambda cfg: 'no ip igmp snooping' not in cfg,
     'V-220689': lambda cfg: 'feature udld' in cfg and bool(re.search(r'udld (enable|aggressive)', cfg)),
-    'V-220498': lambda cfg: 'feature ntp' in cfg and len(re.findall(r'^ntp server \S+', cfg, re.M)) >= 2,
+    'V-220498': lambda cfg: 'feature ntp' in cfg and len(set(re.findall(r'^ntp server (\S+)', cfg, re.M))) >= 2,
     'V-220502': lambda cfg: (
         'feature ntp' in cfg
         and 'ntp authenticate' in cfg
