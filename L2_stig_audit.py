@@ -158,6 +158,32 @@ def _no_unnecessary_services(cfg):
     return True, 'none of the unnecessary/nonsecure services found enabled'
 
 
+def _vlan_range_covers_user_vlans(cfg, pattern, user_vlans, missing_line_what):
+    """PASS only if the VLAN range captured by `pattern` (e.g. from an
+    `ip dhcp snooping vlan <spec>` or `ip arp inspection vlan <spec>` line)
+    actually covers every VLAN in `user_vlans` — not just that *some* list is
+    configured. Catches the case where the feature is scoped to the wrong VLANs
+    (e.g. management/default) while the real user VLAN has none."""
+    m = re.search(pattern, cfg, re.M)
+    if not m:
+        return False, f'missing {missing_line_what}'
+    spec = m.group(1)
+    if not user_vlans:
+        return False, 'no genuine user VLANs discovered from `show vlan brief` (check inventory.yaml non_user_vlans / device VLAN config)'
+    missing = [v for v in user_vlans if not _vlan_in_spec(int(v), spec)]
+    if missing:
+        return False, f'configured VLAN range `{spec}` does not cover user VLAN(s): {", ".join(missing)}'
+    return True, f'`{spec}` covers all user VLAN(s): {", ".join(sorted(user_vlans, key=int))}'
+
+
+def _dhcp_snooping_check(cfg, user_vlans):
+    if not re.search(r'^ip dhcp snooping$', cfg, re.M):
+        return False, 'missing `ip dhcp snooping` (globally enabled)'
+    return _vlan_range_covers_user_vlans(
+        cfg, r'ip dhcp snooping vlan (\S+)', user_vlans, 'an `ip dhcp snooping vlan <list>` line'
+    )
+
+
 def _exec_timeout_reason(cfg):
     matches = re.findall(r'exec-timeout (\d+) (\d+)', cfg)
     ok = stig_common.exec_timeout_ok(cfg)
@@ -193,11 +219,10 @@ CHECKS = {
     'V-220624': lambda cfg: _presence(cfg, r'^vtp password \S+', re.M, 'a `vtp password <value>` line'),
     'V-220630': lambda cfg: _presence(cfg, r'spanning-tree bpduguard enable|spanning-tree portfast bpduguard default', what='`spanning-tree bpduguard enable` or `spanning-tree portfast bpduguard default`'),
     'V-220631': lambda cfg: _presence(cfg, r'spanning-tree loopguard default', what='`spanning-tree loopguard default`'),
-    'V-220633': lambda cfg: _all_of(cfg, [
-        ('ip dhcp snooping', r'^ip dhcp snooping$'),
-        ('ip dhcp snooping vlan <list>', r'ip dhcp snooping vlan'),
-    ]),
-    'V-220635': lambda cfg: _presence(cfg, r'ip arp inspection vlan', what='an `ip arp inspection vlan <list>` line'),
+    # V-220633/635 (DHCP snooping/DAI VLAN coverage) are added below, after
+    # discovering the device's genuine user VLANs — a plain presence check can't
+    # tell "configured for the wrong VLANs" from "configured correctly" (e.g.
+    # snooping enabled on VLAN 1,10 while the real user VLAN 55 has none).
     'V-220637': lambda cfg: _absence(cfg, r'no ip igmp snooping', what='`no ip igmp snooping` (would disable it)'),
     'V-220638': lambda cfg: _presence(cfg, r'spanning-tree mode rapid-pvst', what='`spanning-tree mode rapid-pvst`'),
     'V-220639': lambda cfg: _presence(cfg, r'udld (enable|aggressive)', what='`udld enable` or `udld aggressive`'),
@@ -244,6 +269,21 @@ device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 
 # Prompt for credentials
 username, password = netauto.get_credentials()
+
+# Discover genuine user VLANs (excludes management/servers/unused VLANs from
+# inventory.yaml's non_user_vlans) so V-220633/V-220635 can verify DHCP
+# snooping/DAI actually cover them, not just that some VLAN list exists. Uses a
+# separate connection since run_stig_audit manages its own for running-config.
+vlan_discovery_connect = netauto.connect(device_name, device_info, username, password)
+if vlan_discovery_connect is None:
+    raise SystemExit(1)
+user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=netauto.load_non_user_vlans())
+vlan_discovery_connect.disconnect()
+
+CHECKS['V-220633'] = lambda cfg: _dhcp_snooping_check(cfg, user_vlans)
+CHECKS['V-220635'] = lambda cfg: _vlan_range_covers_user_vlans(
+    cfg, r'ip arp inspection vlan (\S+)', user_vlans, 'an `ip arp inspection vlan <list>` line'
+)
 
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,
