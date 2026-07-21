@@ -184,6 +184,21 @@ def _dhcp_snooping_check(cfg, user_vlans):
     )
 
 
+# V-220571/572/573/574/582/597/611/613: DISA reuses the exact same evidence
+# (archive / log config / logging enable) for 8 different audit-logging rules
+# (account creation/modification/disabling/removal/enabling, privileges deleted,
+# privileged activities, full-text privileged-command logging) — one check
+# covers all of them.
+def _archive_logging_enabled(cfg):
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if chunk.startswith('archive'):
+            missing = [c for c in ('log config', 'logging enable') if c not in chunk]
+            if missing:
+                return False, f'`archive` block present but missing: {", ".join(missing)}'
+            return True, 'found: `archive` / `log config` / `logging enable`'
+    return False, 'missing `archive` block (with `log config` / `logging enable`)'
+
+
 def _exec_timeout_reason(cfg):
     matches = re.findall(r'exec-timeout (\d+) (\d+)', cfg)
     ok = stig_common.exec_timeout_ok(cfg)
@@ -235,6 +250,14 @@ CHECKS = {
     ]),
 
     # --- NDM (Network Device Management) ---
+    'V-220571': _archive_logging_enabled,
+    'V-220572': _archive_logging_enabled,
+    'V-220573': _archive_logging_enabled,
+    'V-220574': _archive_logging_enabled,
+    'V-220582': _archive_logging_enabled,
+    'V-220597': _archive_logging_enabled,
+    'V-220611': _archive_logging_enabled,
+    'V-220613': _archive_logging_enabled,
     'V-220577': lambda cfg: _presence(cfg, r'banner (login|motd)', what='a `banner login` or `banner motd`'),
     'V-220589': lambda cfg: _presence(cfg, r'security passwords min-length (1[5-9]|[2-9]\d)', what='`security passwords min-length` of 15+'),
     'V-220595': lambda cfg: _all_of(cfg, [

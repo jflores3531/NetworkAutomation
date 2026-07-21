@@ -85,6 +85,17 @@ UNNECESSARY_SERVICES_FIX = [
     'no service call-home',
 ]
 
+# V-220571/572/573/574/582/597/611/613: config-change archive logging satisfies
+# all 8 rules at once (DISA reuses the exact same evidence for each)
+ARCHIVE_LOGGING_FIX = [
+    'archive',
+    'log config',
+    'logging enable',
+    'logging size 1000',
+    'notify syslog contenttype plaintext',
+    'hidekeys',
+]
+
 # Rules intentionally not pushed by this script (see module docstring)
 SKIPPED_RULES = [
     'V-220642 (default VLAN on host ports)',
@@ -165,6 +176,7 @@ for name in trunk_ports:
 applied_fixes = dict(BASE_FIXES)
 applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICES_FIX)
 applied_fixes['V-220608 (SSH encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
+applied_fixes['V-220571/572/573/574/582/597/611/613 (archive logging)'] = '; '.join(ARCHIVE_LOGGING_FIX)
 if vlan_ids:
     applied_fixes['V-220633 (DHCP snooping)'] = f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
     applied_fixes['V-220635 (DAI)'] = f'ip arp inspection vlan {",".join(vlan_ids)}'
@@ -188,7 +200,7 @@ if ntp_key_id:
 if syslog_servers:
     applied_fixes['V-220620 (dual syslog servers)'] = '; '.join(f'logging host {ip}' for ip in syslog_servers)
 
-commands = list(BASE_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX
+commands = list(BASE_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX
 if vlan_ids:
     commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}', f'ip arp inspection vlan {",".join(vlan_ids)}']
 if vtp_password:
