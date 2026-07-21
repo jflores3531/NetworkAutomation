@@ -113,8 +113,9 @@ net_connect = netauto.connect(device_name, device_info, username, password)
 if net_connect is None:
     raise SystemExit(1)
 
-# Discover the switch's user VLANs (V-220633: DHCP snooping, V-220635: DAI)
-vlan_ids = stig_common.discover_user_vlans(net_connect)
+# Discover the switch's user VLANs (V-220633: DHCP snooping, V-220635: DAI),
+# excluding management/servers/unused VLANs from inventory.yaml's non_user_vlans
+vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=netauto.load_non_user_vlans())
 
 # Classify switchports (host-facing/access vs. trunk/uplink) for the interface-scoped fixes
 running_config = str(net_connect.send_command('show running-config'))

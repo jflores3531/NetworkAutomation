@@ -74,8 +74,13 @@ def exec_timeout_ok(cfg, max_minutes=5):
     return True
 
 
-def discover_user_vlans(net_connect):
+def discover_user_vlans(net_connect, exclude=()):
     """Return a switch's user VLAN IDs from `show vlan brief`, excluding the
-    reserved fddi/token-ring VLAN range (1002-1005)."""
+    reserved fddi/token-ring VLAN range (1002-1005) plus any VLAN IDs in `exclude`
+    (e.g. management/servers/unused VLANs from inventory.yaml's non_user_vlans)."""
+    exclude_ids = {int(v) for v in exclude}
     vlan_brief = str(net_connect.send_command('show vlan brief'))
-    return [vid for vid in re.findall(r'^(\d+)\s+\S+', vlan_brief, re.M) if not (1002 <= int(vid) <= 1005)]
+    return [
+        vid for vid in re.findall(r'^(\d+)\s+\S+', vlan_brief, re.M)
+        if not (1002 <= int(vid) <= 1005) and int(vid) not in exclude_ids
+    ]
