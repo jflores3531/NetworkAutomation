@@ -55,6 +55,7 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
         print(f"[{rule['severity'].upper():6}] {status:14} {group_id}  {rule_title}")
         if reason:
             print(f"           {reason}")
+        print()
 
 
 def exec_timeout_ok(cfg, max_minutes=5):
