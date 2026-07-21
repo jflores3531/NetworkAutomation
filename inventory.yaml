@@ -1,7 +1,7 @@
 # inventory.yaml
 # Device inventory for network automation scripts.
 # device_type values follow Netmiko's supported platform strings:
-#   cisco_ios  -> R1, R2, S1, S2 (IOS / IOSvL2)
+#   cisco_ios  -> R1, R2, S1, S2, S3 (IOS / IOSvL2)
 #   cisco_nxos -> NXCore1, NXCore2 (NX-OS)
 #
 # NOTE: No credentials live in this file on purpose.
@@ -24,6 +24,10 @@ devices:
 
   S2:
     host: 10.10.50.12
+    device_type: cisco_ios
+
+  S3:
+    host: 10.10.50.13
     device_type: cisco_ios
 
   NXCore1:
