@@ -8,6 +8,11 @@ audit_logs/
 # Ad-hoc command files passed to push_config.py
 commands*.txt
 
+# Plaintext secrets used by the *_stig_harden.py scripts (VTP password, NTP auth
+# key, etc.) - never commit this. See secrets.yaml.example for the format.
+secrets.yaml
+
+
 .idea/
 .claude/
 .agents/

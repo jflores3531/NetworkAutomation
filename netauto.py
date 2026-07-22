@@ -65,6 +65,16 @@ def load_native_vlan(path='inventory.yaml'):
     return inventory.get('native_vlan')
 
 
+def load_secrets(path='secrets.yaml'):
+    """Load plaintext secrets used by the *_stig_harden.py scripts (VTP password,
+    NTP auth key, etc.) from secrets.yaml - gitignored, never committed. Returns
+    an empty dict if the file doesn't exist (see secrets.yaml.example)."""
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
+
+
 def get_credentials():
     """Prompt for the SSH username/password used to connect to devices."""
     username = input('Enter your SSH username: ')
