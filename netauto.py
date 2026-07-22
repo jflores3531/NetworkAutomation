@@ -92,30 +92,53 @@ def require_devices(all_devices, device_names):
 
 
 def connect(device_name, device_info, username, password):
-    """Connect to a device from the inventory. Returns the Netmiko connection,
-    or None (after printing why) if the connection failed."""
+    """Connect to a device from the inventory, escalating to privileged EXEC
+    with secrets.yaml's enable_secret if one is set. Needed now that AAA
+    governs login on devices with 'aaa new-model' active - a local account's
+    privilege 15 stopped being honored automatically on login once that was
+    pushed, landing SSH sessions at user EXEC instead. .enable() is a no-op if
+    the session is already privileged, so this is safe to call unconditionally
+    against devices that don't have AAA active yet too. Returns the Netmiko
+    connection, or None (after printing why) if the connection or enable
+    escalation failed."""
     print('Connecting to device: ' + device_name)
+    enable_secret = str(load_secrets().get('enable_secret') or '').strip()
     ios_device = {
         'device_type': device_info['device_type'],
         'ip': device_info['host'],
         'username': username,
         'password': password
     }
+    if enable_secret:
+        ios_device['secret'] = enable_secret
 
     try:
-        return ConnectHandler(**ios_device)
+        net_connect = ConnectHandler(**ios_device)
     except NetmikoAuthenticationException:
         print('Authentication failure: ' + device_name)
+        return None
     except NetmikoTimeoutException:
         print('Timeout to device: ' + device_name)
+        return None
     except EOFError:
         print('End of file while attempting device ' + device_name)
+        return None
     except SSHException:
         print('SSH Issue. Are you sure SSH is enabled? ' + device_name)
+        return None
     except Exception as unknown_error:
         print('Some other error: ' + str(unknown_error))
+        return None
 
-    return None
+    if enable_secret:
+        try:
+            net_connect.enable()
+        except Exception as enable_error:
+            print(f'Failed to reach privileged EXEC on {device_name}: {enable_error}')
+            net_connect.disconnect()
+            return None
+
+    return net_connect
 
 
 def log_push(script_name, device_name, username, commands):
