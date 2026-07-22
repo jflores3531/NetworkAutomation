@@ -76,6 +76,14 @@ BASE_FIXES = {
     'V-220625 (QoS enabled)': 'mls qos',
 }
 
+# Not a STIG requirement - pushed for host visibility only. ARP-probes every
+# L2 port and populates 'show ip device tracking all' with each host's
+# IP/MAC/VLAN/interface, static or DHCP-assigned alike (unlike IP Source Guard,
+# it doesn't rely on the DHCP snooping binding table).
+OPTIONAL_FIXES = {
+    'IP Device Tracking (host visibility, not a STIG requirement)': 'ip device tracking',
+}
+
 # V-220570: session-limit needs its own "line vty 0 4" context
 VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 2']
 
@@ -221,6 +229,7 @@ for name in disabled_ports:
     interface_commands.append(f'switchport access vlan {unused_vlan}')
 
 applied_fixes = dict(BASE_FIXES)
+applied_fixes.update(OPTIONAL_FIXES)
 applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICES_FIX)
 applied_fixes['V-220608 (SSH encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
 applied_fixes['V-220571/572/573/574/582/597/611/613 (archive logging)'] = '; '.join(ARCHIVE_LOGGING_FIX)
@@ -259,7 +268,7 @@ if ntp_key_id:
 if syslog_servers:
     applied_fixes['V-220620 (dual syslog servers)'] = '; '.join(f'logging host {ip}' for ip in syslog_servers)
 
-commands = list(BASE_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX
+commands = list(BASE_FIXES.values()) + list(OPTIONAL_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX
 if vlan_ids:
     commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}', f'ip arp inspection vlan {",".join(vlan_ids)}']
 if vtp_password:
@@ -282,6 +291,7 @@ print(output)
 print(f'\nRules addressed by this pass:')
 for rule in applied_fixes:
     print('  - ' + rule)
+print('\nIP Device Tracking pushed - view results with `show ip device tracking all` on the device.')
 
 if not access_ports:
     print('\nNo access/host-facing switchports found — nothing to push for V-220632/634/636.')
