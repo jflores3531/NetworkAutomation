@@ -49,6 +49,15 @@ def load_management_subnet(path='inventory.yaml'):
     return inventory.get('management_subnet')
 
 
+def load_automation_host(path='inventory.yaml'):
+    """Load the automation_host IP from the YAML inventory - the sole
+    permitted source for V-220575's vty ACL (L2_stig_harden_acl.py). Returns
+    None if not defined."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('automation_host')
+
+
 def load_unused_vlan(path='inventory.yaml'):
     """Load the unused_vlan ID from the YAML inventory — the VLAN designated for
     disabled/unused ports (V-220641). Returns None if not defined."""
