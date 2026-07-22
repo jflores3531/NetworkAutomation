@@ -163,6 +163,17 @@ username, password = netauto.get_credentials()
 secrets = netauto.load_secrets()
 vtp_password = str(secrets.get('vtp_password') or '').strip()
 
+# SNMPv3 auth/priv passwords (V-220604/605) come from secrets.yaml. Config-only
+# push - no SNMP monitoring station in this lab to actually poll it, this is
+# purely to satisfy the audit. SHA for auth (FIPS-validated HMAC, V-220604) and
+# AES for priv (FIPS 140-2 approved, V-220605) - "v3 priv" implies auth too, so
+# one group/user satisfies both rules.
+SNMPV3_GROUP = 'SNMPV3_GROUP'
+SNMPV3_USER = 'SNMPV3_USER'
+snmpv3 = secrets.get('snmpv3') or {}
+snmp_auth_password = str(snmpv3.get('auth_password') or '').strip()
+snmp_priv_password = str(snmpv3.get('priv_password') or '').strip()
+
 # Connect, bailing out if it fails
 net_connect = netauto.connect(device_name, device_info, username, password)
 if net_connect is None:
@@ -243,6 +254,13 @@ access_fixes += [
     'switchport block unicast',                     # V-220632 (UUFB)
     'storm-control broadcast level bps 20000000',    # V-220636 (storm control)
 ]
+
+snmpv3_commands = []
+if snmp_auth_password and snmp_priv_password:
+    snmpv3_commands = [
+        f'snmp-server group {SNMPV3_GROUP} v3 priv',
+        f'snmp-server user {SNMPV3_USER} {SNMPV3_GROUP} v3 auth sha {snmp_auth_password} priv aes 128 {snmp_priv_password}',
+    ]
 
 # NTP/syslog server IPs (V-220601, V-220620) come from inventory.yaml's services
 # section. NTP authentication key (V-220606) comes from secrets.yaml.
@@ -330,6 +348,8 @@ if native_vlan_commands:
     applied_fixes['Native/unused VLAN database entry'] = '; '.join(native_vlan_commands)
 if access_vlan_commands:
     applied_fixes['Default access VLAN database entry'] = '; '.join(access_vlan_commands)
+if snmpv3_commands:
+    applied_fixes['V-220604/605 (SNMPv3 auth/priv)'] = f'snmp-server group {SNMPV3_GROUP} v3 priv; snmp-server user {SNMPV3_USER} ... v3 auth sha ... priv aes 128 ...'
 if disabled_ports:
     applied_fixes['V-220641a (disabled ports to unused VLAN)'] = f'switchport access vlan {unused_vlan} (on {len(disabled_ports)} disabled port(s): {", ".join(disabled_ports)})'
 if ntp_servers:
@@ -354,6 +374,7 @@ commands += native_vlan_commands
 if vtp_password:
     commands.append(f'vtp password {vtp_password}')
 commands += access_vlan_commands
+commands += snmpv3_commands
 commands += interface_commands
 commands += ntp_commands
 commands += [f'logging host {ip}' for ip in syslog_servers]
@@ -386,6 +407,8 @@ if trunk_ports and not native_vlan_id:
     print('\nSkipped V-220646 (native VLAN) — add native_vlan to inventory.yaml to include it.')
 if access_ports and not default_access_vlan:
     print('\nSkipped default access VLAN assignment — add default_access_vlan to inventory.yaml to include it. Access ports will still get switchport mode access, just no explicit VLAN.')
+if not (snmp_auth_password and snmp_priv_password):
+    print('\nSkipped V-220604/605 (SNMPv3 auth/priv) — add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
 if not unused_vlan:
     print('\nSkipped V-220641 (unused VLAN) — add unused_vlan to inventory.yaml to include it.')
 elif not disabled_ports:
