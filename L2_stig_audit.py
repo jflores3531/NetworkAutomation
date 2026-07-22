@@ -142,6 +142,32 @@ def default_vlan_pruned_from_trunks(cfg):
     return True, f'VLAN 1 pruned on all {len(trunk)} trunk port(s): {", ".join(sorted(trunk))}'
 
 
+# V-220647: no access port may be assigned to a trunk's native VLAN (double-
+# encapsulation/VLAN-hopping risk). Determines the actual native VLAN(s) in use
+# from each trunk's 'switchport trunk native vlan <id>' line - IOS's default
+# native VLAN (1) if a trunk has no explicit line - then checks every access
+# port's actual VLAN (also defaulting to 1 if unset) against that set.
+def _no_access_ports_on_native_vlan(cfg):
+    access, trunk = parse_switchports(cfg)
+    if not trunk:
+        return False, 'no trunk switchports found in config, cannot determine native VLAN'
+    native_vlans = set()
+    for name, block in trunk.items():
+        m = re.search(r'switchport trunk native vlan (\d+)', block)
+        native_vlans.add(m.group(1) if m else '1')
+    if not access:
+        return True, f'no access ports found - nothing to check against native VLAN(s) {", ".join(sorted(native_vlans))}'
+    bad = []
+    for name, block in sorted(access.items()):
+        m = re.search(r'switchport access vlan (\d+)', block)
+        actual = m.group(1) if m else '1'
+        if actual in native_vlans:
+            bad.append(f'{name} (VLAN {actual})')
+    if bad:
+        return False, f'access port(s) assigned to the native VLAN: {", ".join(bad)}'
+    return True, f'no access ports assigned to native VLAN(s) {", ".join(sorted(native_vlans))}'
+
+
 # V-220641: disabled (shutdown) access ports must be assigned to the designated
 # unused VLAN, and that VLAN must be pruned from all trunk links (same pruning
 # logic as default_vlan_pruned_from_trunks, but for the unused VLAN instead of 1).
@@ -372,6 +398,22 @@ def _radius_redundancy_check(cfg):
     return False, 'no RADIUS servers found (checked classic `radius-server host` and modern `radius server <name>`/`address ipv4` forms - need 2+)'
 
 
+# V-220624: VTP passwords are deliberately excluded from `show running-config`
+# on Cisco IOS (so they don't leak into config backups/TFTP exports) - confirmed
+# live that this holds even in VTP transparent mode, not a platform quirk. IOS
+# even confirms a redundant push with "Password already set to <value>" rather
+# than silently no-op'ing, proving it's genuinely active despite never
+# appearing in the config text. A regex against running-config can never find
+# it, so this needs live `show vtp password` output instead.
+def _vtp_password_check(vtp_password_output):
+    if not vtp_password_output or re.search(r'not set', vtp_password_output, re.I):
+        return False, 'no VTP password set (`show vtp password` reports none)'
+    m = re.search(r'VTP Password:\s*(\S+)', vtp_password_output)
+    if m:
+        return True, f'VTP password set (`show vtp password`): `{m.group(1)}`'
+    return False, f'unexpected `show vtp password` output: {vtp_password_output.strip()}'
+
+
 # V-220576: exactly 3 consecutive invalid attempts, blocked for >= 900s (15 min)
 def _login_block_check(cfg):
     m = re.search(r'^login block-for (\d+) attempts (\d+) within (\d+)', cfg, re.M)
@@ -440,9 +482,9 @@ CHECKS = {
     'V-220640': lambda cfg: _all_trunk_ports_have(cfg, r'switchport nonegotiate', '`switchport nonegotiate`'),
     'V-220643': lambda cfg: default_vlan_pruned_from_trunks(cfg),
     'V-220646': lambda cfg: _all_trunk_ports_have(cfg, r'switchport trunk native vlan (?!1\s*$)\d+', 'a non-default native VLAN'),
+    'V-220647': _no_access_ports_on_native_vlan,
     'V-220641': lambda cfg: _disabled_ports_unused_vlan_check(cfg, netauto.load_unused_vlan()),
     'V-220586': _no_unnecessary_services,
-    'V-220624': lambda cfg: _presence(cfg, r'^vtp password \S+', re.M, 'a `vtp password <value>` line'),
     # IOS 15.x rewrites "spanning-tree portfast bpduguard default" to include
     # "edge" in running-config ("...portfast edge bpduguard default") - accept both.
     'V-220630': lambda cfg: _presence(cfg, r'spanning-tree bpduguard enable|spanning-tree portfast (edge )?bpduguard default', what='`spanning-tree bpduguard enable` or `spanning-tree portfast bpduguard default`'),
@@ -530,13 +572,15 @@ username, password = netauto.get_credentials()
 # inventory.yaml's non_user_vlans) so V-220633/V-220635 can verify DHCP
 # snooping/DAI actually cover them, not just that some VLAN list exists. Also
 # discovers the live STP root port(s) for V-220629 (Root Guard must never be
-# checked/pushed there). Uses a separate connection since run_stig_audit
-# manages its own for running-config.
+# checked/pushed there), and the live VTP password for V-220624 (never appears
+# in running-config, see _vtp_password_check). Uses a separate connection
+# since run_stig_audit manages its own for running-config.
 vlan_discovery_connect = netauto.connect(device_name, device_info, username, password)
 if vlan_discovery_connect is None:
     raise SystemExit(1)
 user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=netauto.load_non_user_vlans())
 root_ports = stig_common.discover_root_port_interfaces(vlan_discovery_connect)
+vtp_password_output = str(vlan_discovery_connect.send_command('show vtp password'))
 vlan_discovery_connect.disconnect()
 
 CHECKS['V-220633'] = lambda cfg: _dhcp_snooping_check(cfg, user_vlans)
@@ -544,6 +588,7 @@ CHECKS['V-220635'] = lambda cfg: _vlan_range_covers_user_vlans(
     cfg, r'ip arp inspection vlan (\S+)', user_vlans, 'an `ip arp inspection vlan <list>` line'
 )
 CHECKS['V-220629'] = lambda cfg: _root_guard_check(cfg, root_ports)
+CHECKS['V-220624'] = lambda cfg: _vtp_password_check(vtp_password_output)
 
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,
