@@ -101,6 +101,13 @@ for i, ip in enumerate(radius_servers, start=1):
         f'radius server RADIUS{i}',
         f'address ipv4 {ip} auth-port 1812 acct-port 1813',
         f'key {radius_key}',
+        # IOS defaults (timeout 5 x retransmit 3 = 15s per server) mean an
+        # unreachable RADIUS server delays the fallback to local by 15s per
+        # server before a login even completes - confirmed live as a ~30s
+        # SSH login delay with 2 servers configured. Tightened so a login
+        # never has to wait more than ~2s per unreachable server.
+        'timeout 2',
+        'retransmit 1',
         'exit',
     ]
 aaa_commands += [
