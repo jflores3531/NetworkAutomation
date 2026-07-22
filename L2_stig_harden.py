@@ -72,6 +72,7 @@ BASE_FIXES = {
     'V-220578 (admin activity logging)': 'logging userinfo',
     'V-220570a (HTTP session limit)': 'ip http max-connections 2',
     'V-220625 (QoS enabled)': 'mls qos',
+    'V-220595a (password encryption)': 'service password-encryption',
 }
 
 # Not a STIG requirement - pushed for host visibility only. ARP-probes every
@@ -82,8 +83,10 @@ OPTIONAL_FIXES = {
     'IP Device Tracking (host visibility, not a STIG requirement)': 'ip device tracking',
 }
 
-# V-220570: session-limit needs its own "line vty 0 4" context
-VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 2']
+# V-220570: session-limit needs its own "line vty 0 4" context.
+# V-220596: exec-timeout must be nonzero and <=5 min (stig_common.exec_timeout_ok) -
+# "0 0" disables the timeout entirely, which is non-compliant, not exempt from it.
+VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 2', 'exec-timeout 5 0']
 
 # V-220608: SSH encryption algorithm — includes "ip ssh version 2" too, since
 # V-220608's own audit check requires both and this makes V-220607 pass as a
@@ -285,7 +288,7 @@ applied_fixes.update(OPTIONAL_FIXES)
 applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICES_FIX)
 applied_fixes['V-220608 (SSH encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
 applied_fixes['V-220571/572/573/574/582/597/611/613 (archive logging)'] = '; '.join(ARCHIVE_LOGGING_FIX)
-applied_fixes['V-220570b (VTY session limit)'] = '; '.join(VTY_SESSION_LIMIT_FIX)
+applied_fixes['V-220570b/596 (VTY session limit + exec-timeout)'] = '; '.join(VTY_SESSION_LIMIT_FIX)
 if vlan_ids:
     applied_fixes['V-220633 (DHCP snooping)'] = f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
     applied_fixes['V-220635 (DAI)'] = f'ip arp inspection vlan {",".join(vlan_ids)}'
@@ -330,9 +333,15 @@ if syslog_servers:
 commands = list(BASE_FIXES.values()) + list(OPTIONAL_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX
 if vlan_ids:
     commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}', f'ip arp inspection vlan {",".join(vlan_ids)}']
+# Order here doesn't functionally matter for vtp password - turned out V-220624
+# was a false FAIL all along (VTP passwords are deliberately excluded from
+# `show running-config` on Cisco IOS, confirmed live via `show vtp password`
+# showing it set correctly regardless of push order - see L2_stig_audit.py's
+# _vtp_password_check). Keeping native_vlan_commands first anyway since it's
+# still the more sensible order (mode/VLAN setup before other global config).
+commands += native_vlan_commands
 if vtp_password:
     commands.append(f'vtp password {vtp_password}')
-commands += native_vlan_commands
 commands += access_vlan_commands
 commands += interface_commands
 commands += ntp_commands
