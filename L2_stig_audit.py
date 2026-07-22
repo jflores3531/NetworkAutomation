@@ -375,6 +375,29 @@ def _login_block_check(cfg):
     return True, f'found: {found}'
 
 
+# V-220629: Root Guard belongs on trunk ports connecting to other switches, but
+# never on this switch's own STP root port (see
+# stig_common.discover_root_port_interfaces for why). A switch whose only trunk
+# port(s) are all root ports (e.g. a leaf/access switch with no downstream
+# switches of its own) has nothing eligible to guard - that's a PASS, not a
+# finding, since there's nothing wrong to fix.
+def _root_guard_check(cfg, root_ports):
+    _, trunk = parse_switchports(cfg)
+    eligible = sorted(name for name in trunk if name not in root_ports)
+    if not eligible:
+        return True, (
+            'no eligible trunk ports - every trunk port is this switch\'s STP root port '
+            'toward the root bridge, and Root Guard must not be applied there'
+        )
+    missing = [name for name in eligible if not re.search(r'spanning-tree guard root', trunk[name])]
+    if missing:
+        return False, (
+            f'missing `spanning-tree guard root` on: {", ".join(missing)} '
+            f'(root port(s) excluded from this check: {", ".join(sorted(root_ports)) or "none"})'
+        )
+    return True, f'`spanning-tree guard root` present on all {len(eligible)} eligible trunk port(s): {", ".join(eligible)}'
+
+
 def _exec_timeout_reason(cfg):
     matches = re.findall(r'exec-timeout (\d+) (\d+)', cfg)
     ok = stig_common.exec_timeout_ok(cfg)
@@ -494,18 +517,22 @@ username, password = netauto.get_credentials()
 
 # Discover genuine user VLANs (excludes management/servers/unused VLANs from
 # inventory.yaml's non_user_vlans) so V-220633/V-220635 can verify DHCP
-# snooping/DAI actually cover them, not just that some VLAN list exists. Uses a
-# separate connection since run_stig_audit manages its own for running-config.
+# snooping/DAI actually cover them, not just that some VLAN list exists. Also
+# discovers the live STP root port(s) for V-220629 (Root Guard must never be
+# checked/pushed there). Uses a separate connection since run_stig_audit
+# manages its own for running-config.
 vlan_discovery_connect = netauto.connect(device_name, device_info, username, password)
 if vlan_discovery_connect is None:
     raise SystemExit(1)
 user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=netauto.load_non_user_vlans())
+root_ports = stig_common.discover_root_port_interfaces(vlan_discovery_connect)
 vlan_discovery_connect.disconnect()
 
 CHECKS['V-220633'] = lambda cfg: _dhcp_snooping_check(cfg, user_vlans)
 CHECKS['V-220635'] = lambda cfg: _vlan_range_covers_user_vlans(
     cfg, r'ip arp inspection vlan (\S+)', user_vlans, 'an `ip arp inspection vlan <list>` line'
 )
+CHECKS['V-220629'] = lambda cfg: _root_guard_check(cfg, root_ports)
 
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,

@@ -85,3 +85,22 @@ def discover_user_vlans(net_connect, exclude=()):
         vid for vid in re.findall(r'^(\d+)\s+\S+', vlan_brief, re.M)
         if not (1002 <= int(vid) <= 1005) and int(vid) not in exclude_ids
     ]
+
+
+def discover_root_port_interfaces(net_connect):
+    """Return the set of interface names that are the STP root port in any VLAN
+    instance, parsed from `show spanning-tree`. Used by V-220629 (Root Guard):
+    that feature must never be pushed to a switch's own root port - it's the
+    port legitimately leading toward the root bridge, and guarding it forces it
+    into root-inconsistent (blocking) state, a real outage risk on live gear.
+    Each VLAN block's `Root ID ... Port N (ifname)` line already gives the full
+    interface name, so no abbreviation-to-full-name mapping is needed. A VLAN
+    where this switch IS the root bridge has no such line and contributes
+    nothing."""
+    output = str(net_connect.send_command('show spanning-tree'))
+    root_ports = set()
+    for chunk in re.split(r'^(?=VLAN\d+)', output, flags=re.M):
+        m = re.search(r'Root ID.*?Port\s+\d+\s+\((\S+)\)', chunk, re.S)
+        if m:
+            root_ports.add(m.group(1))
+    return root_ports

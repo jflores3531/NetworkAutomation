@@ -152,9 +152,15 @@ if net_connect is None:
 # excluding management/servers/unused VLANs from inventory.yaml's non_user_vlans
 vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=netauto.load_non_user_vlans())
 
+# V-220629: STP root port(s), live - Root Guard must never be pushed there (see
+# stig_common.discover_root_port_interfaces for why: it forces the port into
+# root-inconsistent/blocking state, a real outage risk).
+root_ports = stig_common.discover_root_port_interfaces(net_connect)
+
 # Classify switchports (host-facing/access vs. trunk/uplink) for the interface-scoped fixes
 running_config = str(net_connect.send_command('show running-config'))
 access_ports, trunk_ports = parse_switchports(running_config)
+root_guard_ports = [name for name in trunk_ports if name not in root_ports]
 
 # V-220641: already-shutdown access ports get reassigned to the designated
 # unused VLAN (safe - they're not passing traffic)
@@ -208,6 +214,8 @@ for name in access_ports:
 for name in trunk_ports:
     interface_commands.append(f'interface {name}')
     interface_commands += trunk_fixes
+    if name in root_guard_ports:
+        interface_commands.append('spanning-tree guard root')
 for name in disabled_ports:
     interface_commands.append(f'interface {name}')
     interface_commands.append(f'switchport access vlan {unused_vlan}')
@@ -228,6 +236,11 @@ if access_ports:
     applied_fixes['V-220636 (storm control)'] = '; '.join(ACCESS_PORT_FIXES[2:3]) + f' (on {len(access_ports)} access port(s))'
 if trunk_ports:
     applied_fixes['V-220640 (static trunk)'] = f'switchport nonegotiate (on {len(trunk_ports)} trunk port(s))'
+    if root_guard_ports:
+        applied_fixes['V-220629 (Root Guard)'] = (
+            f'spanning-tree guard root (on {len(root_guard_ports)} trunk port(s) not leading '
+            f'to the STP root: {", ".join(root_guard_ports)})'
+        )
     if allowed_trunk_vlans:
         applied_fixes['V-220643/641b (trunks scoped to real VLANs only)'] = (
             f'switchport trunk allowed vlan {",".join(allowed_trunk_vlans)} '
@@ -273,7 +286,9 @@ for rule in applied_fixes:
 if not access_ports:
     print('\nNo access/host-facing switchports found — nothing to push for V-220632/634/636.')
 if not trunk_ports:
-    print('\nNo trunk switchports found — nothing to push for V-220640/643/646.')
+    print('\nNo trunk switchports found — nothing to push for V-220629/640/643/646.')
+elif not root_guard_ports:
+    print('\nSkipped V-220629 (Root Guard) — every trunk port is this switch\'s STP root port toward the root bridge; Root Guard must not be applied there.')
 if trunk_ports and not allowed_trunk_vlans:
     print('\nSkipped V-220643/641b (trunk VLAN scoping) — no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
 if trunk_ports and not native_vlan_id:
