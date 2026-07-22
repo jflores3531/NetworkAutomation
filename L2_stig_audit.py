@@ -347,18 +347,29 @@ def _single_local_account_check(cfg):
 
 
 # V-220617: at least 2 RADIUS servers, actually used as the primary auth source
-# (not just configured but unused)
+# (not just configured but unused). Checks both the classic single-line
+# 'radius-server host <ip>' form and the modern block-style 'radius server
+# <name>' / 'address ipv4 <ip> ...' form - confirmed live that this lab's
+# vios_l2 image only accepts the modern form ("radius-server host" is
+# rejected outright), but other platforms may still use the classic one.
 def _radius_redundancy_check(cfg):
     if 'aaa new-model' not in cfg:
         return False, 'missing `aaa new-model`'
     if not re.search(r'^aaa authentication \S+ \S+ group radius( local)?\s*$', cfg, re.M):
         return False, 'missing an `aaa authentication ... group radius ...` line using RADIUS as the primary source'
-    servers = sorted(set(re.findall(r'^radius-server host (\S+)', cfg, re.M) + re.findall(r'^radius host (\S+)', cfg, re.M)))
+    legacy_servers = re.findall(r'^radius-server host (\S+)', cfg, re.M) + re.findall(r'^radius host (\S+)', cfg, re.M)
+    modern_servers = []
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if chunk.startswith('radius server '):
+            m = re.search(r'^\s*address ipv4 (\S+)', chunk, re.M)
+            if m:
+                modern_servers.append(m.group(1))
+    servers = sorted(set(legacy_servers + modern_servers))
     if len(servers) >= 2:
         return True, f'found {len(servers)} RADIUS server(s): {", ".join(servers)}'
     if servers:
         return False, f'only {len(servers)} of 2+ required RADIUS server(s) found: {", ".join(servers)}'
-    return False, 'no `radius-server host <ip>` lines found (need 2+)'
+    return False, 'no RADIUS servers found (checked classic `radius-server host` and modern `radius server <name>`/`address ipv4` forms - need 2+)'
 
 
 # V-220576: exactly 3 consecutive invalid attempts, blocked for >= 900s (15 min)
