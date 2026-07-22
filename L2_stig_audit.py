@@ -462,6 +462,59 @@ def _exec_timeout_reason(cfg):
     return False, f'non-compliant exec-timeout line(s) (need nonzero, <=5 min): {shown}'
 
 
+# V-220600: alert for audit failure events. DISA's own check discussion notes
+# "Informational is the default severity level; hence, if the severity level
+# is configured to informational, the logging trap command will not be
+# present in the configuration file" - so a missing line means the (more
+# inclusive) default, not a finding. Only an explicitly-configured level
+# narrower than 'critical' (emergencies/alerts) is actually non-compliant.
+_SYSLOG_SEVERITY_RANK = {
+    'emergencies': 0, 'alerts': 1, 'critical': 2, 'errors': 3,
+    'warnings': 4, 'notifications': 5, 'informational': 6, 'debugging': 7,
+}
+
+
+def _logging_trap_check(cfg):
+    m = re.search(r'^logging trap (\S+)', cfg, re.M)
+    if not m:
+        return True, 'no explicit `logging trap <level>` line - defaults to `informational`, which satisfies this (broader than the required `critical` minimum)'
+    level = m.group(1).lower()
+    rank = _SYSLOG_SEVERITY_RANK.get(level)
+    if rank is None:
+        return False, f'found `logging trap {level}` but unrecognized severity level'
+    if rank < _SYSLOG_SEVERITY_RANK['critical']:
+        return False, f'found `logging trap {level}` - narrower than the required `critical` minimum (misses errors/warnings/notifications/informational events)'
+    return True, f'found: `logging trap {level}`'
+
+
+# V-220583/584/585: protect audit info from unauthorized modification/
+# deletion, and limit privileges to change software libraries - DISA reuses
+# the same evidence (file privilege 15) for all three, and all three are
+# explicitly conditional: "If persistent logging is enabled ... Otherwise,
+# this requirement is not applicable." No `logging persistent` line means
+# PASS (not a finding), not FAIL.
+def _audit_info_protection_check(cfg):
+    if not re.search(r'^logging persistent', cfg, re.M):
+        return True, 'persistent logging not configured - not applicable per DISA (only required when `logging persistent` is enabled)'
+    if re.search(r'^file privilege 15', cfg, re.M):
+        return True, 'persistent logging enabled and `file privilege 15` present'
+    return False, 'persistent logging enabled but missing `file privilege 15` (required to restrict file-system access once persistent logging is on)'
+
+
+# V-220644: default VLAN (1) must not carry management traffic - verifies
+# 'interface Vlan1' has no IP address configured. Devices in this repo use
+# VLAN 10 for management (see inventory.yaml/non_user_vlans), so this should
+# already pass everywhere; this is a check that a real config regression
+# (someone addressing Vlan1 directly) would actually be caught.
+def _no_management_on_default_vlan(cfg):
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        if re.match(r'interface Vlan1\s*$', chunk, re.M):
+            if re.search(r'^\s*ip address \S+', chunk, re.M):
+                return False, '`interface Vlan1` has an IP address configured - the default VLAN must not be used for management traffic'
+            return True, '`interface Vlan1` exists but has no IP address configured'
+    return True, 'no `interface Vlan1` found in config - default VLAN not used for management'
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Rules with no entry here need external infrastructure (RADIUS, syslog,
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
@@ -540,6 +593,11 @@ CHECKS = {
         ('enable secret', r'enable secret'),
     ]),
     'V-220596': _exec_timeout_reason,
+    'V-220600': _logging_trap_check,
+    'V-220583': _audit_info_protection_check,
+    'V-220584': _audit_info_protection_check,
+    'V-220585': _audit_info_protection_check,
+    'V-220644': _no_management_on_default_vlan,
     'V-220607': lambda cfg: _presence(cfg, r'ip ssh version 2', what='`ip ssh version 2`'),
     'V-220608': lambda cfg: _all_of(cfg, [
         ('ip ssh version 2', r'ip ssh version 2'),
