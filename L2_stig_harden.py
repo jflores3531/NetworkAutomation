@@ -3,13 +3,16 @@
 Switch L2S STIG to a device. Interface-scoped rules classify each switchport as
 host-facing/access or trunk/uplink based on whether "switchport mode trunk" is
 present, then push the matching fixes to each. V-220642 (default VLAN on
-host-facing ports) and V-220645 (user-facing ports must be access) are left out —
-see the comment above L2_stig_audit.py's CHECKS dict for why. V-220634 (IP
-Source Guard) is pushed separately by L2_stig_harden_ipsg.py, not here.
-V-220632 (UUFB) and V-220636 (storm control) are still pushed here for real
-hardware, even though confirmed live that neither command exists on the lab's
-vios_l2 switches - they're silently rejected there, not removed from the
-script."""
+host-facing ports) and V-220645 (user-facing ports must be access) don't get a
+dedicated command - they're satisfied as a side effect of the explicit
+'switchport mode access' + 'switchport access vlan <default_access_vlan>'
+push every access port already gets (see the comment above L2_stig_audit.py's
+CHECKS dict for how the audit verifies this now that both are explicit).
+V-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py,
+not here. V-220632 (UUFB) and V-220636 (storm control) are still pushed here
+for real hardware, even though confirmed live that neither command exists on
+the lab's vios_l2 switches - they're silently rejected there, not removed
+from the script."""
 
 import argparse
 import re
@@ -134,8 +137,9 @@ ARCHIVE_LOGGING_FIX = [
     'hidekeys',
 ]
 
-# Rules intentionally not pushed by this script (see module docstring)
-SKIPPED_RULES = [
+# Rules satisfied as a side effect of the access-port mode/VLAN push, not by
+# a dedicated command of their own (see module docstring)
+SIDE_EFFECT_RULES = [
     'V-220642 (default VLAN on host ports)',
     'V-220645 (user-facing ports as access)',
 ]
@@ -397,6 +401,6 @@ if not ntp_key_id:
 
 print('\nV-220587/617 (AAA new-model + RADIUS auth) is pushed separately by L2_stig_harden_aaa.py.')
 
-print('\nRules requiring interface targeting (not pushed by this script):')
-for rule in SKIPPED_RULES:
+print('\nRules satisfied as a side effect of the access-port mode/VLAN push above, not by a dedicated command:')
+for rule in SIDE_EFFECT_RULES:
     print('  - ' + rule)

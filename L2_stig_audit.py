@@ -35,6 +35,33 @@ def parse_switchports(cfg):
     return access, trunk
 
 
+# V-220645: user-facing/untrusted ports must be *explicitly* configured as
+# access switchports, not just "not trunk". parse_switchports()'s access
+# bucket is defined as "lacks switchport mode trunk", so every port in it is
+# trivially non-trunk by construction - checking that bucket against itself
+# could never fail, making it a fake verification (why this stayed NOT
+# AUTOMATED for a long time). Scans every switchport-capable interface
+# directly instead, requiring an explicit 'switchport mode access' or
+# 'switchport mode trunk' line - genuinely catches a port left in IOS's
+# default negotiated/dynamic mode (the actual DTP/VLAN-hopping risk this rule
+# is about), which L2_stig_harden.py now avoids by pushing 'switchport mode
+# access' explicitly to every access port (it didn't always).
+def _all_ports_explicit_mode(cfg):
+    bad, total = [], 0
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m or not m.group(1).startswith(SWITCHPORT_PREFIXES):
+            continue
+        total += 1
+        if not re.search(r'^\s*switchport mode (trunk|access)\s*$', chunk, re.M):
+            bad.append(m.group(1))
+    if total == 0:
+        return False, 'no switchport-capable interfaces found in config'
+    if bad:
+        return False, f'left in negotiated/dynamic mode (missing explicit `switchport mode access` or `switchport mode trunk`) on: {", ".join(sorted(bad))}'
+    return True, f'all {total} switchport-capable interface(s) have an explicit switchport mode (trunk or access)'
+
+
 def _presence(cfg, pattern, flags=0, what=None):
     """PASS if pattern is found; reason shows the matched line, or what was
     searched for if it wasn't."""
@@ -520,15 +547,17 @@ def _no_management_on_default_vlan(cfg):
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
 CHECKS = {
     # --- L2S (Layer 2 Switch) ---
-    # V-220642 (default VLAN on host-facing ports) and V-220645 (user-facing ports
-    # must be access) are deliberately left NOT AUTOMATED. V-220642: IOS omits
-    # "switchport access vlan 1" when it's already the default, so a port's absence
-    # of that line can't be distinguished from an explicit (and non-compliant)
-    # assignment to VLAN 1 — same false-pass risk fixed in ee04718. V-220645: under
-    # this file's own host-facing/trunk classification (host-facing = "lacks
-    # switchport mode trunk"), every access-classified port is host-facing *and*
-    # already non-trunk by definition — the check could never fail, so it isn't a
-    # real verification.
+    # V-220642/645 were NOT AUTOMATED for a long time (see git history) until
+    # L2_stig_harden.py started pushing explicit 'switchport access vlan
+    # <default_access_vlan>' and 'switchport mode access' to every access
+    # port. V-220642: IOS omits "switchport access vlan 1" when it's already
+    # the default, so a missing explicit-non-1 line now unambiguously means
+    # "on VLAN 1" (nothing else can explain it once ports are always assigned
+    # an explicit VLAN). V-220645: see _all_ports_explicit_mode's docstring -
+    # checks every switchport-capable interface directly instead of the
+    # access/trunk classification bucket, which was circular.
+    'V-220642': lambda cfg: _all_access_ports_have(cfg, r'switchport access vlan (?!1\s*$)\d+', 'an explicit non-default access VLAN (not VLAN 1)'),
+    'V-220645': _all_ports_explicit_mode,
     'V-220632': lambda cfg: _all_access_ports_have(cfg, r'switchport block unicast', 'UUFB (`switchport block unicast`)'),
     'V-220634': lambda cfg: _all_access_ports_have(cfg, r'ip verify source', 'IP Source Guard (`ip verify source`)'),
     'V-220636': lambda cfg: _all_access_ports_have(cfg, r'storm-control broadcast level', 'storm control (`storm-control broadcast level ...`)'),
