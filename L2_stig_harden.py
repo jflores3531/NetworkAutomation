@@ -208,19 +208,13 @@ if ntp_servers:
     key_suffix = f' key {ntp_key_id}' if ntp_key_id else ''
     ntp_commands += [f'ntp server {ip}{key_suffix}' for ip in ntp_servers]
 
-# AAA/RADIUS (V-220587: single local account with an AAA fallback line,
-# V-220617: RADIUS as primary auth source) - RADIUS server IPs come from
-# inventory.yaml's services section, the shared secret from secrets.yaml
-# (never hardcoded/prompted via CLI flag). "local" stays last in the method
-# list as a fallback, same as the account this script pushes commands with.
-radius_servers = services.get('radius_servers', [])
-radius_key = str(secrets.get('radius_key') or '').strip()
-
-radius_commands = []
-if radius_servers and radius_key:
-    radius_commands.append('aaa new-model')
-    radius_commands += [f'radius-server host {ip} key {radius_key}' for ip in radius_servers]
-    radius_commands.append('aaa authentication login default group radius local')
+# AAA/RADIUS (V-220587/617) is pushed by the separate L2_stig_harden_aaa.py
+# script, not here - bundling aaa new-model in with this script's ~60-command
+# batch caused a live session to drop on S2 right after aaa new-model took
+# effect, before the rest of the block could send, leaving the device
+# half-configured and SSH-inaccessible (recovered via console + 'no aaa
+# new-model'). Keeping it isolated makes it safer to push and easier to
+# diagnose if it ever fails again.
 
 # Build the per-interface command blocks now that ports are classified
 trunk_fixes = list(TRUNK_PORT_FIXES)
@@ -281,8 +275,6 @@ if ntp_key_id:
         f'ntp authentication-key {ntp_key_id} md5 {ntp_key_value}', 'ntp authenticate', f'ntp trusted-key {ntp_key_id}'])
 if syslog_servers:
     applied_fixes['V-220620 (dual syslog servers)'] = '; '.join(f'logging host {ip}' for ip in syslog_servers)
-if radius_commands:
-    applied_fixes['V-220587/617 (AAA new-model + RADIUS auth)'] = '; '.join(radius_commands)
 
 commands = list(BASE_FIXES.values()) + list(OPTIONAL_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX
 if vlan_ids:
@@ -292,7 +284,6 @@ if vtp_password:
 commands += interface_commands
 commands += ntp_commands
 commands += [f'logging host {ip}' for ip in syslog_servers]
-commands += radius_commands
 
 # Push the hardening commands and close the session
 output = net_connect.send_config_set(commands)
@@ -332,12 +323,8 @@ if not syslog_servers:
     print('\nSkipped V-220620 (dual syslog servers) — add syslog_servers to inventory.yaml\'s services section to include it.')
 if not ntp_key_id:
     print('\nSkipped V-220606 (NTP authentication) — add ntp_auth_key to secrets.yaml to include it.')
-if not radius_servers:
-    print('\nSkipped V-220587/617 (AAA new-model + RADIUS auth) — add radius_servers to inventory.yaml\'s services section to include it.')
-elif not radius_key:
-    print('\nSkipped V-220587/617 (AAA new-model + RADIUS auth) — add radius_key to secrets.yaml to include it.')
-elif len(radius_servers) < 2:
-    print(f'\nV-220587/617 pushed with only {len(radius_servers)} RADIUS server(s) — V-220617 wants 2+, add another IP to inventory.yaml\'s radius_servers to fully satisfy it.')
+
+print('\nV-220587/617 (AAA new-model + RADIUS auth) is pushed separately by L2_stig_harden_aaa.py.')
 
 print('\nRules requiring interface targeting (not pushed by this script):')
 for rule in SKIPPED_RULES:
