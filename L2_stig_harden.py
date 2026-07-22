@@ -73,6 +73,13 @@ BASE_FIXES = {
     'V-220570a (HTTP session limit)': 'ip http max-connections 2',
     'V-220625 (QoS enabled)': 'mls qos',
     'V-220595a (password encryption)': 'service password-encryption',
+    'V-220600 (audit failure alert)': 'logging trap critical',
+    # Confirmed live that this lab's vios_l2 rejects 'file privilege 15'
+    # ("% Invalid input") - same category as UUFB/storm-control/mls
+    # qos/security passwords min-length, kept for real hardware. Doesn't
+    # affect the audit result here since V-220583/584/585 are conditional on
+    # `logging persistent` (not pushed anywhere), which isn't configured.
+    'V-220583/584/585 (file privilege 15)': 'file privilege 15',
 }
 
 # Not a STIG requirement - pushed for host visibility only. ARP-probes every
