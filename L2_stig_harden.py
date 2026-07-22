@@ -4,7 +4,12 @@ Switch L2S STIG to a device. Interface-scoped rules classify each switchport as
 host-facing/access or trunk/uplink based on whether "switchport mode trunk" is
 present, then push the matching fixes to each. V-220642 (default VLAN on
 host-facing ports) and V-220645 (user-facing ports must be access) are left out —
-see the comment above L2_stig_audit.py's CHECKS dict for why."""
+see the comment above L2_stig_audit.py's CHECKS dict for why. V-220634 (IP
+Source Guard) is pushed separately by L2_stig_harden_ipsg.py, not here.
+V-220632 (UUFB) and V-220636 (storm control) are still pushed here for real
+hardware, even though confirmed live that neither command exists on the lab's
+vios_l2 switches - they're silently rejected there, not removed from the
+script."""
 
 import argparse
 import re
@@ -45,13 +50,6 @@ def shutdown_access_ports(cfg, access_names):
             shutdown.append(m.group(1))
     return shutdown
 
-
-# Pushed to every host-facing/access-classified interface
-ACCESS_PORT_FIXES = [
-    'switchport block unicast',       # V-220632 (UUFB)
-    'ip verify source',               # V-220634 (IP Source Guard) - needs DHCP snooping active
-    'storm-control broadcast level bps 20000000',  # V-220636 (storm control)
-]
 
 # Pushed to every trunk/uplink-classified interface (allowed-vlan list, native VLAN
 # line, added separately below once the device's actual VLAN database is known)
@@ -186,6 +184,52 @@ allowed_trunk_vlans = stig_common.discover_user_vlans(net_connect, exclude=trunk
 # Native VLAN for trunk ports (V-220646) comes from inventory.yaml instead of a prompt
 native_vlan_id = netauto.load_native_vlan()
 
+# Create the native/unused VLAN in the VLAN database itself, named NATIVE.
+# Referencing it on interfaces (switchport trunk native vlan / switchport
+# access vlan) doesn't create a VLAN database entry by itself, so without
+# this it never shows up in `show vlan brief`. Must explicitly 'exit' the
+# 'vlan <id>' sub-mode, not just leave it hanging - the interface commands
+# built below assume global config context, and Netmiko sends this whole
+# list as one flat sequence.
+#
+# Not a STIG requirement, but pushed first: in VTP server mode (the Cisco
+# default), VLAN database entries live in a separate vlan.dat file on flash,
+# not in the running-config/startup-config text - confirmed live that VLAN
+# 999/NATIVE never once appeared in `show running-config` even right after
+# being pushed, and was lost entirely on a reload of S3 despite `copy
+# running-config startup-config` (which never saves vlan.dat). 'vtp mode
+# transparent' makes VLAN config part of the regular running-config instead,
+# so it saves/persists the normal way - also has the effect of disabling
+# VTP's own database-synchronization behavior between switches.
+native_vlan_commands = ['vtp mode transparent', f'vlan {native_vlan_id}', 'name NATIVE', 'exit'] if native_vlan_id else []
+
+# Default VLAN for host-facing/access ports (comes from inventory.yaml instead
+# of a prompt). A freshly built port has no explicit switchport mode/VLAN at
+# all, which silently breaks other access-port fixes that require the port to
+# already be in access mode first - confirmed live on a fresh S3 in GNS3.
+# Every non-trunk port gets 'switchport mode access' + this VLAN explicitly;
+# the VLAN itself is created in the database the same way as native_vlan_id
+# above (needs 'vtp mode transparent' too, already pushed by native_vlan_commands
+# if that ran - if native_vlan_id isn't set this pushes its own copy).
+default_access_vlan = netauto.load_default_access_vlan()
+access_vlan_commands = []
+if default_access_vlan:
+    if not native_vlan_commands:
+        access_vlan_commands.append('vtp mode transparent')
+    access_vlan_commands += [f'vlan {default_access_vlan}', 'name USER', 'exit']
+access_fixes = ['switchport mode access']
+if default_access_vlan:
+    access_fixes.append(f'switchport access vlan {default_access_vlan}')
+# Kept for real hardware even though confirmed live that neither command
+# exists on these lab vios_l2 switches ("% Invalid input") - Jorge wants them
+# available for a real deployment, not removed just because the lab can't run
+# them. Netmiko doesn't treat a rejected command as fatal, so pushing these
+# against vios_l2 is harmless (silently skipped), not a crash risk.
+access_fixes += [
+    'switchport block unicast',                     # V-220632 (UUFB)
+    'storm-control broadcast level bps 20000000',    # V-220636 (storm control)
+]
+
 # NTP/syslog server IPs (V-220601, V-220620) come from inventory.yaml's services
 # section. NTP authentication key (V-220606) comes from secrets.yaml.
 services = netauto.load_services()
@@ -226,7 +270,7 @@ if native_vlan_id:
 interface_commands = []
 for name in access_ports:
     interface_commands.append(f'interface {name}')
-    interface_commands += ACCESS_PORT_FIXES
+    interface_commands += access_fixes
 for name in trunk_ports:
     interface_commands.append(f'interface {name}')
     interface_commands += trunk_fixes
@@ -248,9 +292,12 @@ if vlan_ids:
 if vtp_password:
     applied_fixes['V-220624 (VTP authentication)'] = f'vtp password {vtp_password}'
 if access_ports:
-    applied_fixes['V-220632 (UUFB)'] = '; '.join(ACCESS_PORT_FIXES[:1]) + f' (on {len(access_ports)} access port(s))'
-    applied_fixes['V-220634 (IP Source Guard)'] = '; '.join(ACCESS_PORT_FIXES[1:2]) + f' (on {len(access_ports)} access port(s))'
-    applied_fixes['V-220636 (storm control)'] = '; '.join(ACCESS_PORT_FIXES[2:3]) + f' (on {len(access_ports)} access port(s))'
+    applied_fixes['Default access mode/VLAN'] = (
+        f'switchport mode access' + (f'; switchport access vlan {default_access_vlan}' if default_access_vlan else '')
+        + f' (on {len(access_ports)} access port(s))'
+    )
+    applied_fixes['V-220632 (UUFB)'] = f'switchport block unicast (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
+    applied_fixes['V-220636 (storm control)'] = f'storm-control broadcast level bps 20000000 (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
 if trunk_ports:
     applied_fixes['V-220640 (static trunk)'] = f'switchport nonegotiate (on {len(trunk_ports)} trunk port(s))'
     if root_guard_ports:
@@ -265,6 +312,10 @@ if trunk_ports:
         )
     if native_vlan_id:
         applied_fixes['V-220646 (native VLAN)'] = f'switchport trunk native vlan {native_vlan_id} (on {len(trunk_ports)} trunk port(s))'
+if native_vlan_commands:
+    applied_fixes['Native/unused VLAN database entry'] = '; '.join(native_vlan_commands)
+if access_vlan_commands:
+    applied_fixes['Default access VLAN database entry'] = '; '.join(access_vlan_commands)
 if disabled_ports:
     applied_fixes['V-220641a (disabled ports to unused VLAN)'] = f'switchport access vlan {unused_vlan} (on {len(disabled_ports)} disabled port(s): {", ".join(disabled_ports)})'
 if ntp_servers:
@@ -281,6 +332,8 @@ if vlan_ids:
     commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}', f'ip arp inspection vlan {",".join(vlan_ids)}']
 if vtp_password:
     commands.append(f'vtp password {vtp_password}')
+commands += native_vlan_commands
+commands += access_vlan_commands
 commands += interface_commands
 commands += ntp_commands
 commands += [f'logging host {ip}' for ip in syslog_servers]
@@ -311,6 +364,8 @@ if trunk_ports and not allowed_trunk_vlans:
     print('\nSkipped V-220643/641b (trunk VLAN scoping) — no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
 if trunk_ports and not native_vlan_id:
     print('\nSkipped V-220646 (native VLAN) — add native_vlan to inventory.yaml to include it.')
+if access_ports and not default_access_vlan:
+    print('\nSkipped default access VLAN assignment — add default_access_vlan to inventory.yaml to include it. Access ports will still get switchport mode access, just no explicit VLAN.')
 if not unused_vlan:
     print('\nSkipped V-220641 (unused VLAN) — add unused_vlan to inventory.yaml to include it.')
 elif not disabled_ports:
