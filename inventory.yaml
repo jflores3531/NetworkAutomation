@@ -73,3 +73,13 @@ unused_vlan: 999
 # Set to the same ID as unused_vlan on purpose - a dedicated black-hole VLAN as
 # native prevents double-tagging/VLAN-hopping via untagged native-VLAN traffic.
 native_vlan: 999
+
+# Default VLAN for host-facing/access ports that aren't in trunk mode. A freshly
+# built switch leaves these ports with no explicit switchport mode/VLAN at all,
+# which silently breaks other access-port STIG fixes that require it (e.g.
+# switchport block unicast/storm-control need the port to already be in access
+# mode - confirmed live on a fresh S3 in GNS3). L2_stig_harden.py pushes
+# 'switchport mode access' + 'switchport access vlan <this>' to every
+# non-trunk port and creates the VLAN itself in the database (same pattern as
+# unused_vlan/native_vlan).
+default_access_vlan: 50

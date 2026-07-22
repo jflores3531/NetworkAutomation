@@ -65,6 +65,15 @@ def load_native_vlan(path='inventory.yaml'):
     return inventory.get('native_vlan')
 
 
+def load_default_access_vlan(path='inventory.yaml'):
+    """Load the default_access_vlan ID from the YAML inventory — the VLAN
+    assigned to host-facing/access ports that aren't already in trunk mode.
+    Returns None if not defined."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('default_access_vlan')
+
+
 def load_secrets(path='secrets.yaml'):
     """Load plaintext secrets used by the *_stig_harden.py scripts (VTP password,
     NTP auth key, etc.) from secrets.yaml - gitignored, never committed. Returns
