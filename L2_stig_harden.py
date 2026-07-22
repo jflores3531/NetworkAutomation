@@ -58,6 +58,14 @@ def shutdown_access_ports(cfg, access_names):
 # line, added separately below once the device's actual VLAN database is known)
 TRUNK_PORT_FIXES = [
     'switchport nonegotiate',  # V-220640 (static trunk, no DTP negotiation)
+    # DHCP snooping (V-220633) makes every port untrusted by default - an
+    # untrusted port drops any DHCPOFFER/DHCPACK outright, so without this the
+    # trunk port(s) toward wherever the real DHCP server lives would silently
+    # break DHCP for every client behind this switch. Every trunk-classified
+    # port gets trusted, consistent with this repo's existing trunk = switch-
+    # to-switch uplink model (not a mix of trusted-upstream/untrusted-peer
+    # trunks).
+    'ip dhcp snooping trust',
 ]
 
 # Global (non-interface-specific) fixes always pushed by this script
@@ -345,6 +353,7 @@ if access_ports:
     applied_fixes['V-220623 (802.1x/MAB)'] = f'authentication port-control auto; dot1x pae authenticator; mab (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
 if trunk_ports:
     applied_fixes['V-220640 (static trunk)'] = f'switchport nonegotiate (on {len(trunk_ports)} trunk port(s))'
+    applied_fixes['V-220633b (DHCP snooping trust)'] = f'ip dhcp snooping trust (on {len(trunk_ports)} trunk port(s))'
     if root_guard_ports:
         applied_fixes['V-220629 (Root Guard)'] = (
             f'spanning-tree guard root (on {len(root_guard_ports)} trunk port(s) not leading '
