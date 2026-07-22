@@ -50,6 +50,7 @@ services:
     - 192.168.100.11
   radius_servers:
     - 192.168.100.10
+    - 192.168.100.11
 
 # VLAN IDs to exclude when discovering "user VLANs" for DHCP snooping
 # (V-220633/V-220684) and DAI (V-220635/V-220686) pushes. Everything else found
