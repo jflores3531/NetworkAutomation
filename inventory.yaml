@@ -65,6 +65,12 @@ non_user_vlans:
 # it (e.g. the automation host) is fine, "permit any" is not.
 management_subnet: 10.10.50.0/24
 
+# The automation host itself (NetworkAutomation-1) - not a device scripts
+# connect *to* (not in the devices: section above), but needed as the sole
+# permitted source for V-220575's vty ACL (L2_stig_harden_acl.py). Scoped to
+# just this host rather than the whole management_subnet - least privilege.
+automation_host: 10.10.50.10
+
 # Designated "unused ports" VLAN for V-220641. Disabled (shutdown) access ports
 # must be assigned here, and this VLAN must be pruned from all trunk links.
 unused_vlan: 999
