@@ -107,7 +107,17 @@ def connect(device_name, device_info, username, password):
         'device_type': device_info['device_type'],
         'ip': device_info['host'],
         'username': username,
-        'password': password
+        'password': password,
+        # Netmiko's ~10s default conn_timeout is shorter than IOS's own AAA
+        # login can take when a RADIUS server is unreachable (login
+        # authentication falls through radius -> local *during* the SSH
+        # password exchange, not after it) - confirmed live as a ~30s login
+        # delay that made valid credentials look like a connection failure.
+        # L2_stig_harden_aaa.py tightens RADIUS timeout/retransmit to keep
+        # that fallback short, but this stays generous as a safety margin.
+        'conn_timeout': 60,
+        'auth_timeout': 60,
+        'banner_timeout': 60,
     }
     if enable_secret:
         ios_device['secret'] = enable_secret
