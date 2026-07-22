@@ -9,10 +9,10 @@ dedicated command - they're satisfied as a side effect of the explicit
 push every access port already gets (see the comment above L2_stig_audit.py's
 CHECKS dict for how the audit verifies this now that both are explicit).
 V-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py,
-not here. V-220632 (UUFB) and V-220636 (storm control) are still pushed here
-for real hardware, even though confirmed live that neither command exists on
-the lab's vios_l2 switches - they're silently rejected there, not removed
-from the script."""
+not here. V-220632 (UUFB), V-220636 (storm control), and V-220623 (802.1x/
+MAB) are still pushed here for real hardware, even though confirmed live
+that none of those commands exist/function on the lab's vios_l2 switches -
+they're silently rejected there, not removed from the script."""
 
 import argparse
 import re
@@ -76,6 +76,15 @@ BASE_FIXES = {
     'V-220570a (HTTP session limit)': 'ip http max-connections 2',
     'V-220625 (QoS enabled)': 'mls qos',
     'V-220595a (password encryption)': 'service password-encryption',
+    # V-220623 global prerequisites - confirmed live this lab's vios_l2 has no
+    # 802.1x authenticator role at all (dot1x is unrecognized as an
+    # interface-level authenticator command here, only supplicant-side global
+    # commands exist). Pushed anyway per Jorge's request - correct for real
+    # hardware, expected to be rejected/ineffective here. Per-port commands
+    # (authentication port-control auto / dot1x pae authenticator / mab) are
+    # added to access_fixes further down.
+    'V-220623a (dot1x system-auth-control)': 'dot1x system-auth-control',
+    'V-220623b (dot1x AAA method)': 'aaa authentication dot1x default group radius',
     'V-220600 (audit failure alert)': 'logging trap critical',
     # Confirmed live that this lab's vios_l2 rejects 'file privilege 15'
     # ("% Invalid input") - same category as UUFB/storm-control/mls
@@ -253,6 +262,9 @@ if default_access_vlan:
 access_fixes += [
     'switchport block unicast',                     # V-220632 (UUFB)
     'storm-control broadcast level bps 20000000',    # V-220636 (storm control)
+    'authentication port-control auto',              # V-220623 (802.1x/MAB)
+    'dot1x pae authenticator',                        # V-220623 (802.1x/MAB)
+    'mab',                                            # V-220623 (802.1x/MAB)
 ]
 
 snmpv3_commands = []
@@ -330,6 +342,7 @@ if access_ports:
     )
     applied_fixes['V-220632 (UUFB)'] = f'switchport block unicast (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
     applied_fixes['V-220636 (storm control)'] = f'storm-control broadcast level bps 20000000 (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
+    applied_fixes['V-220623 (802.1x/MAB)'] = f'authentication port-control auto; dot1x pae authenticator; mab (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
 if trunk_ports:
     applied_fixes['V-220640 (static trunk)'] = f'switchport nonegotiate (on {len(trunk_ports)} trunk port(s))'
     if root_guard_ports:
