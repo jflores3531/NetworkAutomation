@@ -116,6 +116,27 @@ def _all_access_ports_have(cfg, pattern, what):
     return True, f'{what} present on all {len(access)} access port(s): {", ".join(sorted(access))}'
 
 
+# V-220623: every access port must have either 802.1x (dot1x pae authenticator
+# + authentication port-control auto) or MAB (mab, for devices that don't
+# support an 802.1x supplicant) - either is sufficient per DISA's own fix
+# text. Known non-functional on this lab's vios_l2 (confirmed: dot1x has no
+# authenticator role at the interface level here) - included anyway per
+# Jorge's request, correct for real hardware, confirmed FAIL here is expected.
+def _dot1x_mab_check(cfg):
+    access, _ = parse_switchports(cfg)
+    if not access:
+        return False, 'no access/host-facing switchports found in config'
+    missing = []
+    for name, block in sorted(access.items()):
+        has_dot1x = re.search(r'dot1x pae authenticator', block) and re.search(r'authentication port-control auto', block)
+        has_mab = re.search(r'^\s*mab\s*$', block, re.M)
+        if not (has_dot1x or has_mab):
+            missing.append(name)
+    if missing:
+        return False, f'missing 802.1x (`dot1x pae authenticator` + `authentication port-control auto`) or MAB (`mab`) on: {", ".join(missing)}'
+    return True, f'802.1x or MAB present on all {len(access)} access port(s): {", ".join(sorted(access))}'
+
+
 def _all_trunk_ports_have(cfg, pattern, what):
     _, trunk = parse_switchports(cfg)
     if not trunk:
@@ -558,6 +579,7 @@ CHECKS = {
     # access/trunk classification bucket, which was circular.
     'V-220642': lambda cfg: _all_access_ports_have(cfg, r'switchport access vlan (?!1\s*$)\d+', 'an explicit non-default access VLAN (not VLAN 1)'),
     'V-220645': _all_ports_explicit_mode,
+    'V-220623': _dot1x_mab_check,
     'V-220632': lambda cfg: _all_access_ports_have(cfg, r'switchport block unicast', 'UUFB (`switchport block unicast`)'),
     'V-220634': lambda cfg: _all_access_ports_have(cfg, r'ip verify source', 'IP Source Guard (`ip verify source`)'),
     'V-220636': lambda cfg: _all_access_ports_have(cfg, r'storm-control broadcast level', 'storm control (`storm-control broadcast level ...`)'),
