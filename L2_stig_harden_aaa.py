@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 """Push aaa new-model + RADIUS auth (V-220587: single local account with an
-AAA fallback line, V-220617: RADIUS as primary auth source) to a device, kept
-separate from L2_stig_harden.py's ~60-command batch on purpose. Pushing this
+AAA fallback line, V-220617: RADIUS as primary auth source) plus the password
+length/complexity policy (V-220589, V-220590-594 - the latter needs aaa
+new-model already active, so it lives here rather than L2_stig_harden.py) to
+a device, kept separate from L2_stig_harden.py's ~60-command batch on
+purpose. Pushing this
 alongside everything else caused a live session on S2 to drop right after
 'aaa new-model' took effect, before the rest of the block (radius-server
 host, aaa authentication login, aaa authorization exec) could send - leaving
@@ -115,6 +118,29 @@ aaa_commands += [
     'aaa authorization exec default group radius local',
 ]
 
+# V-220589/590-594: password length + complexity policy. 'security passwords
+# min-length' is standalone; the aaa common-criteria policy block needs aaa
+# new-model already active (pushed above, same batch). Matches this repo's
+# existing precedent elsewhere - the audit only checks the policy exists with
+# these sub-commands/thresholds, not that it's tied to any specific account's
+# password (same scope as V-220570/578's audit, config presence only).
+#
+# 'security passwords min-length' (V-220589) is kept even though confirmed
+# live that this lab's vios_l2 doesn't recognize it at all ("security" itself
+# is an unrecognized command, not just the "passwords min-length" part) -
+# same category as UUFB/storm-control/mls qos, correct for real hardware.
+PASSWORD_POLICY_NAME = 'STIG_PASSWORD_POLICY'
+aaa_commands += [
+    'security passwords min-length 15',
+    f'aaa common-criteria policy {PASSWORD_POLICY_NAME}',
+    'upper-case 1',
+    'lower-case 1',
+    'numeric-count 1',
+    'special-case 1',
+    'char-changes 8',
+    'exit',
+]
+
 output = net_connect.send_config_set(aaa_commands)
 net_connect.disconnect()
 netauto.log_push('L2_stig_harden_aaa.py', device_name, username, aaa_commands)
@@ -128,3 +154,5 @@ print(output)
 print('\nRules addressed by this pass:')
 print('  - V-220587 (single local account with AAA fallback)')
 print('  - V-220617 (RADIUS as primary auth source)')
+print('  - V-220589 (minimum 15-character password length)')
+print('  - V-220590/591/592/593/594 (password complexity policy)')
