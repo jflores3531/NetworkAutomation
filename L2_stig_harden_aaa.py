@@ -11,6 +11,14 @@ host, aaa authentication login, aaa authorization exec) could send - leaving
 the device half-configured and SSH-inaccessible (recovered via console +
 'no aaa new-model').
 
+Also pushes V-220623a/b (dot1x system-auth-control + the dot1x AAA method
+list), moved here from L2_stig_harden.py - 'aaa authentication dot1x
+default group radius' needs aaa new-model already active to be valid
+syntax at all, so it belongs with the rest of the AAA-dependent config,
+not in the bulk pass where that dependency was previously silent/
+unchecked. L2_stig_harden.py still pushes the per-port V-220623 commands
+(authentication port-control auto / dot1x pae authenticator / mab).
+
 Before touching aaa new-model at all, this script pushes the enable secret
 on its own and verifies it actually works: drop to user EXEC with 'disable',
 then escalate back with Netmiko's enable() (which uses the same secret), and
@@ -23,7 +31,7 @@ import netauto
 
 # Parse the target device from the command line
 parser = argparse.ArgumentParser(
-    description='Push aaa new-model + RADIUS auth to a device from inventory.yaml/secrets.yaml (V-220587/617)'
+    description='Push aaa new-model + RADIUS auth to a device from inventory.yaml/secrets.yaml (V-220587/617/623a/b)'
 )
 parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. S1)')
 args = parser.parse_args()
@@ -99,6 +107,21 @@ print(f'Enable secret verified working on {device_name} (disable -> enable round
 # name). The built-in "group radius" referenced by the aaa authentication/
 # authorization lines below picks up servers defined either way.
 aaa_commands = ['aaa new-model']
+
+# V-220623a/b: 802.1x global prerequisites. Moved here from L2_stig_harden.py -
+# 'aaa authentication dot1x default group radius' needs aaa new-model already
+# active to even be valid syntax ("% Invalid input" otherwise, confirmed live
+# on S2, which had aaa new-model reverted after the original lockout
+# incident, while S1/S3 already had it from prior runs of this script).
+# L2_stig_harden.py only pushes the per-port V-220623 commands now
+# (authentication port-control auto / dot1x pae authenticator / mab), which
+# stay valid to configure even before these globals are active - they're
+# just inert until this script runs.
+aaa_commands += [
+    'dot1x system-auth-control',
+    'aaa authentication dot1x default group radius',
+]
+
 for i, ip in enumerate(radius_servers, start=1):
     aaa_commands += [
         f'radius server RADIUS{i}',
@@ -154,3 +177,4 @@ print('  - V-220587 (single local account with AAA fallback)')
 print('  - V-220617 (RADIUS as primary auth source)')
 print('  - V-220589 (minimum 15-character password length)')
 print('  - V-220590/591/592/593/594 (password complexity policy)')
+print('  - V-220623a/b (dot1x system-auth-control + AAA method) - per-port V-220623 commands are pushed by L2_stig_harden.py')
