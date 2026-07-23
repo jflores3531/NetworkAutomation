@@ -6,6 +6,10 @@ the single most direct lockout risk. Unlike aaa new-model (recoverable via
 console + enable secret), a vty access-class that excludes the automation
 host's own source IP blocks every future SSH connection from it outright.
 
+The ACL's trailing deny also carries `log-input` (V-220581, partial - vty
+access attempts only, not general traffic). It matches the implicit deny
+already in effect, so it changes no access decisions, only adds logging.
+
 Scoped to just the automation host (inventory.yaml's automation_host), not
 the whole management_subnet - least privilege, and simpler to reason about.
 
@@ -53,11 +57,14 @@ if net_connect is None:
 acl_commands = [
     f'ip access-list extended {ACL_NAME}',
     f'permit ip host {automation_host} any',
+    'deny ip any any log-input',
     'exit',
 ]
 net_connect.send_config_set(acl_commands)
 netauto.log_push('L2_stig_harden_acl.py', device_name, username, acl_commands)
 print(f'ACL {ACL_NAME} created on {device_name}, scoped to {automation_host} only.')
+print('Trailing `deny ip any any log-input` added (V-220581) - logs rejected vty access attempts '
+      'with source/interface info. Matches the implicit deny already in effect, so no access change.')
 
 # Step 2: apply it. This is the actual risky moment - everything before this
 # point was fully reversible with zero exposure window.
@@ -88,3 +95,6 @@ net_connect.disconnect()
 
 print(f'\nRules addressed by this pass:')
 print(f'  - V-220575 (vty management ACL, scoped to {automation_host} only)')
+print(f'  - V-220581 (log-input on the trailing deny, partial - vty access attempts only, not general '
+      f'traffic; also only reaches `show logging` locally, not the syslog servers, since logging trap '
+      f'critical is below the informational severity ACL logging uses)')
