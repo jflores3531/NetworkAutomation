@@ -14,11 +14,39 @@ all on NX-OS - confirmed live on NXCore1 ("Domain not set" otherwise).
 V-220689 (UDLD) only pushes 'feature udld' - 'udld enable' isn't valid
 NX-OS syntax (confirmed live: "% Invalid command"), an IOS-ism that doesn't
 carry over; UDLD is on by default for fiber interfaces once the feature
-itself is enabled."""
+itself is enabled.
+Also pushes V-220695 (native VLAN): unless a switchport already has an
+explicit 'switchport mode access' line, it's pushed to trunk mode with the
+shared native_vlan - the inverse default from L2_stig_harden.py's
+access-layer switches. Appropriate here since NXCore1/NXCore2 are core
+switches where most ports interconnect other switches, not end hosts."""
 
 import argparse
+import re
 import netauto
 import stig_common
+
+# Interface types that take switchport commands on NX-OS - mgmt0
+# (management), Vlan<n> (SVIs), and loopback<n> aren't physical/logical
+# switchports and can't take 'switchport mode' commands at all.
+NXOS_SWITCHPORT_PREFIXES = ('Ethernet', 'port-channel')
+
+
+def classify_non_access_ports(cfg):
+    """Return switchport-capable interface names lacking an explicit
+    'switchport mode access' line. Per Jorge's policy for these core
+    switches: unless a port is already configured as access, it should be
+    trunk - these are the switch's interconnect/uplink ports, or ports left
+    in NX-OS's default negotiated mode."""
+    non_access = []
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m or not m.group(1).startswith(NXOS_SWITCHPORT_PREFIXES):
+            continue
+        if not re.search(r'^\s*switchport mode access\s*$', chunk, re.M):
+            non_access.append(m.group(1))
+    return non_access
+
 
 # Global (non-interface-specific) fixes always pushed by this script
 BASE_FIXES = {
@@ -57,7 +85,6 @@ SKIPPED_RULES = [
     'V-220691 (default VLAN on host ports)',
     'V-220692 (default VLAN pruned from trunks)',
     'V-220694 (user-facing ports as access)',
-    'V-220695 (native VLAN)',
 ]
 
 # Parse the target device from the command line
@@ -93,6 +120,23 @@ if net_connect is None:
 # management/servers/unused VLANs from inventory.yaml's non_user_vlans
 vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=netauto.load_non_user_vlans())
 
+# V-220695: classify switchports so every port lacking explicit access mode
+# gets pushed to trunk with the shared native VLAN. Native VLAN comes from
+# inventory.yaml (same native_vlan value L2_stig_harden.py uses, currently
+# 999) - created in the VLAN database here too.
+running_config = str(net_connect.send_command('show running-config'))
+trunk_target_ports = classify_non_access_ports(running_config)
+native_vlan_id = netauto.load_native_vlan()
+
+native_vlan_commands = [f'vlan {native_vlan_id}', 'name NATIVE', 'exit'] if native_vlan_id else []
+
+interface_commands = []
+for name in trunk_target_ports:
+    interface_commands.append(f'interface {name}')
+    interface_commands.append('switchport mode trunk')
+    if native_vlan_id:
+        interface_commands.append(f'switchport trunk native vlan {native_vlan_id}')
+
 # NTP server IPs (V-220498) come from inventory.yaml's services section. NTP
 # authentication key (V-220502) comes from secrets.yaml.
 ntp_servers = netauto.load_services().get('ntp_servers', [])
@@ -118,6 +162,11 @@ if ntp_servers:
 applied_fixes = dict(BASE_FIXES)
 applied_fixes['V-220493 (exec-timeout)'] = '; '.join(EXEC_TIMEOUT_FIX)
 applied_fixes['V-220689 (UDLD)'] = '; '.join(UDLD_FIX)
+if trunk_target_ports and native_vlan_id:
+    applied_fixes['V-220695 (native VLAN)'] = (
+        f'switchport mode trunk; switchport trunk native vlan {native_vlan_id} '
+        f'(on {len(trunk_target_ports)} non-access port(s): {", ".join(trunk_target_ports)})'
+    )
 if vlan_ids:
     applied_fixes['V-220684 (DHCP snooping)'] = f'feature dhcp; ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
 if vtp_password and vtp_domain:
@@ -134,6 +183,7 @@ if ntp_key_id:
 commands = list(BASE_FIXES.values()) + EXEC_TIMEOUT_FIX + UDLD_FIX
 if vlan_ids:
     commands += ['feature dhcp', 'ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}']
+commands += native_vlan_commands + interface_commands
 if vtp_password and vtp_domain:
     # Domain must be set before the password takes effect - confirmed live
     # on NXCore1 ('vtp password ...' fails with "Domain not set" otherwise.
@@ -157,6 +207,10 @@ print(f'\nRules addressed by this pass:')
 for rule in applied_fixes:
     print('  - ' + rule)
 
+if not native_vlan_id:
+    print('\nSkipped V-220695 (native VLAN) — add native_vlan to inventory.yaml to include it.')
+elif not trunk_target_ports:
+    print(f'\nNo non-access switchports found — every port already has an explicit `switchport mode access` line, nothing to push for V-220695.')
 if not (vtp_password and vtp_domain):
     missing = []
     if not vtp_password:
