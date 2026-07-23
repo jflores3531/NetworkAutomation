@@ -132,6 +132,11 @@ OPTIONAL_FIXES = {
 # "0 0" disables the timeout entirely, which is non-compliant, not exempt from it.
 VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 5', 'exec-timeout 5 0']
 
+# V-220596 also requires the console line, not just vty (DISA's Fix Text
+# configures both) - previously only vty was ever set, so the console line
+# sat at IOS's un-set default (10 min, non-compliant) indefinitely.
+CONSOLE_EXEC_TIMEOUT_FIX = ['line con 0', 'exec-timeout 5 0']
+
 # V-220608: SSH encryption algorithm — includes "ip ssh version 2" too, since
 # V-220608's own audit check requires both and this makes V-220607 pass as a
 # side effect
@@ -355,6 +360,7 @@ applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICE
 applied_fixes['V-220608 (SSH encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
 applied_fixes['V-220571/572/573/574/582/597/611/613 (archive logging)'] = '; '.join(ARCHIVE_LOGGING_FIX)
 applied_fixes['V-220570b/596 (VTY session limit + exec-timeout)'] = '; '.join(VTY_SESSION_LIMIT_FIX)
+applied_fixes['V-220596b (console exec-timeout)'] = '; '.join(CONSOLE_EXEC_TIMEOUT_FIX)
 if vlan_ids:
     applied_fixes['V-220633 (DHCP snooping)'] = (
         f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}; no ip dhcp snooping information option'
@@ -401,7 +407,7 @@ if ntp_key_id:
 if syslog_servers:
     applied_fixes['V-220620 (dual syslog servers)'] = '; '.join(f'logging host {ip}' for ip in syslog_servers)
 
-commands = list(BASE_FIXES.values()) + list(OPTIONAL_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX
+commands = list(BASE_FIXES.values()) + list(OPTIONAL_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX + CONSOLE_EXEC_TIMEOUT_FIX
 if vlan_ids:
     # `information option` (Option 82 relay-agent info insertion) is on by
     # default once DHCP snooping is enabled - turned off here since some DHCP
