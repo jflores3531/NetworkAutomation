@@ -1,0 +1,9 @@
+---
+# Replicates L2_stig_harden.py's bulk hardening pass. See ../../../README.md
+# for what's covered vs. deliberately left out (Root Guard and the disabled-
+# port-to-unused-VLAN reassignment both need live state this role doesn't
+# gather yet - see that file for why).
+- import_tasks: global.yml
+- import_tasks: vlans_and_dhcp.yml
+- import_tasks: ntp_snmp.yml
+- import_tasks: interfaces.yml

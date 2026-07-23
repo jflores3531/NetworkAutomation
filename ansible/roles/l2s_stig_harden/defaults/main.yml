@@ -1,0 +1,17 @@
+---
+# Fallback defaults - group_vars/l2_switches/{vars,vault}.yml normally
+# supplies real values. These just let the role run without blowing up if
+# reused for a group that doesn't set everything (features that depend on
+# an empty value below are skipped, same "skip with a warning" behavior
+# the Python scripts use).
+non_user_vlans: [1]
+unused_vlan: ""
+native_vlan: ""
+default_access_vlan: ""
+ntp_servers: []
+syslog_servers: []
+vtp_password: ""
+snmpv3_auth_password: ""
+snmpv3_priv_password: ""
+ntp_auth_key_id: ""
+ntp_auth_key_value: ""
