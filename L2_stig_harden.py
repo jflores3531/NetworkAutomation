@@ -343,7 +343,9 @@ applied_fixes['V-220608 (SSH encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
 applied_fixes['V-220571/572/573/574/582/597/611/613 (archive logging)'] = '; '.join(ARCHIVE_LOGGING_FIX)
 applied_fixes['V-220570b/596 (VTY session limit + exec-timeout)'] = '; '.join(VTY_SESSION_LIMIT_FIX)
 if vlan_ids:
-    applied_fixes['V-220633 (DHCP snooping)'] = f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
+    applied_fixes['V-220633 (DHCP snooping)'] = (
+        f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}; no ip dhcp snooping information option'
+    )
 if vtp_password:
     applied_fixes['V-220624 (VTP authentication)'] = f'vtp password {vtp_password}'
 if access_ports:
@@ -388,7 +390,14 @@ if syslog_servers:
 
 commands = list(BASE_FIXES.values()) + list(OPTIONAL_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX
 if vlan_ids:
-    commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}']
+    # `information option` (Option 82 relay-agent info insertion) is on by
+    # default once DHCP snooping is enabled - turned off here since some DHCP
+    # servers/relays reject or mishandle it, and V-220633 doesn't require it.
+    commands += [
+        'ip dhcp snooping',
+        f'ip dhcp snooping vlan {",".join(vlan_ids)}',
+        'no ip dhcp snooping information option',
+    ]
 # Order here doesn't functionally matter for vtp password - turned out V-220624
 # was a false FAIL all along (VTP passwords are deliberately excluded from
 # `show running-config` on Cisco IOS, confirmed live via `show vtp password`
