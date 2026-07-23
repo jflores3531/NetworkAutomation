@@ -15,7 +15,8 @@ args = parser.parse_args()
 device_name = args.device
 commands = [
     f'interface Loopback{args.interface}',
-    f'ip address {args.ip_address} {args.subnet_mask}'
+    f'ip address {args.ip_address} {args.subnet_mask}',
+    'no shutdown'
 ]
 
 # Prompt for credentials
