@@ -324,11 +324,11 @@ def _acl_source_in_subnet(source_spec, subnet):
     return False
 
 
-def _vty_management_acl_check(cfg, subnet_str):
-    if not subnet_str:
-        return False, 'no `management_subnet` configured in inventory.yaml'
-    subnet = ipaddress.ip_network(subnet_str, strict=False)
-
+def _vty_acl_block(cfg):
+    """Return (acl_name, acl_block_text) for the ACL applied via `access-class
+    ... in` under `line vty`. acl_name is None if no access-class is applied;
+    acl_block_text is None if the access-class points at an ACL that was
+    never actually defined."""
     acl_name = None
     for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
         if chunk.startswith('line vty'):
@@ -337,15 +337,26 @@ def _vty_management_acl_check(cfg, subnet_str):
                 acl_name = m.group(1)
                 break
     if not acl_name:
-        return False, 'no `access-class <name> in` found under any `line vty` block'
+        return None, None
 
-    permits = None
     for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
         if chunk.startswith(f'ip access-list extended {acl_name}'):
-            permits = re.findall(r'^\s*(?:\d+\s+)?permit ip (.+?)\s+any\s*$', chunk, re.M)
-            break
-    if permits is None:
+            return acl_name, chunk
+    return acl_name, None
+
+
+def _vty_management_acl_check(cfg, subnet_str):
+    if not subnet_str:
+        return False, 'no `management_subnet` configured in inventory.yaml'
+    subnet = ipaddress.ip_network(subnet_str, strict=False)
+
+    acl_name, acl_block = _vty_acl_block(cfg)
+    if not acl_name:
+        return False, 'no `access-class <name> in` found under any `line vty` block'
+    if acl_block is None:
         return False, f'`access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found'
+
+    permits = re.findall(r'^\s*(?:\d+\s+)?permit ip (.+?)\s+any\s*$', acl_block, re.M)
     if not permits:
         return False, f'`{acl_name}` has no `permit ip <source> any` lines'
 
@@ -353,6 +364,23 @@ def _vty_management_acl_check(cfg, subnet_str):
     if bad:
         return False, f'`{acl_name}` (via `access-class {acl_name} in`) permits source(s) outside {subnet_str}: {", ".join(bad)}'
     return True, f'`{acl_name}` (via `access-class {acl_name} in`) permits only sources within {subnet_str}: {", ".join(permits)}'
+
+
+# V-220581: partial coverage only - confirms the vty management ACL's
+# trailing deny carries `log-input` (rejected access attempts get logged
+# with source/interface info instead of vanishing into the implicit deny).
+# Says nothing about general data-plane traffic, and nothing about whether
+# these log entries actually reach the syslog servers (see
+# L2_stig_harden_acl.py - they don't, at `logging trap critical`).
+def _vty_acl_log_input_check(cfg):
+    acl_name, acl_block = _vty_acl_block(cfg)
+    if not acl_name:
+        return False, 'no `access-class <name> in` found under any `line vty` block'
+    if acl_block is None:
+        return False, f'`access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found'
+    if not re.search(r'^\s*(?:\d+\s+)?deny\s+ip any any log-input\s*$', acl_block, re.M):
+        return False, f'`{acl_name}` has no `deny ip any any log-input` line'
+    return True, f'`{acl_name}` has a logged trailing deny (`deny ip any any log-input`)'
 
 
 # V-220571/572/573/574/582/597/611/613: DISA reuses the exact same evidence
@@ -620,6 +648,7 @@ CHECKS = {
     'V-220578': _admin_activity_logged,
     'V-220570': _session_limit_check,
     'V-220575': lambda cfg: _vty_management_acl_check(cfg, netauto.load_management_subnet()),
+    'V-220581': _vty_acl_log_input_check,
     'V-220587': _single_local_account_check,
     'V-220617': _radius_redundancy_check,
     'V-220590': lambda cfg: _cc_policy_check(cfg, r'^\s*upper-case (\d+)', 1, '`upper-case <n>`'),
