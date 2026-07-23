@@ -1,0 +1,54 @@
+---
+# Mirrors L2_stig_harden_ipsg.py: push 'ip verify source' (V-220634, IP
+# Source Guard) to every host-facing/access port. Kept as its own role,
+# not merged into l2s_stig_harden, for the same reason the Python script
+# is separate - IPSG only trusts the DHCP snooping binding table, so a
+# statically-addressed host with no DHCP lease has its traffic dropped
+# once this is pushed.
+#
+# Per project history: do NOT run this against S2 - the automation host
+# is statically addressed and directly connected there, and pushing this
+# broke its own connectivity through S2 in a prior test. Independently
+# runnable/skippable per device on purpose (use --limit), same as the
+# Python script.
+#
+# Assumes l2s_stig_harden (or L2_stig_harden.py) has already run - DHCP
+# snooping enabled, access ports already in 'switchport mode access'.
+# Neither is set up by this role itself. Fix Text/Check Text cross-check
+# (2026-07-24) found no discrepancy for V-220634 - single command, no
+# platform exemption, no scoping nuance - so this is a direct port with
+# no fix needed first.
+
+- name: Gather show running-config for interface classification
+  cisco.ios.ios_command:
+    commands:
+      - show running-config
+  register: running_config_result
+
+- name: All switchport-capable interface names
+  set_fact:
+    all_switchports: >-
+      {{
+        running_config_result.stdout[0]
+        | regex_findall('(?m)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)')
+      }}
+
+- name: Trunk-classified interface names (block contains 'switchport mode trunk')
+  set_fact:
+    trunk_ports: >-
+      {{
+        running_config_result.stdout[0]
+        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*switchport mode trunk')
+      }}
+
+- name: Access-classified interface names (switchport-capable, not trunk)
+  set_fact:
+    access_ports: "{{ all_switchports | difference(trunk_ports) }}"
+
+- name: "V-220634 - IP Source Guard on every access port"
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - ip verify source
+  loop: "{{ access_ports }}"
+  when: access_ports | length > 0
