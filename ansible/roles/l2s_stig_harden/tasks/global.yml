@@ -1,0 +1,94 @@
+---
+# Global (non-interface-specific) fixes - mirrors L2_stig_harden.py's
+# BASE_FIXES/OPTIONAL_FIXES/UNNECESSARY_SERVICES_FIX/SSH_ENCRYPTION_FIX/
+# ARCHIVE_LOGGING_FIX/VTY_SESSION_LIMIT_FIX/CONSOLE_EXEC_TIMEOUT_FIX exactly.
+# ios_config diffs against running-config itself, so this is idempotent
+# without any extra logic - re-running only pushes what's actually missing.
+
+- name: "V-220630/631/637/638/639/580/599/612/576/578/570a/625/595a/623/600/583-585 - global BASE_FIXES"
+  cisco.ios.ios_config:
+    lines:
+      - spanning-tree portfast bpduguard default   # V-220630 (BPDU Guard)
+      - spanning-tree loopguard default             # V-220631 (Loop Guard)
+      - spanning-tree mode rapid-pvst                # V-220638 (Rapid-PVST)
+      - udld enable                                   # V-220639 (UDLD)
+      - ip igmp snooping                              # V-220637 (IGMP snooping)
+      - service timestamps log datetime localtime     # V-220580 (log timestamps)
+      - logging buffered 64000 informational          # V-220599 (logging buffer size)
+      - login on-failure log                          # V-220612a
+      - login on-success log                          # V-220612b
+      - login block-for 900 attempts 3 within 120      # V-220576 (lockout)
+      - logging userinfo                               # V-220578 (admin activity logging)
+      - ip http max-connections 2                      # V-220570a (HTTP session limit)
+      - mls qos                                         # V-220625 (QoS enabled)
+      - service password-encryption                     # V-220595a (password encryption)
+      - dot1x system-auth-control                        # V-220623a
+      - aaa authentication dot1x default group radius     # V-220623b
+      - logging trap critical                              # V-220600 (audit failure alert)
+      - file privilege 15                                   # V-220583/584/585
+      - ip device tracking   # not a STIG requirement - host visibility only
+
+- name: "V-220586 - disable unnecessary/nonsecure services"
+  cisco.ios.ios_config:
+    lines:
+      - no boot network
+      - no ip boot server
+      - no ip bootp server
+      - no ip dns server
+      - no ip identd
+      - no ip finger
+      - no ip http server
+      - no ip rcmd rcp-enable
+      - no ip rcmd rsh-enable
+      - no service config
+      - no service finger
+      - no service tcp-small-servers
+      - no service udp-small-servers
+      - no service pad
+      - no service call-home
+
+- name: "V-220607/608 - SSH encryption algorithm"
+  cisco.ios.ios_config:
+    lines:
+      - ip ssh version 2
+      - ip ssh server algorithm encryption aes256-ctr aes192-ctr aes128-ctr
+
+- name: "V-220571/572/573/574/582/597/611/613 - archive/config-change logging"
+  cisco.ios.ios_config:
+    lines:
+      - logging enable
+      - logging size 1000
+      - notify syslog contenttype plaintext
+      - hidekeys
+    parents:
+      - archive
+      - log config
+
+- name: "V-220570b/596 - vty session limit + exec-timeout"
+  cisco.ios.ios_config:
+    lines:
+      - session-limit 5
+      - exec-timeout 5 0
+    parents: line vty 0 4
+
+- name: "V-220596 - console exec-timeout (DISA's Fix Text requires both console and vty)"
+  cisco.ios.ios_config:
+    lines:
+      - exec-timeout 5 0
+    parents: line con 0
+
+- name: "V-220624 - VTP authentication"
+  cisco.ios.ios_config:
+    lines:
+      - "vtp password {{ vtp_password }}"
+  when: vtp_password | length > 0
+
+- name: Build syslog server lines
+  set_fact:
+    syslog_lines: "{{ syslog_servers | map('regex_replace', '(.+)', 'logging host \\1') | list }}"
+  when: syslog_servers | length > 0
+
+- name: "V-220620 - dual syslog servers"
+  cisco.ios.ios_config:
+    lines: "{{ syslog_lines }}"
+  when: syslog_servers | length > 0

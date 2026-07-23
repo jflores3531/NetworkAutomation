@@ -1,0 +1,42 @@
+---
+# Non-secret variables for the l2_switches group. Values mirror
+# ../../../inventory.yaml exactly (same STIG rules, same network-design
+# facts) so the Ansible and Python implementations stay in sync.
+
+# VLAN IDs excluded when discovering "user VLANs" for DHCP snooping/DAI
+# (V-220633/V-220635) - see non_user_vlans in inventory.yaml.
+non_user_vlans:
+  - 1    # default VLAN, unused
+  - 10   # management / automation host segment
+  - 100  # servers VLAN
+
+# Designated "unused ports" VLAN for V-220641 - see unused_vlan in inventory.yaml.
+unused_vlan: 999
+
+# Native VLAN for all 802.1q trunk links, V-220646 - see native_vlan in
+# inventory.yaml. Same ID as unused_vlan on purpose (dedicated black-hole
+# VLAN as native prevents double-tagging/VLAN-hopping).
+native_vlan: 999
+
+# Default VLAN for host-facing/access ports not already in trunk mode,
+# V-220642/645 - see default_access_vlan in inventory.yaml.
+default_access_vlan: 50
+
+# NTP servers, V-220601 - see services.ntp_servers in inventory.yaml.
+ntp_servers:
+  - 192.168.100.10
+  - 192.168.100.11
+
+# Syslog servers, V-220620 - see services.syslog_servers in inventory.yaml.
+syslog_servers:
+  - 192.168.100.10
+  - 192.168.100.11
+
+# Bridges the vaulted secrets (vault.yml, encrypted) to plain variable names -
+# standard Ansible vault convention (vault_* holds the raw secret, the
+# plain name is what tasks actually reference).
+vtp_password: "{{ vault_vtp_password }}"
+snmpv3_auth_password: "{{ vault_snmpv3_auth_password }}"
+snmpv3_priv_password: "{{ vault_snmpv3_priv_password }}"
+ntp_auth_key_id: "{{ vault_ntp_auth_key_id }}"
+ntp_auth_key_value: "{{ vault_ntp_auth_key_value }}"

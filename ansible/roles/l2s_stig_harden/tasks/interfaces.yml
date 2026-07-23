@@ -1,0 +1,83 @@
+---
+# Mirrors L2_stig_harden.py's parse_switchports()/access_fixes/trunk_fixes -
+# an interface counts as trunk only if its block has 'switchport mode
+# trunk'; everything else switchport-capable is access. NOT ported here,
+# on purpose (see ../../../README.md for why):
+#   - V-220629 (Root Guard) - needs live STP root-port detection
+#     (stig_common.discover_root_port_interfaces) to safely exclude this
+#     switch's own root port; pushing Root Guard there blindly can force a
+#     real outage (root-inconsistent/blocking state).
+#   - V-220641a (disabled ports -> unused VLAN) - needs per-port shutdown-
+#     state detection this role doesn't gather.
+
+- name: Gather show running-config for interface classification
+  cisco.ios.ios_command:
+    commands:
+      - show running-config
+  register: running_config_result
+
+- name: All switchport-capable interface names
+  set_fact:
+    all_switchports: >-
+      {{
+        running_config_result.stdout[0]
+        | regex_findall('(?m)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)')
+      }}
+
+- name: Trunk-classified interface names (block contains 'switchport mode trunk')
+  set_fact:
+    trunk_ports: >-
+      {{
+        running_config_result.stdout[0]
+        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*switchport mode trunk')
+      }}
+
+- name: Access-classified interface names (switchport-capable, not trunk)
+  set_fact:
+    access_ports: "{{ all_switchports | difference(trunk_ports) }}"
+
+- name: >-
+    Common access-port fixes: default mode/VLAN (V-220642/645 side effect),
+    PortFast (V-220630b, required for BPDU Guard to activate), UUFB
+    (V-220632), 802.1x/MAB (V-220623)
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - switchport mode access
+      - "switchport access vlan {{ default_access_vlan }}"
+      - spanning-tree portfast
+      - switchport block unicast
+      - authentication port-control auto
+      - dot1x pae authenticator
+      - mab
+  loop: "{{ access_ports }}"
+  when: access_ports | length > 0
+
+- name: >-
+    V-220636 - storm control, speed-scaled threshold (Gigabit vs
+    TenGigabitEthernet, ~2% of link speed); FastEthernet skipped entirely -
+    not supported per the STIG's own Fix Text note
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - "storm-control broadcast level bps {{ '200000000' if item is match('^TenGigabitEthernet') else '20000000' }}"
+  loop: "{{ access_ports | reject('match', '^FastEthernet') | list }}"
+  when: access_ports | length > 0
+
+- name: Build trunk-port fix lines (allowed-vlan/native-vlan only added if configured)
+  set_fact:
+    trunk_fix_lines: >-
+      {{
+        ['switchport nonegotiate', 'ip dhcp snooping trust', 'ip arp inspection trust']
+        + (['switchport trunk allowed vlan ' ~ (allowed_trunk_vlan_ids | join(','))] if allowed_trunk_vlan_ids | length > 0 else [])
+        + (['switchport trunk native vlan ' ~ native_vlan] if native_vlan | string | length > 0 else [])
+      }}
+
+- name: >-
+    V-220640 (static trunk), V-220633b/635b (DHCP snooping + DAI trust),
+    V-220643/641b (trunk VLAN scoping), V-220646 (native VLAN)
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines: "{{ trunk_fix_lines }}"
+  loop: "{{ trunk_ports }}"
+  when: trunk_ports | length > 0

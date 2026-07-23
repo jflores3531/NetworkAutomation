@@ -1,0 +1,72 @@
+---
+# Mirrors stig_common.discover_user_vlans() + L2_stig_harden.py's VLAN
+# database creation and DHCP snooping push.
+
+- name: Gather show vlan brief
+  cisco.ios.ios_command:
+    commands:
+      - show vlan brief
+  register: vlan_brief_result
+
+- name: >-
+    Discover genuine user VLANs (excludes non_user_vlans and the reserved
+    fddi/token-ring 1002-1005 range) - for DHCP snooping (V-220633)
+  set_fact:
+    user_vlan_ids: >-
+      {{
+        vlan_brief_result.stdout[0]
+        | regex_findall('(?m)^(\d+)\s+\S+')
+        | map('int')
+        | reject('in', non_user_vlans | map('int') | list)
+        | reject('in', range(1002, 1006) | list)
+        | map('string')
+        | list
+      }}
+
+- name: >-
+    Discover VLANs for trunk allowed-list (excludes only VLAN 1 and
+    unused_vlan, NOT non_user_vlans - management/servers VLANs must still
+    cross trunks) - for V-220643/641b in interfaces.yml
+  set_fact:
+    allowed_trunk_vlan_ids: >-
+      {{
+        vlan_brief_result.stdout[0]
+        | regex_findall('(?m)^(\d+)\s+\S+')
+        | map('int')
+        | reject('in', [1] + ([unused_vlan | int] if unused_vlan | string | length > 0 else []))
+        | reject('in', range(1002, 1006) | list)
+        | map('string')
+        | list
+      }}
+
+- name: >-
+    VTP transparent mode - VLAN database entries live in a separate vlan.dat
+    file under VTP server mode (the Cisco default) and don't survive a
+    reload; confirmed live that this is required for native_vlan/
+    default_access_vlan to actually persist
+  cisco.ios.ios_config:
+    lines:
+      - vtp mode transparent
+  when: (native_vlan | string | length > 0) or (default_access_vlan | string | length > 0)
+
+- name: "V-220646 - create native VLAN in the database"
+  cisco.ios.ios_config:
+    parents: "vlan {{ native_vlan }}"
+    lines:
+      - name NATIVE
+  when: native_vlan | string | length > 0
+
+- name: Default access VLAN database entry
+  cisco.ios.ios_config:
+    parents: "vlan {{ default_access_vlan }}"
+    lines:
+      - name USER
+  when: default_access_vlan | string | length > 0
+
+- name: "V-220633 - DHCP snooping for discovered user VLANs"
+  cisco.ios.ios_config:
+    lines:
+      - ip dhcp snooping
+      - "ip dhcp snooping vlan {{ user_vlan_ids | join(',') }}"
+      - no ip dhcp snooping information option
+  when: user_vlan_ids | length > 0
