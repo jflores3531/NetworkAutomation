@@ -16,8 +16,8 @@ NX-OS syntax (confirmed live: "% Invalid command"), an IOS-ism that doesn't
 carry over; UDLD is on by default for fiber interfaces once the feature
 itself is enabled.
 Also pushes V-220695 (native VLAN): unless a switchport already has an
-explicit 'switchport mode access' line, it's pushed to trunk mode with the
-shared native_vlan - the inverse default from L2_stig_harden.py's
+explicit 'switchport access vlan <n>' line, it's pushed to trunk mode with
+the shared native_vlan - the inverse default from L2_stig_harden.py's
 access-layer switches. Appropriate here since NXCore1/NXCore2 are core
 switches where most ports interconnect other switches, not end hosts."""
 
@@ -34,16 +34,20 @@ NXOS_SWITCHPORT_PREFIXES = ('Ethernet', 'port-channel')
 
 def classify_non_access_ports(cfg):
     """Return switchport-capable interface names lacking an explicit
-    'switchport mode access' line. Per Jorge's policy for these core
-    switches: unless a port is already configured as access, it should be
-    trunk - these are the switch's interconnect/uplink ports, or ports left
-    in NX-OS's default negotiated mode."""
+    'switchport access vlan <n>' line. Checks for the VLAN assignment, not
+    'switchport mode access' - confirmed live that 'switchport mode access'
+    alone doesn't reliably show up in NX-OS running-config (default mode,
+    same omission pattern IOS uses for VLAN 1), so it isn't a trustworthy
+    signal on its own. An explicit access VLAN assignment is. Per Jorge's
+    policy for these core switches: unless a port is already configured as
+    access, it should be trunk - these are the switch's interconnect/uplink
+    ports, or ports left in NX-OS's default negotiated mode."""
     non_access = []
     for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
         m = re.match(r'interface (\S+)', chunk)
         if not m or not m.group(1).startswith(NXOS_SWITCHPORT_PREFIXES):
             continue
-        if not re.search(r'^\s*switchport mode access\s*$', chunk, re.M):
+        if not re.search(r'^\s*switchport access vlan \d+\s*$', chunk, re.M):
             non_access.append(m.group(1))
     return non_access
 
@@ -210,7 +214,7 @@ for rule in applied_fixes:
 if not native_vlan_id:
     print('\nSkipped V-220695 (native VLAN) — add native_vlan to inventory.yaml to include it.')
 elif not trunk_target_ports:
-    print(f'\nNo non-access switchports found — every port already has an explicit `switchport mode access` line, nothing to push for V-220695.')
+    print(f'\nNo non-access switchports found — every port already has an explicit `switchport access vlan <n>` line, nothing to push for V-220695.')
 if not (vtp_password and vtp_domain):
     missing = []
     if not vtp_password:
