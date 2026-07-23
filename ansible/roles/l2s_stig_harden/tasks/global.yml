@@ -5,7 +5,7 @@
 # ios_config diffs against running-config itself, so this is idempotent
 # without any extra logic - re-running only pushes what's actually missing.
 
-- name: "V-220630/631/637/638/639/580/599/612/576/578/570a/625/595a/623/600/583-585 - global BASE_FIXES"
+- name: "V-220630/631/637/638/639/580/599/612/576/578/570a/595a/623/600 - global BASE_FIXES"
   cisco.ios.ios_config:
     lines:
       - spanning-tree portfast bpduguard default   # V-220630 (BPDU Guard)
@@ -20,13 +20,30 @@
       - login block-for 900 attempts 3 within 120      # V-220576 (lockout)
       - logging userinfo                               # V-220578 (admin activity logging)
       - ip http max-connections 2                      # V-220570a (HTTP session limit)
-      - mls qos                                         # V-220625 (QoS enabled)
       - service password-encryption                     # V-220595a (password encryption)
       - dot1x system-auth-control                        # V-220623a
       - aaa authentication dot1x default group radius     # V-220623b
       - logging trap critical                              # V-220600 (audit failure alert)
-      - file privilege 15                                   # V-220583/584/585
       - ip device tracking   # not a STIG requirement - host visibility only
+
+# V-220625/V-220583-585: confirmed live (see ../../../Bugs/README.md) that
+# this lab's vios_l2 image rejects both commands outright ("% Invalid
+# input"). Kept for real hardware - split into their own ignore_errors
+# tasks so a known lab limitation doesn't abort the whole play the way
+# it did when bundled into the batch above: ios_config (unlike Netmiko's
+# send_config_set()) treats any rejected command as fatal and stops
+# sending the rest of that task's lines entirely, not just that one line.
+- name: "V-220625 - QoS enabled (confirmed rejected on this lab's vios_l2, kept for real hardware)"
+  cisco.ios.ios_config:
+    lines:
+      - mls qos
+  ignore_errors: true
+
+- name: "V-220583/584/585 - file privilege 15 (confirmed rejected on this lab's vios_l2, kept for real hardware)"
+  cisco.ios.ios_config:
+    lines:
+      - file privilege 15
+  ignore_errors: true
 
 - name: "V-220586 - disable unnecessary/nonsecure services"
   cisco.ios.ios_config:
@@ -34,8 +51,6 @@
       - no boot network
       - no ip boot server
       - no ip bootp server
-      - no ip dns server
-      - no ip identd
       - no ip finger
       - no ip http server
       - no ip rcmd rcp-enable
@@ -45,7 +60,17 @@
       - no service tcp-small-servers
       - no service udp-small-servers
       - no service pad
+
+# Confirmed live (Bugs/README.md) that these three specific services are
+# rejected outright on this lab's vios_l2 - same ignore_errors reasoning
+# as V-220625/V-220583-585 above.
+- name: "V-220586 - unnecessary services confirmed rejected on this lab's vios_l2, kept for real hardware"
+  cisco.ios.ios_config:
+    lines:
+      - no ip dns server
+      - no ip identd
       - no service call-home
+  ignore_errors: true
 
 - name: "V-220607/608 - SSH encryption algorithm"
   cisco.ios.ios_config:
