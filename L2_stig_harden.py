@@ -20,7 +20,11 @@ silently rejected there, not removed from the script. V-220636's threshold
 is scaled by port speed and skipped entirely on FastEthernet interfaces
 (see storm_control_command()) - DISA's own Fix Text notes storm control
 isn't supported on most FastEthernet ports, and a single flat threshold
-would either violate or fail on ports well outside Gigabit speed."""
+would either violate or fail on ports well outside Gigabit speed.
+V-220630 (BPDU Guard) pushes 'spanning-tree portfast' to every access port -
+the global 'spanning-tree portfast bpduguard default' fix only activates
+BPDU Guard on ports that have PortFast enabled, so without this the global
+command was present but functionally inert everywhere (a false PASS)."""
 
 import argparse
 import re
@@ -304,6 +308,15 @@ if default_access_vlan:
 access_fixes = ['switchport mode access']
 if default_access_vlan:
     access_fixes.append(f'switchport access vlan {default_access_vlan}')
+# V-220630 (BPDU Guard): the global 'spanning-tree portfast bpduguard default'
+# fix (in BASE_FIXES) only activates BPDU Guard on ports that have PortFast
+# enabled - per the STIG's own Discussion text, BPDU Guard disables "the port
+# that has PortFast configured" on BPDU reception. Without this, that global
+# command is a no-op everywhere: it was present in the config (audit PASS)
+# but never actually protected a single port. PortFast belongs on access/
+# host-facing ports only, never trunk/uplinks (a trunk receiving BPDUs is
+# normal STP behavior, not a rogue-switch signal).
+access_fixes.append('spanning-tree portfast')
 # Kept for real hardware even though confirmed live that neither command
 # exists on these lab vios_l2 switches ("% Invalid input") - Jorge wants them
 # available for a real deployment, not removed just because the lab can't run
@@ -397,6 +410,7 @@ if access_ports:
         f'switchport mode access' + (f'; switchport access vlan {default_access_vlan}' if default_access_vlan else '')
         + f' (on {len(access_ports)} access port(s))'
     )
+    applied_fixes['V-220630b (PortFast, required for BPDU Guard to activate)'] = f'spanning-tree portfast (on {len(access_ports)} access port(s))'
     applied_fixes['V-220632 (UUFB)'] = f'switchport block unicast (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
     if storm_control_ports:
         applied_fixes['V-220636 (storm control)'] = (
