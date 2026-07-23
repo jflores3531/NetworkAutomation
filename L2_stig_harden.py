@@ -9,10 +9,14 @@ dedicated command - they're satisfied as a side effect of the explicit
 push every access port already gets (see the comment above L2_stig_audit.py's
 CHECKS dict for how the audit verifies this now that both are explicit).
 V-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py,
-not here. V-220632 (UUFB), V-220636 (storm control), and V-220623 (802.1x/
-MAB) are still pushed here for real hardware, even though confirmed live
-that none of those commands exist/function on the lab's vios_l2 switches -
-they're silently rejected there, not removed from the script."""
+and V-220635 (DAI) separately by L2_stig_harden_dai.py - both split out
+because they only trust the DHCP snooping binding table, so a statically-
+addressed host with no DHCP lease gets its traffic dropped once either is
+pushed (see the static-host-binding gap tracked in project memory).
+V-220632 (UUFB), V-220636 (storm control), and V-220623 (802.1x/MAB) are
+still pushed here for real hardware, even though confirmed live that none
+of those commands exist/function on the lab's vios_l2 switches - they're
+silently rejected there, not removed from the script."""
 
 import argparse
 import re
@@ -340,7 +344,6 @@ applied_fixes['V-220571/572/573/574/582/597/611/613 (archive logging)'] = '; '.j
 applied_fixes['V-220570b/596 (VTY session limit + exec-timeout)'] = '; '.join(VTY_SESSION_LIMIT_FIX)
 if vlan_ids:
     applied_fixes['V-220633 (DHCP snooping)'] = f'ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
-    applied_fixes['V-220635 (DAI)'] = f'ip arp inspection vlan {",".join(vlan_ids)}'
 if vtp_password:
     applied_fixes['V-220624 (VTP authentication)'] = f'vtp password {vtp_password}'
 if access_ports:
@@ -385,7 +388,7 @@ if syslog_servers:
 
 commands = list(BASE_FIXES.values()) + list(OPTIONAL_FIXES.values()) + UNNECESSARY_SERVICES_FIX + SSH_ENCRYPTION_FIX + ARCHIVE_LOGGING_FIX + VTY_SESSION_LIMIT_FIX
 if vlan_ids:
-    commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}', f'ip arp inspection vlan {",".join(vlan_ids)}']
+    commands += ['ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}']
 # Order here doesn't functionally matter for vtp password - turned out V-220624
 # was a false FAIL all along (VTP passwords are deliberately excluded from
 # `show running-config` on Cisco IOS, confirmed live via `show vtp password`
@@ -444,7 +447,9 @@ if not syslog_servers:
 if not ntp_key_id:
     print('\nSkipped V-220606 (NTP authentication) — add ntp_auth_key to secrets.yaml to include it.')
 
-print('\nV-220587/617 (AAA new-model + RADIUS auth) is pushed separately by L2_stig_harden_aaa.py.')
+print('\nV-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py.')
+print('V-220635 (DAI) is pushed separately by L2_stig_harden_dai.py.')
+print('V-220587/617 (AAA new-model + RADIUS auth) is pushed separately by L2_stig_harden_aaa.py.')
 
 print('\nRules satisfied as a side effect of the access-port mode/VLAN push above, not by a dedicated command:')
 for rule in SIDE_EFFECT_RULES:

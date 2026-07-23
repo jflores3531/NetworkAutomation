@@ -27,6 +27,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`IOS_Router_audit.py`** — Audit a device against the DISA Cisco IOS Router NDM/RTR STIG (`New IOS Router Checklist.cklb`). Most RTR rules require topology/policy context and are reported as NOT AUTOMATED.
 - **`L2_stig_harden.py`** — Push the bulk of L2S STIG hardening to an IOS switch: BPDU Guard, Loop Guard, Rapid-PVST, UDLD, IGMP snooping, DHCP snooping (+ `ip dhcp snooping trust` on trunk ports), archive/audit logging, password encryption, exec-timeout, VTP (mode transparent + password), native/unused/default-access VLAN creation, per-port access/trunk classification and hardening (UUFB, storm control, IP Source Guard prerequisites, 802.1x/MAB attempt, allowed-VLAN scoping), NTP, syslog, SNMPv3. Run this **first** — the other `L2_stig_harden_*.py` scripts below depend on it having already run (DHCP snooping active, ports in access mode).
 - **`L2_stig_harden_ipsg.py`** — Push IP Source Guard (`ip verify source`, V-220634) to access ports. Split out on purpose: IPSG only trusts the DHCP snooping binding table, so a statically-addressed host with no DHCP lease gets its traffic dropped — an unresolved gap tracked separately, kept isolated so it can be pushed/pulled independently.
+- **`L2_stig_harden_dai.py`** — Push Dynamic ARP Inspection (`ip arp inspection vlan <ids>`, V-220635) for the switch's user VLANs. Split out for the same reason as `L2_stig_harden_ipsg.py`: DAI only trusts the DHCP snooping binding table, so a statically-addressed host with no DHCP lease can have its ARP traffic dropped once this is pushed.
 - **`L2_stig_harden_acl.py`** — Push a vty management ACL (V-220575), scoped to `inventory.yaml`'s `automation_host` only. Kept isolated and verified carefully: creates the ACL before applying it, applies `access-class` using the already-open primary session, then opens a **second independent connection** to confirm new logins still work — reverting immediately via the still-open primary session if not. Of everything in this repo, a wrongly-scoped vty ACL is the most direct lockout risk. The ACL's trailing deny also carries `log-input` (V-220581, partial — covers rejected vty access attempts only, not general traffic, and only reaches `show logging` locally since `logging trap critical` is above the informational severity ACL logging uses).
 - **`L2_stig_harden_aaa.py`** — Push `aaa new-model` + RADIUS auth (V-220587/617) + password length/complexity policy (V-220589-594). Kept isolated and run **last**: verifies the enable secret actually works (a `disable`→`enable` round-trip) before touching `aaa new-model` at all, aborting cleanly if that fails. See the "Bugs" folder in the project vault for the live incident that drove this design.
 - **`L2_device_tracking.py`** — Push SISF `device-tracking policy` blocks (`IPV4_VISIBILITY` per access port, `DT-NOIPV6`/`NOTRACK` per VLAN) for host IP visibility. Not a STIG requirement. **IOS-XE only** — requires the modern SISF CLI, untested against real hardware so far (see Notes below).
@@ -74,7 +75,8 @@ python3 IOS_Router_audit.py R1
 
 # STIG hardening for an L2 switch - run in this order:
 python3 L2_stig_harden.py S1        # bulk fixes, run first
-python3 L2_stig_harden_ipsg.py S1   # IP Source Guard
+python3 L2_stig_harden_ipsg.py S1   # IP Source Guard - can drop a statically-addressed host, see Notes
+python3 L2_stig_harden_dai.py S1    # DAI - same static-host risk as IPSG, see Notes
 python3 L2_stig_harden_acl.py S1    # vty management ACL - verified, still the riskiest push
 python3 L2_stig_harden_aaa.py S1    # AAA/RADIUS + password policy - run last, verified before use
 
@@ -93,6 +95,7 @@ python3 L2_device_tracking.py S1    # IOS-XE only, host IP visibility
 - Backups are written to `backups/`, with dated copies in `backups/archive/`.
 - STIG rules that require external infrastructure (organization-defined DoS safeguards, PKI, IOS-version tracking) or manual/topology review are reported as NOT AUTOMATED rather than guessed at.
 - A handful of STIG-required commands are confirmed to not exist/function on this project's `vios_l2` lab image (UUFB, storm control, `mls qos`, `security passwords min-length`, `file privilege 15`, 802.1x authenticator role, classic `radius-server host` syntax, SISF `device-tracking policy`) — the scripts still push them unconditionally since they're correct for real Cisco hardware. See the project's Obsidian vault, `Bugs/` folder, for the full list and how each was confirmed.
+- `L2_stig_harden_ipsg.py` and `L2_stig_harden_dai.py` both only trust the DHCP snooping binding table — a statically-addressed host with no DHCP lease is invisible to either and can have its traffic dropped once they're pushed. Confirmed live; unresolved gap tracked in the roadmap below. If a statically-addressed host (e.g. the automation host itself) is directly connected to a device, consider skipping one or both of these scripts for that device until the gap has a real fix.
 - Scripts that push config append a JSON-line audit record (timestamp, script, device, username, commands) to `audit_logs/audit.log` for each device. Not tracked in git — local to the machine that ran the script.
 
 ## Roadmap
@@ -106,7 +109,7 @@ python3 L2_device_tracking.py S1    # IOS-XE only, host IP visibility
 - [x] SNMPv3 auth/priv (V-220604/605) — config-only, no NMS in this lab to actually poll it
 - [ ] Config push dry-run / diff-before-push mode
 - [ ] Config removal/undo mode — no script currently has a way to revert what it pushed
-- [ ] Static-host binding gap for IP Source Guard/DAI — both only trust the DHCP snooping binding table, so statically-addressed hosts get dropped; needs a dynamic fix (diff `show ip device tracking all` against `show ip dhcp snooping binding`), blocked on IP Device Tracking not activating on this lab's `vios_l2`
+- [ ] Static-host binding gap for IP Source Guard (`L2_stig_harden_ipsg.py`)/DAI (`L2_stig_harden_dai.py`) — both only trust the DHCP snooping binding table, so statically-addressed hosts get dropped; needs a dynamic fix (diff `show ip device tracking all` against `show ip dhcp snooping binding`), blocked on IP Device Tracking not activating on this lab's `vios_l2`
 - [ ] Interface-scoped RTR STIG hardening for `IOS_Router_stig_harden.py` (directed broadcast, ICMP redirects/unreachables/mask-reply, proxy ARP, LLDP transmit)
 - [ ] Port the L2S-style interface-scoped hardening approach to `NXOS_stig_audit.py`/`NXOS_stig_harden.py`
 - [ ] Validate `L2_device_tracking.py` and the AAA/ACL/password-policy scripts against real IOS-XE hardware — untested beyond this lab's classic-IOS `vios_l2` switches, which can't run any of it
