@@ -106,6 +106,40 @@ def _count_distinct(cfg, pattern, minimum, noun, flags=re.M):
     return False, f'no {noun} found (need {minimum}+) — searched for `{pattern}`'
 
 
+def _bpdu_guard_check(cfg):
+    """V-220630: the global 'spanning-tree portfast bpduguard default' form
+    only activates BPDU Guard on ports that actually have PortFast enabled -
+    per the STIG's own Discussion text, BPDU Guard disables "the port that
+    has PortFast configured" upon receiving a BPDU. Checking for the global
+    command's presence alone (as this used to) is a false-pass risk: it can
+    be sitting in the config while PortFast was never turned on anywhere,
+    meaning BPDU Guard never actually protects a single port. The
+    per-interface 'spanning-tree bpduguard enable' form has no such
+    dependency and is accepted on its own. IOS 15.x rewrites the global
+    form to include "edge" in running-config - both are accepted."""
+    access, _ = parse_switchports(cfg)
+    if not access:
+        return False, 'no access/host-facing switchports found in config'
+    global_bpduguard = bool(re.search(r'^spanning-tree portfast (edge )?bpduguard default\s*$', cfg, re.M))
+    portfast_global = bool(re.search(r'^\s*spanning-tree portfast (edge )?default\s*$', cfg, re.M))
+
+    missing = []
+    for name, block in sorted(access.items()):
+        if re.search(r'spanning-tree bpduguard enable', block):
+            continue
+        has_portfast = portfast_global or bool(re.search(r'^\s*spanning-tree portfast(?:\s+edge)?\s*$', block, re.M))
+        if not (global_bpduguard and has_portfast):
+            missing.append(name)
+
+    if missing:
+        return False, (
+            f'BPDU Guard not functionally active on: {", ".join(missing)} — needs either per-port '
+            f'`spanning-tree bpduguard enable`, or the global `spanning-tree portfast bpduguard default` '
+            f'paired with PortFast enabled on that port (global command alone is a no-op without it)'
+        )
+    return True, f'BPDU Guard confirmed functionally active on all {len(access)} access port(s)'
+
+
 def _all_access_ports_have(cfg, pattern, what, exclude_prefixes=()):
     """exclude_prefixes lets a rule exempt certain interface types (e.g.
     V-220636/storm control on FastEthernet, per the STIG's own Fix Text
@@ -658,9 +692,7 @@ CHECKS = {
     'V-220647': _no_access_ports_on_native_vlan,
     'V-220641': lambda cfg: _disabled_ports_unused_vlan_check(cfg, netauto.load_unused_vlan()),
     'V-220586': _no_unnecessary_services,
-    # IOS 15.x rewrites "spanning-tree portfast bpduguard default" to include
-    # "edge" in running-config ("...portfast edge bpduguard default") - accept both.
-    'V-220630': lambda cfg: _presence(cfg, r'spanning-tree bpduguard enable|spanning-tree portfast (edge )?bpduguard default', what='`spanning-tree bpduguard enable` or `spanning-tree portfast bpduguard default`'),
+    'V-220630': _bpdu_guard_check,
     'V-220631': lambda cfg: _presence(cfg, r'spanning-tree loopguard default', what='`spanning-tree loopguard default`'),
     # V-220633/635 (DHCP snooping/DAI VLAN coverage) are added below, after
     # discovering the device's genuine user VLANs — a plain presence check can't
