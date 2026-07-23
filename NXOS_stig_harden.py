@@ -258,8 +258,12 @@ if vtp_password and vtp_domain:
     commands += ['feature vtp', f'vtp domain {vtp_domain}', 'vtp mode transparent', f'vtp password {vtp_password}']
 commands += ntp_commands
 
-# Push the hardening commands and close the session
-output = net_connect.send_config_set(commands)
+# Push the hardening commands and close the session. read_timeout raised
+# well above Netmiko's default - confirmed live that this device's per-port
+# trunk conversion (V-220695, potentially dozens of unused ports on a core
+# switch) takes long enough that the default caused a ReadTimeout mid-batch,
+# aborting the script before most of the interface loop had even run.
+output = net_connect.send_config_set(commands, read_timeout=180)
 net_connect.disconnect()
 netauto.log_push('NXOS_stig_harden.py', device_name, username, commands)
 
