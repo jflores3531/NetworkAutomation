@@ -1,0 +1,6 @@
+---
+- name: Push Dynamic ARP Inspection (V-220635) to Cisco IOS L2 switches
+  hosts: l2_switches
+  gather_facts: false
+  roles:
+    - l2s_stig_harden_dai
