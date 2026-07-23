@@ -45,9 +45,19 @@ for device_name, device_info in devices_list.items():
     vlan_brief = str(net_connect.send_command('show vlan brief'))
     net_connect.disconnect()
 
+    # Routers have no VLAN database - detected live from the command response
+    # rather than a hardcoded device list, since a device's role (router vs.
+    # switch) isn't tracked anywhere in inventory.yaml.
+    vlan_supported = not any(
+        marker in vlan_brief for marker in ('% Invalid input', '% Unrecognized command', '% Incomplete command')
+    )
+
     # Combine into one backup: running-config first, then VLANs (which live in the
-    # VLAN database and wouldn't otherwise show up in the running-config text)
-    output = running_config + '\n! --- show vlan brief ---\n' + vlan_brief
+    # VLAN database and wouldn't otherwise show up in the running-config text) -
+    # only if this device actually has one.
+    output = running_config
+    if vlan_supported:
+        output += '\n! --- show vlan brief ---\n' + vlan_brief
 
     # Header noting hostname, IP, and when the backup was taken
     header = (
