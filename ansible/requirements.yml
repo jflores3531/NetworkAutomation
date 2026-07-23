@@ -1,10 +1,16 @@
 ---
 # Install with: ansible-galaxy collection install -r requirements.yml
 collections:
+  # Pinned to 4.4.0, not just ">=X" - confirmed live that latest (11.5.0)
+  # declares requires_ansible >=2.16.0, which warns/may misbehave against
+  # this project's ansible-core 2.13.13 (pip's max version compatible with
+  # this host's Python 3.8). 4.4.0 declares >=2.9.10, comfortably covers it.
   - name: cisco.ios
-    version: ">=5.0.0"
+    version: "4.4.0"
   # Not used yet - added here ahead of the Arista switch mentioned in
   # project chat, so `ansible-galaxy install -r requirements.yml` won't
-  # need to change when that device is added.
+  # need to change when that device is added. NOT yet verified against
+  # ansible-core 2.13.13 the way cisco.ios was above - check its own
+  # meta/runtime.yml requires_ansible the same way before relying on it.
   - name: arista.eos
     version: ">=6.0.0"
