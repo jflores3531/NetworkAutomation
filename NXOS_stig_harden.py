@@ -3,7 +3,12 @@
 NX-OS Switch L2S STIG to a device. Interface-scoped rules (Unknown Unicast
 Flood Blocking, IP Source Guard, Dynamic ARP Inspection, storm control,
 access/native VLAN) need to know which ports are host-facing vs. trunk/uplink
-and are intentionally left out of this pass."""
+and are intentionally left out of this pass.
+V-220681 (BPDU Guard) also pushes 'spanning-tree port type edge default' -
+without it, the global bpduguard-default command has no edge ports to
+activate on and is a functional no-op (same false-pass shape as L2S's
+V-220630/PortFast). V-220493 (exec-timeout) uses NX-OS's single-argument
+syntax ('exec-timeout <minutes>'), not IOS's two-argument form."""
 
 import argparse
 import netauto
@@ -11,10 +16,23 @@ import stig_common
 
 # Global (non-interface-specific) fixes always pushed by this script
 BASE_FIXES = {
-    'V-220681 (BPDU Guard)': 'spanning-tree port type edge bpduguard default',
+    # 'spanning-tree port type edge bpduguard default' only activates BPDU
+    # Guard on ports typed as "edge" (NX-OS's PortFast equivalent) - without
+    # 'spanning-tree port type edge default' (the global equivalent of IOS's
+    # 'spanning-tree portfast default'), the bpduguard-default command was
+    # present in the config but functionally inert everywhere, since no port
+    # was ever typed as edge (same false-pass shape as L2S's V-220630).
+    'V-220681a (edge port type, required for BPDU Guard to activate)': 'spanning-tree port type edge default',
+    'V-220681b (BPDU Guard)': 'spanning-tree port type edge bpduguard default',
     'V-220682 (Loop Guard)': 'spanning-tree loopguard default',
     'V-220688 (IGMP snooping)': 'ip igmp snooping',
 }
+
+# V-220493: exec-timeout on both console and vty (DISA's Check Text configures
+# both). NX-OS's exec-timeout takes a single argument (minutes only), unlike
+# IOS's two-argument 'exec-timeout <min> <sec>' form - stig_common.exec_timeout_ok()
+# assumes the IOS syntax and would never match real NX-OS config.
+EXEC_TIMEOUT_FIX = ['line console', 'exec-timeout 5', 'line vty', 'exec-timeout 5']
 
 # V-220689 (UDLD) needs the udld feature enabled before it can be turned on
 UDLD_FIX = ['feature udld', 'udld enable']
@@ -83,6 +101,7 @@ if ntp_servers:
     ntp_commands += [f'ntp server {ip}{key_suffix}' for ip in ntp_servers]
 
 applied_fixes = dict(BASE_FIXES)
+applied_fixes['V-220493 (exec-timeout)'] = '; '.join(EXEC_TIMEOUT_FIX)
 applied_fixes['V-220689 (UDLD)'] = '; '.join(UDLD_FIX)
 if vlan_ids:
     applied_fixes['V-220684 (DHCP snooping)'] = f'feature dhcp; ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
@@ -95,7 +114,7 @@ if ntp_key_id:
     applied_fixes['V-220502 (NTP authentication)'] = '; '.join([
         f'ntp authentication-key {ntp_key_id} md5 {ntp_key_value}', 'ntp authenticate', f'ntp trusted-key {ntp_key_id}'])
 
-commands = list(BASE_FIXES.values()) + UDLD_FIX
+commands = list(BASE_FIXES.values()) + EXEC_TIMEOUT_FIX + UDLD_FIX
 if vlan_ids:
     commands += ['feature dhcp', 'ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}']
 if vtp_password:
