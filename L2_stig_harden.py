@@ -16,7 +16,11 @@ pushed (see the static-host-binding gap tracked in project memory).
 V-220632 (UUFB), V-220636 (storm control), and V-220623 (802.1x/MAB) are
 still pushed here for real hardware, even though confirmed live that none
 of those commands exist/function on the lab's vios_l2 switches - they're
-silently rejected there, not removed from the script."""
+silently rejected there, not removed from the script. V-220636's threshold
+is scaled by port speed and skipped entirely on FastEthernet interfaces
+(see storm_control_command()) - DISA's own Fix Text notes storm control
+isn't supported on most FastEthernet ports, and a single flat threshold
+would either violate or fail on ports well outside Gigabit speed."""
 
 import argparse
 import re
@@ -45,6 +49,22 @@ def parse_switchports(cfg):
         else:
             access.append(name)
     return access, trunk
+
+
+def storm_control_command(interface_name):
+    """V-220636: DISA's own Fix Text notes storm control isn't supported on
+    most FastEthernet interfaces - those are skipped entirely rather than
+    given a threshold that would likely just be rejected. The bps threshold
+    is scaled to DISA's allowed range by port speed (Gigabit: 10M-1G bps,
+    10-Gigabit: 100M-10G bps), both kept at ~2% of link speed. Port-channel/
+    plain Ethernet interfaces default to the Gigabit-range value - their
+    actual bundled/negotiated speed isn't visible from the interface name
+    alone."""
+    if interface_name.startswith('FastEthernet'):
+        return None
+    if interface_name.startswith('TenGigabitEthernet'):
+        return 'storm-control broadcast level bps 200000000'
+    return 'storm-control broadcast level bps 20000000'
 
 
 def shutdown_access_ports(cfg, access_names):
@@ -291,11 +311,14 @@ if default_access_vlan:
 # against vios_l2 is harmless (silently skipped), not a crash risk.
 access_fixes += [
     'switchport block unicast',                     # V-220632 (UUFB)
-    'storm-control broadcast level bps 20000000',    # V-220636 (storm control)
     'authentication port-control auto',              # V-220623 (802.1x/MAB)
     'dot1x pae authenticator',                        # V-220623 (802.1x/MAB)
     'mab',                                            # V-220623 (802.1x/MAB)
 ]
+# V-220636 (storm control) is pushed per-port, not in the flat access_fixes
+# list above - the threshold varies by port speed, and FastEthernet ports
+# are skipped entirely (see storm_control_command()).
+storm_control_ports = {name: cmd for name in access_ports if (cmd := storm_control_command(name))}
 
 snmpv3_commands = []
 if snmp_auth_password and snmp_priv_password:
@@ -345,6 +368,8 @@ interface_commands = []
 for name in access_ports:
     interface_commands.append(f'interface {name}')
     interface_commands += access_fixes
+    if name in storm_control_ports:
+        interface_commands.append(storm_control_ports[name])
 for name in trunk_ports:
     interface_commands.append(f'interface {name}')
     interface_commands += trunk_fixes
@@ -373,7 +398,11 @@ if access_ports:
         + f' (on {len(access_ports)} access port(s))'
     )
     applied_fixes['V-220632 (UUFB)'] = f'switchport block unicast (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
-    applied_fixes['V-220636 (storm control)'] = f'storm-control broadcast level bps 20000000 (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
+    if storm_control_ports:
+        applied_fixes['V-220636 (storm control)'] = (
+            f'storm-control broadcast level bps ... (speed-scaled, on {len(storm_control_ports)} of {len(access_ports)} '
+            f'access port(s) - not supported on lab vios_l2, kept for real hardware)'
+        )
     applied_fixes['V-220623 (802.1x/MAB)'] = f'authentication port-control auto; dot1x pae authenticator; mab (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
 if trunk_ports:
     applied_fixes['V-220640 (static trunk)'] = f'switchport nonegotiate (on {len(trunk_ports)} trunk port(s))'
@@ -450,6 +479,8 @@ print('\nIP Device Tracking pushed - view results with `show ip device tracking 
 
 if not access_ports:
     print('\nNo access/host-facing switchports found — nothing to push for V-220632/634/636.')
+elif not storm_control_ports:
+    print('\nSkipped V-220636 (storm control) — every access port is FastEthernet, not supported per the STIG\'s own Fix Text note.')
 if not trunk_ports:
     print('\nNo trunk switchports found — nothing to push for V-220629/640/643/646.')
 elif not root_guard_ports:

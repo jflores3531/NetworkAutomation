@@ -106,14 +106,21 @@ def _count_distinct(cfg, pattern, minimum, noun, flags=re.M):
     return False, f'no {noun} found (need {minimum}+) — searched for `{pattern}`'
 
 
-def _all_access_ports_have(cfg, pattern, what):
+def _all_access_ports_have(cfg, pattern, what, exclude_prefixes=()):
+    """exclude_prefixes lets a rule exempt certain interface types (e.g.
+    V-220636/storm control on FastEthernet, per the STIG's own Fix Text
+    note that it's not supported on most FastEthernet interfaces) without
+    affecting rules that apply to every access port regardless of type."""
     access, _ = parse_switchports(cfg)
-    if not access:
+    checked = {name: block for name, block in access.items() if not name.startswith(exclude_prefixes)}
+    if not checked:
+        if access:
+            return True, f'no eligible access port(s) found (all {len(access)} excluded by interface type) - nothing required'
         return False, 'no access/host-facing switchports found in config'
-    missing = sorted(name for name, block in access.items() if not re.search(pattern, block))
+    missing = sorted(name for name, block in checked.items() if not re.search(pattern, block))
     if missing:
         return False, f'missing {what} on: {", ".join(missing)}'
-    return True, f'{what} present on all {len(access)} access port(s): {", ".join(sorted(access))}'
+    return True, f'{what} present on all {len(checked)} eligible access port(s): {", ".join(sorted(checked))}'
 
 
 # V-220623: every access port must have either 802.1x (dot1x pae authenticator
@@ -641,7 +648,10 @@ CHECKS = {
     'V-220623': _dot1x_mab_check,
     'V-220632': lambda cfg: _all_access_ports_have(cfg, r'switchport block unicast', 'UUFB (`switchport block unicast`)'),
     'V-220634': lambda cfg: _all_access_ports_have(cfg, r'ip verify source', 'IP Source Guard (`ip verify source`)'),
-    'V-220636': lambda cfg: _all_access_ports_have(cfg, r'storm-control broadcast level', 'storm control (`storm-control broadcast level ...`)'),
+    'V-220636': lambda cfg: _all_access_ports_have(
+        cfg, r'storm-control broadcast level', 'storm control (`storm-control broadcast level ...`)',
+        exclude_prefixes=('FastEthernet',),
+    ),
     'V-220640': lambda cfg: _all_trunk_ports_have(cfg, r'switchport nonegotiate', '`switchport nonegotiate`'),
     'V-220643': lambda cfg: default_vlan_pruned_from_trunks(cfg),
     'V-220646': lambda cfg: _all_trunk_ports_have(cfg, r'switchport trunk native vlan (?!1\s*$)\d+', 'a non-default native VLAN'),
