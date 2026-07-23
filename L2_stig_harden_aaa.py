@@ -118,21 +118,19 @@ aaa_commands += [
     'aaa authorization exec default group radius local',
 ]
 
-# V-220589/590-594: password length + complexity policy. 'security passwords
-# min-length' is standalone; the aaa common-criteria policy block needs aaa
-# new-model already active (pushed above, same batch). Matches this repo's
-# existing precedent elsewhere - the audit only checks the policy exists with
-# these sub-commands/thresholds, not that it's tied to any specific account's
-# password (same scope as V-220570/578's audit, config presence only).
-#
-# 'security passwords min-length' (V-220589) is kept even though confirmed
-# live that this lab's vios_l2 doesn't recognize it at all ("security" itself
-# is an unrecognized command, not just the "passwords min-length" part) -
-# same category as UUFB/storm-control/mls qos, correct for real hardware.
+# V-220589/590-594: password length + complexity policy, all five as
+# sub-commands inside one aaa common-criteria policy block (needs aaa
+# new-model already active, pushed above, same batch) - matches the STIG's
+# own Fix Text for V-220589 (`min-length 15` inside the policy), not the
+# unrelated standalone `security passwords min-length` command, which is a
+# different Cisco feature that happens to have a similar name and doesn't
+# satisfy this rule the way DISA specifies it (also confirmed live that this
+# lab's vios_l2 doesn't recognize `security` as a command at all, unrelated
+# to the fact that it was the wrong command to begin with).
 PASSWORD_POLICY_NAME = 'STIG_PASSWORD_POLICY'
 aaa_commands += [
-    'security passwords min-length 15',
     f'aaa common-criteria policy {PASSWORD_POLICY_NAME}',
+    'min-length 15',
     'upper-case 1',
     'lower-case 1',
     'numeric-count 1',

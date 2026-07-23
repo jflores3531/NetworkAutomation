@@ -527,15 +527,46 @@ def _root_guard_check(cfg, root_ports):
     return True, f'`spanning-tree guard root` present on all {len(eligible)} eligible trunk port(s): {", ".join(eligible)}'
 
 
+def _line_exec_timeout_ok(chunk):
+    """True if `chunk` (a `line ...` block) has a compliant exec-timeout
+    (nonzero, <=5 min). Returns (ok, matched_text_or_None)."""
+    m = re.search(r'exec-timeout (\d+) (\d+)', chunk)
+    if not m:
+        return False, None
+    minutes, seconds = int(m.group(1)), int(m.group(2))
+    ok = not (minutes == 0 and seconds == 0) and minutes <= 5
+    return ok, m.group(0)
+
+
 def _exec_timeout_reason(cfg):
-    matches = re.findall(r'exec-timeout (\d+) (\d+)', cfg)
-    ok = stig_common.exec_timeout_ok(cfg)
-    shown = ', '.join(f'{m}m{s}s' for m, s in matches)
-    if ok:
-        return True, f'exec-timeout line(s) OK (nonzero, <=5 min): {shown}'
-    if not matches:
-        return False, 'no `exec-timeout <min> <sec>` lines found'
-    return False, f'non-compliant exec-timeout line(s) (need nonzero, <=5 min): {shown}'
+    """V-220596: DISA's Fix Text configures exec-timeout on both the console
+    line and vty - checking cfg as a whole via stig_common.exec_timeout_ok()
+    (whatever exec-timeout lines happen to be present) silently false-passes
+    if one line (most commonly console, since IOS never prints an unset line
+    at its own default) is left unconfigured as long as some other line is
+    already compliant. Checks console and vty as separate, required scopes
+    instead."""
+    con_ok = con_match = vty_ok = vty_match = None
+    for chunk in re.split(r'^(?=line \S)', cfg, flags=re.M):
+        header = chunk.splitlines()[0] if chunk else ''
+        if header.startswith('line con'):
+            con_ok, con_match = _line_exec_timeout_ok(chunk)
+        elif header.startswith('line vty'):
+            # OR across multiple vty blocks (e.g. "vty 0 1"/"vty 2 4" split)
+            # - any one compliant vty block satisfies the vty side.
+            ok, match = _line_exec_timeout_ok(chunk)
+            vty_ok = bool(vty_ok) or ok
+            vty_match = vty_match or match
+
+    if con_ok and vty_ok:
+        return True, f'compliant on console (`{con_match}`) and vty (`{vty_match}`)'
+
+    missing = []
+    if not con_ok:
+        missing.append('console (`line con 0`): ' + (f'non-compliant (`{con_match}`)' if con_match else 'no exec-timeout set'))
+    if not vty_ok:
+        missing.append('vty: ' + (f'non-compliant (`{vty_match}`)' if vty_match else 'no exec-timeout set'))
+    return False, '; '.join(missing)
 
 
 # V-220600: alert for audit failure events. DISA's own check discussion notes
@@ -667,7 +698,7 @@ CHECKS = {
     'V-220604': lambda cfg: _presence(cfg, r'snmp-server group \S+ v3 (auth|priv)', what='an `snmp-server group <name> v3 auth` or `v3 priv` line'),
     'V-220605': lambda cfg: _presence(cfg, r'snmp-server group \S+ v3 priv', what='an `snmp-server group <name> v3 priv` line'),
     'V-220577': lambda cfg: _presence(cfg, r'banner (login|motd)', what='a `banner login` or `banner motd`'),
-    'V-220589': lambda cfg: _presence(cfg, r'security passwords min-length (1[5-9]|[2-9]\d)', what='`security passwords min-length` of 15+'),
+    'V-220589': lambda cfg: _cc_policy_check(cfg, r'^\s*min-length (\d+)', 15, '`min-length <n>`'),
     'V-220595': lambda cfg: _all_of(cfg, [
         ('service password-encryption', r'^\s*service password-encryption\s*$'),
         ('enable secret', r'enable secret'),
