@@ -1,8 +1,8 @@
 ---
-# Secrets for the l2_switches group. Mirrors ../../../secrets.yaml.example -
+# Secrets for the l2_switches group. Mirrors ../../../../secrets.yaml.example -
 # fill in real values, THEN encrypt this file before committing anything:
 #
-#   ansible-vault encrypt group_vars/l2_switches/vault.yml
+#   ansible-vault encrypt inventory/group_vars/l2_switches/vault.yml
 #
 # Never commit this file in plaintext. Placeholder values below match
 # secrets.yaml.example's CHANGE_ME convention on purpose.

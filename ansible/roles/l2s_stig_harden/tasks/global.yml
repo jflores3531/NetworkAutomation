@@ -26,7 +26,7 @@
       - logging trap critical                              # V-220600 (audit failure alert)
       - ip device tracking   # not a STIG requirement - host visibility only
 
-# V-220625/V-220583-585: confirmed live (see ../../../Bugs/README.md) that
+# V-220625/V-220583-585: confirmed live (see the project vault's Bugs/README.md) that
 # this lab's vios_l2 image rejects both commands outright ("% Invalid
 # input"). Kept for real hardware - split into their own ignore_errors
 # tasks so a known lab limitation doesn't abort the whole play the way

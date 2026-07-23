@@ -48,7 +48,7 @@
   loop: "{{ access_ports }}"
   when: access_ports | length > 0
 
-# V-220632/623: confirmed live (../../../Bugs/README.md) that UUFB and
+# V-220632/623: confirmed live (see the project vault's Bugs/README.md) that UUFB and
 # 802.1x/MAB are both rejected/nonfunctional on this lab's vios_l2 image
 # (no 802.1x authenticator role at the interface level at all here). Kept
 # for real hardware, split into their own ignore_errors task - bundling
