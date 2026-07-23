@@ -126,10 +126,11 @@ OPTIONAL_FIXES = {
     'IP Device Tracking (host visibility, not a STIG requirement)': 'ip device tracking',
 }
 
-# V-220570: session-limit needs its own "line vty 0 4" context.
+# V-220570: session-limit needs its own "line vty 0 4" context. DISA's rule is
+# "organization-defined number," not a fixed value - 5 concurrent sessions.
 # V-220596: exec-timeout must be nonzero and <=5 min (stig_common.exec_timeout_ok) -
 # "0 0" disables the timeout entirely, which is non-compliant, not exempt from it.
-VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 2', 'exec-timeout 5 0']
+VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 5', 'exec-timeout 5 0']
 
 # V-220608: SSH encryption algorithm — includes "ip ssh version 2" too, since
 # V-220608's own audit check requires both and this makes V-220607 pass as a
