@@ -38,31 +38,50 @@
 
 - name: >-
     Common access-port fixes: default mode/VLAN (V-220642/645 side effect),
-    PortFast (V-220630b, required for BPDU Guard to activate), UUFB
-    (V-220632), 802.1x/MAB (V-220623)
+    PortFast (V-220630b, required for BPDU Guard to activate)
   cisco.ios.ios_config:
     parents: "interface {{ item }}"
     lines:
       - switchport mode access
       - "switchport access vlan {{ default_access_vlan }}"
       - spanning-tree portfast
+  loop: "{{ access_ports }}"
+  when: access_ports | length > 0
+
+# V-220632/623: confirmed live (../../../Bugs/README.md) that UUFB and
+# 802.1x/MAB are both rejected/nonfunctional on this lab's vios_l2 image
+# (no 802.1x authenticator role at the interface level at all here). Kept
+# for real hardware, split into their own ignore_errors task - bundling
+# these with the task above would abort it entirely on the first rejected
+# line, the same way the global BASE_FIXES batch did with mls qos (ios_config
+# treats a rejected command as fatal, unlike Netmiko's send_config_set()).
+- name: >-
+    V-220632 (UUFB) / V-220623 (802.1x/MAB) - confirmed rejected/
+    nonfunctional on this lab's vios_l2, kept for real hardware
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
       - switchport block unicast
       - authentication port-control auto
       - dot1x pae authenticator
       - mab
   loop: "{{ access_ports }}"
   when: access_ports | length > 0
+  ignore_errors: true
 
 - name: >-
     V-220636 - storm control, speed-scaled threshold (Gigabit vs
     TenGigabitEthernet, ~2% of link speed); FastEthernet skipped entirely -
-    not supported per the STIG's own Fix Text note
+    not supported per the STIG's own Fix Text note. Confirmed live
+    (Bugs/README.md) that the command itself is also rejected outright on
+    this lab's vios_l2 - kept for real hardware.
   cisco.ios.ios_config:
     parents: "interface {{ item }}"
     lines:
       - "storm-control broadcast level bps {{ '200000000' if item is match('^TenGigabitEthernet') else '20000000' }}"
   loop: "{{ access_ports | reject('match', '^FastEthernet') | list }}"
   when: access_ports | length > 0
+  ignore_errors: true
 
 - name: Build trunk-port fix lines (allowed-vlan/native-vlan only added if configured)
   set_fact:
