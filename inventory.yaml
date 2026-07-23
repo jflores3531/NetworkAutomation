@@ -111,3 +111,13 @@ native_vlan: 999
 # 'switchport access vlan <this>' to every non-trunk port and creates the VLAN
 # itself in the database (same pattern as unused_vlan/native_vlan).
 default_access_vlan: 50
+
+# VTP domain name, read via netauto.load_vtp_domain(). Required on NX-OS
+# before 'vtp password' takes effect (V-220676) - confirmed live on NXCore1:
+# pushing the password with no domain set fails with "Domain not set",
+# silently (Netmiko doesn't treat it as fatal, so the script reports success
+# while nothing was actually configured). Not needed on IOS L2S switches -
+# L2_stig_harden.py sets the VTP password without a domain and it works.
+# NXOS_stig_harden.py pushes this before 'vtp mode transparent' and the
+# password itself.
+vtp_domain: NETAUTO

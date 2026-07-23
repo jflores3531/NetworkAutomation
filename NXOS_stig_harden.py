@@ -8,7 +8,13 @@ V-220681 (BPDU Guard) also pushes 'spanning-tree port type edge default' -
 without it, the global bpduguard-default command has no edge ports to
 activate on and is a functional no-op (same false-pass shape as L2S's
 V-220630/PortFast). V-220493 (exec-timeout) uses NX-OS's single-argument
-syntax ('exec-timeout <minutes>'), not IOS's two-argument form."""
+syntax ('exec-timeout <minutes>'), not IOS's two-argument form. V-220676
+(VTP) requires a 'vtp domain' be set before 'vtp password' takes effect at
+all on NX-OS - confirmed live on NXCore1 ("Domain not set" otherwise).
+V-220689 (UDLD) only pushes 'feature udld' - 'udld enable' isn't valid
+NX-OS syntax (confirmed live: "% Invalid command"), an IOS-ism that doesn't
+carry over; UDLD is on by default for fiber interfaces once the feature
+itself is enabled."""
 
 import argparse
 import netauto
@@ -34,8 +40,12 @@ BASE_FIXES = {
 # assumes the IOS syntax and would never match real NX-OS config.
 EXEC_TIMEOUT_FIX = ['line console', 'exec-timeout 5', 'line vty', 'exec-timeout 5']
 
-# V-220689 (UDLD) needs the udld feature enabled before it can be turned on
-UDLD_FIX = ['feature udld', 'udld enable']
+# V-220689 (UDLD): 'udld enable' is not a valid NX-OS global command at all -
+# confirmed live on NXCore1 ("% Invalid command"), an IOS-ism that doesn't
+# carry over. Per the STIG's own Fix Text, 'feature udld' alone is sufficient -
+# UDLD is enabled by default on every fiber interface once the feature itself
+# is turned on, no separate enable command needed.
+UDLD_FIX = ['feature udld']
 
 # Rules that need per-interface targeting (host-facing vs. trunk/uplink) and are
 # intentionally not pushed by this global-only pass
@@ -65,9 +75,14 @@ device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 username, password = netauto.get_credentials()
 
 # VTP password (V-220676) comes from secrets.yaml instead of a prompt (gitignored,
-# never committed - see secrets.yaml.example)
+# never committed - see secrets.yaml.example). VTP domain comes from
+# inventory.yaml - required on NX-OS before a password takes effect at all
+# (confirmed live on NXCore1: 'vtp password ...' silently fails with "Domain
+# not set" otherwise, and Netmiko doesn't treat that as fatal). Not needed on
+# IOS L2S switches, which accept the password with no domain set.
 secrets = netauto.load_secrets()
 vtp_password = str(secrets.get('vtp_password') or '').strip()
+vtp_domain = netauto.load_vtp_domain()
 
 # Connect, bailing out if it fails
 net_connect = netauto.connect(device_name, device_info, username, password)
@@ -105,8 +120,10 @@ applied_fixes['V-220493 (exec-timeout)'] = '; '.join(EXEC_TIMEOUT_FIX)
 applied_fixes['V-220689 (UDLD)'] = '; '.join(UDLD_FIX)
 if vlan_ids:
     applied_fixes['V-220684 (DHCP snooping)'] = f'feature dhcp; ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
-if vtp_password:
-    applied_fixes['V-220676 (VTP authentication)'] = f'feature vtp; vtp password {vtp_password}'
+if vtp_password and vtp_domain:
+    applied_fixes['V-220676 (VTP authentication)'] = (
+        f'feature vtp; vtp domain {vtp_domain}; vtp mode transparent; vtp password {vtp_password}'
+    )
 if ntp_servers:
     applied_fixes['V-220498 (NTP time sync)'] = '; '.join(
         f'ntp server {ip}' + (f' key {ntp_key_id}' if ntp_key_id else '') for ip in ntp_servers)
@@ -117,8 +134,12 @@ if ntp_key_id:
 commands = list(BASE_FIXES.values()) + EXEC_TIMEOUT_FIX + UDLD_FIX
 if vlan_ids:
     commands += ['feature dhcp', 'ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}']
-if vtp_password:
-    commands += ['feature vtp', f'vtp password {vtp_password}']
+if vtp_password and vtp_domain:
+    # Domain must be set before the password takes effect - confirmed live
+    # on NXCore1 ('vtp password ...' fails with "Domain not set" otherwise.
+    # Transparent mode also means this switch won't originate/relay VLAN
+    # database changes to peers (same reasoning L2_stig_harden.py uses).
+    commands += ['feature vtp', f'vtp domain {vtp_domain}', 'vtp mode transparent', f'vtp password {vtp_password}']
 commands += ntp_commands
 
 # Push the hardening commands and close the session
@@ -136,8 +157,13 @@ print(f'\nRules addressed by this pass:')
 for rule in applied_fixes:
     print('  - ' + rule)
 
-if not vtp_password:
-    print('\nSkipped V-220676 (VTP authentication) — add vtp_password to secrets.yaml to include it.')
+if not (vtp_password and vtp_domain):
+    missing = []
+    if not vtp_password:
+        missing.append('vtp_password to secrets.yaml')
+    if not vtp_domain:
+        missing.append('vtp_domain to inventory.yaml')
+    print(f'\nSkipped V-220676 (VTP authentication) — add {" and ".join(missing)} to include it.')
 if not ntp_servers:
     print('\nSkipped V-220498 (NTP time sync) — add ntp_servers to inventory.yaml\'s services section to include it.')
 if not ntp_key_id:
