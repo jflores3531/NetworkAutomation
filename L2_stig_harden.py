@@ -70,6 +70,18 @@ TRUNK_PORT_FIXES = [
     # to-switch uplink model (not a mix of trusted-upstream/untrusted-peer
     # trunks).
     'ip dhcp snooping trust',
+    # DAI (V-220635) trust is a separate setting from DHCP snooping trust above
+    # - defaults to untrusted even on a DHCP-snooping-trusted port. DHCP
+    # snooping bindings are learned per-switch only, from DORA exchanges seen
+    # locally, never synced between switches. Without this, DAI on a trunk
+    # port validates transit ARP traffic from hosts behind other switches
+    # against this switch's own (often empty) binding table and drops it -
+    # confirmed live: S1 dropped ARP traffic for a host bound only on S3's
+    # local table (%SW_DAI-4-DHCP_SNOOPING_DENY on a trunk port, 0 local
+    # bindings on S1). Trusting trunk/uplink ports for DAI too keeps
+    # inspection scoped to actual access ports, where the local binding table
+    # is authoritative.
+    'ip arp inspection trust',
 ]
 
 # Global (non-interface-specific) fixes always pushed by this script
@@ -358,7 +370,7 @@ if access_ports:
     applied_fixes['V-220623 (802.1x/MAB)'] = f'authentication port-control auto; dot1x pae authenticator; mab (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
 if trunk_ports:
     applied_fixes['V-220640 (static trunk)'] = f'switchport nonegotiate (on {len(trunk_ports)} trunk port(s))'
-    applied_fixes['V-220633b (DHCP snooping trust)'] = f'ip dhcp snooping trust (on {len(trunk_ports)} trunk port(s))'
+    applied_fixes['V-220633b/635b (DHCP snooping + DAI trust)'] = f'ip dhcp snooping trust; ip arp inspection trust (on {len(trunk_ports)} trunk port(s))'
     if root_guard_ports:
         applied_fixes['V-220629 (Root Guard)'] = (
             f'spanning-tree guard root (on {len(root_guard_ports)} trunk port(s) not leading '

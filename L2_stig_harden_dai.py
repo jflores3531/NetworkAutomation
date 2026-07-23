@@ -8,7 +8,13 @@ project memory). Keeping this isolated makes it easy to push/pull
 independently of the rest of the STIG batch while that gap is unresolved.
 
 Run L2_stig_harden.py first - this assumes DHCP snooping is already enabled
-(handled there), which this script doesn't set up itself."""
+and trunk/uplink ports are already 'ip arp inspection trust'ed (both handled
+there), neither of which this script sets up itself. Without trunk trust,
+DAI also drops legitimate transit ARP traffic from hosts behind other
+switches - DHCP snooping bindings are learned per-switch only, never
+synced, so a switch's own binding table is incomplete for anything not
+directly connected to it (confirmed live: S1 dropped ARP for a host bound
+only on S3's local table)."""
 
 import argparse
 import netauto
