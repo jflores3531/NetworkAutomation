@@ -137,9 +137,12 @@ CHECKS = {
     # access ports, native VLAN) are per-interface: finding the string anywhere in
     # the config doesn't mean every relevant interface has it (or, for V-220691,
     # its absence doesn't prove no port is on the default VLAN, since NX-OS often
-    # omits "switchport access vlan 1" when it's already the default). They're
-    # deliberately left out and reported as NOT AUTOMATED (same reasoning
-    # NXOS_stig_harden.py already uses to skip them as needing interface targeting).
+    # omits "switchport access vlan 1" when it's already the default). This
+    # script has no interface classification at all yet (unlike L2_stig_audit.py's
+    # parse_switchports()), so all of these stay NOT AUTOMATED here even though
+    # NXOS_stig_harden.py now pushes 683/685/687/692/695 (2026-07-24) - the harden
+    # side satisfies them by construction, but nothing here independently verifies
+    # it per-port yet. Building that classification is separate, later work.
     'V-220676': lambda cfg: bool(re.search(r'^vtp password \S+', cfg, re.M)),
     'V-220681': _bpdu_guard_check,
     'V-220682': lambda cfg: 'spanning-tree loopguard default' in cfg,
