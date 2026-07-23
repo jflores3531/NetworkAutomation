@@ -1,6 +1,11 @@
 ---
 # Mirrors stig_common.discover_user_vlans() + L2_stig_harden.py's VLAN
-# database creation and DHCP snooping push.
+# database creation and DHCP snooping push. VLAN database creation uses
+# the cisco.ios.ios_vlans resource module (state-based); everything else
+# here still uses raw ios_config lines - most of this bulk pass has no
+# matching resource module at all (STIG-specific commands like exec-timeout,
+# storm-control, etc. aren't general-purpose config domains Cisco built
+# structured support for).
 
 - name: Gather show vlan brief
   cisco.ios.ios_command:
@@ -49,19 +54,20 @@
       - vtp mode transparent
   when: (native_vlan | string | length > 0) or (default_access_vlan | string | length > 0)
 
-- name: "V-220646 - create native VLAN in the database"
-  cisco.ios.ios_config:
-    parents: "vlan {{ native_vlan }}"
-    lines:
-      - name NATIVE
-  when: native_vlan | string | length > 0
-
-- name: Default access VLAN database entry
-  cisco.ios.ios_config:
-    parents: "vlan {{ default_access_vlan }}"
-    lines:
-      - name USER
-  when: default_access_vlan | string | length > 0
+# V-220646/default access VLAN - uses the ios_vlans resource module instead
+# of raw ios_config lines: state the desired VLANs as data (id + name) and
+# let the module work out what to actually push, rather than hand-writing
+# 'vlan <id>' / 'name <name>' ourselves. state: merged adds/updates these
+# two VLANs without touching any other VLAN already in the database.
+- name: "V-220646/default access VLAN - create both VLANs in the database"
+  cisco.ios.ios_vlans:
+    config: >-
+      {{
+        ([{'vlan_id': native_vlan | int, 'name': 'NATIVE'}] if native_vlan | string | length > 0 else [])
+        + ([{'vlan_id': default_access_vlan | int, 'name': 'USER'}] if default_access_vlan | string | length > 0 else [])
+      }}
+    state: merged
+  when: (native_vlan | string | length > 0) or (default_access_vlan | string | length > 0)
 
 - name: "V-220633 - DHCP snooping for discovered user VLANs"
   cisco.ios.ios_config:
