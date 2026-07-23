@@ -9,6 +9,8 @@
 # (see netauto.get_credentials()).
 # This file only defines WHICH devices exist and HOW to reach them.
 
+# Consumed by netauto.load_inventory()/connect() - every script that opens
+# an SSH session to a device reads this section.
 devices:
   R1:
     host: 10.10.50.1
@@ -39,53 +41,73 @@ devices:
     device_type: cisco_nxos
 
 # Non-Netmiko infrastructure (Linux servers) — reference IPs only, no device_type,
-# never connected to by netauto.connect(). Used to pre-fill hardening script
-# prompts (e.g. NTP server IPs) instead of asking for them interactively.
+# never connected to by netauto.connect(). Read via netauto.load_services().
 services:
+  # V-220601 (L2_stig_harden.py), V-220498 (NXOS_stig_harden.py), V-215693
+  # (IOS_Router_stig_harden.py). Skipped with a warning by all three if empty.
   ntp_servers:
     - 192.168.100.10
     - 192.168.100.11
+  # V-220620 (L2_stig_harden.py only - dual syslog servers). Skipped with a
+  # warning if empty.
   syslog_servers:
     - 192.168.100.10
     - 192.168.100.11
+  # V-220587/617 (L2_stig_harden_aaa.py - RADIUS as primary auth source).
+  # Script aborts if empty (paired with secrets.yaml's radius_key).
   radius_servers:
     - 192.168.100.10
     - 192.168.100.11
 
-# VLAN IDs to exclude when discovering "user VLANs" for DHCP snooping
-# (V-220633/V-220684) and DAI (V-220635/V-220686) pushes. Everything else found
-# in `show vlan brief` is treated as a user VLAN needing these protections.
+# VLAN IDs to exclude when discovering "user VLANs" via netauto.load_non_user_vlans()
+# for DHCP snooping (V-220633/V-220684) and DAI (V-220635/V-220686). Read by
+# L2_stig_harden.py, L2_stig_harden_dai.py, L2_stig_audit.py, NXOS_stig_harden.py,
+# and NXOS_stig_audit.py. Everything else found in `show vlan brief` is treated
+# as a user VLAN needing these protections.
 non_user_vlans:
   - 1    # default VLAN, unused
   - 10   # management / automation host segment
   - 100  # servers VLAN
 
-# Management network for V-220575 (vty access-class ACL scope). Used to verify
-# the vty ACL doesn't permit anything outside this range - a single host inside
-# it (e.g. the automation host) is fine, "permit any" is not.
+# Management network for V-220575, read via netauto.load_management_subnet().
+# Used only by L2_stig_audit.py's check to verify the vty ACL (pushed by
+# L2_stig_harden_acl.py) doesn't permit anything outside this range - a single
+# host inside it (e.g. the automation host) is fine, "permit any" is not.
+# L2_stig_harden_acl.py itself doesn't read this - it scopes to automation_host
+# below directly.
 management_subnet: 10.10.50.0/24
 
 # The automation host itself (NetworkAutomation-1) - not a device scripts
-# connect *to* (not in the devices: section above), but needed as the sole
-# permitted source for V-220575's vty ACL (L2_stig_harden_acl.py). Scoped to
-# just this host rather than the whole management_subnet - least privilege.
+# connect *to* (not in the devices: section above), read via
+# netauto.load_automation_host(). Needed as the sole permitted source for
+# V-220575's vty ACL, pushed by L2_stig_harden_acl.py. Scoped to just this
+# host rather than the whole management_subnet - least privilege. Script
+# aborts if this is unset - it's the ACL's only permit line.
 automation_host: 10.10.50.10
 
-# Designated "unused ports" VLAN for V-220641. Disabled (shutdown) access ports
-# must be assigned here, and this VLAN must be pruned from all trunk links.
+# Designated "unused ports" VLAN for V-220641, read via netauto.load_unused_vlan().
+# Pushed by L2_stig_harden.py (disabled/shutdown access ports get assigned here,
+# and it's pruned from all trunk links), checked by L2_stig_audit.py, and
+# excluded from L2_device_tracking.py's per-VLAN policy pushes. Skipped with a
+# warning by L2_stig_harden.py if unset.
 unused_vlan: 999
 
-# Native VLAN for all 802.1q trunk links, V-220646 (must not be the default VLAN).
+# Native VLAN for all 802.1q trunk links, V-220646, read via netauto.load_native_vlan().
+# Pushed by L2_stig_harden.py (must not be the default VLAN) and excluded from
+# L2_device_tracking.py's per-VLAN policy pushes. L2_stig_audit.py's V-220646
+# check doesn't read this value - it just verifies live config isn't VLAN 1.
 # Set to the same ID as unused_vlan on purpose - a dedicated black-hole VLAN as
 # native prevents double-tagging/VLAN-hopping via untagged native-VLAN traffic.
 native_vlan: 999
 
-# Default VLAN for host-facing/access ports that aren't in trunk mode. A freshly
-# built switch leaves these ports with no explicit switchport mode/VLAN at all,
-# which silently breaks other access-port STIG fixes that require it (e.g.
-# switchport block unicast/storm-control need the port to already be in access
-# mode - confirmed live on a fresh S3 in GNS3). L2_stig_harden.py pushes
-# 'switchport mode access' + 'switchport access vlan <this>' to every
-# non-trunk port and creates the VLAN itself in the database (same pattern as
-# unused_vlan/native_vlan).
+# Default VLAN for host-facing/access ports that aren't in trunk mode, read via
+# netauto.load_default_access_vlan(). Pushed by L2_stig_harden.py only -
+# L2_stig_audit.py's checks don't read this value, they just verify live config
+# has an explicit non-default VLAN. A freshly built switch leaves these ports
+# with no explicit switchport mode/VLAN at all, which silently breaks other
+# access-port STIG fixes that require it (e.g. switchport block unicast/storm-
+# control need the port to already be in access mode - confirmed live on a
+# fresh S3 in GNS3). L2_stig_harden.py pushes 'switchport mode access' +
+# 'switchport access vlan <this>' to every non-trunk port and creates the VLAN
+# itself in the database (same pattern as unused_vlan/native_vlan).
 default_access_vlan: 50
