@@ -148,7 +148,11 @@ CHECKS = {
     # tell "configured for the wrong VLANs" from "configured correctly" (e.g.
     # snooping enabled on VLAN 1,10 while the real user VLAN has none).
     'V-220688': lambda cfg: 'no ip igmp snooping' not in cfg,
-    'V-220689': lambda cfg: 'feature udld' in cfg and bool(re.search(r'udld (enable|aggressive)', cfg)),
+    # Fix Text's only command is 'feature udld' - confirmed live on NXCore1
+    # that 'udld enable' isn't valid NX-OS syntax at all ("% Invalid command").
+    # UDLD is on by default for every fiber interface once the feature itself
+    # is enabled, per the STIG's own note - no separate enable line needed.
+    'V-220689': lambda cfg: 'feature udld' in cfg,
     'V-220498': lambda cfg: 'feature ntp' in cfg and len(set(re.findall(r'^ntp server (\S+)', cfg, re.M))) >= 2,
     'V-220502': lambda cfg: (
         'feature ntp' in cfg

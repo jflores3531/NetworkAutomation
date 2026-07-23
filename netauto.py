@@ -66,6 +66,16 @@ def load_unused_vlan(path='inventory.yaml'):
     return inventory.get('unused_vlan')
 
 
+def load_vtp_domain(path='inventory.yaml'):
+    """Load the vtp_domain name from the YAML inventory — required on NX-OS
+    before a VTP password can be set (V-220676); 'vtp password' is rejected
+    with "Domain not set" without one first, confirmed live on NXCore1.
+    Returns None if not defined."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('vtp_domain')
+
+
 def load_native_vlan(path='inventory.yaml'):
     """Load the native_vlan ID from the YAML inventory — the VLAN to assign as
     native on 802.1q trunk links (V-220646). Returns None if not defined."""
