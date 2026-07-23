@@ -58,11 +58,11 @@ two items below:
 ansible-galaxy collection install -r requirements.yml
 ```
 
-Fill in real values in `group_vars/l2_switches/vault.yml`, then encrypt it -
+Fill in real values in `inventory/group_vars/l2_switches/vault.yml`, then encrypt it -
 **never commit real secrets in plaintext**:
 
 ```
-ansible-vault encrypt group_vars/l2_switches/vault.yml
+ansible-vault encrypt inventory/group_vars/l2_switches/vault.yml
 ```
 
 ## Running it

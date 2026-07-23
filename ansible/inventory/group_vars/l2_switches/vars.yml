@@ -1,6 +1,6 @@
 ---
 # Non-secret variables for the l2_switches group. Values mirror
-# ../../../inventory.yaml exactly (same STIG rules, same network-design
+# ../../../../inventory.yaml exactly (same STIG rules, same network-design
 # facts) so the Ansible and Python implementations stay in sync.
 
 # VLAN IDs excluded when discovering "user VLANs" for DHCP snooping/DAI
