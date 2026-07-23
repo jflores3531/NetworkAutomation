@@ -13,18 +13,26 @@ and V-220635 (DAI) separately by L2_stig_harden_dai.py - both split out
 because they only trust the DHCP snooping binding table, so a statically-
 addressed host with no DHCP lease gets its traffic dropped once either is
 pushed (see the static-host-binding gap tracked in project memory).
-V-220632 (UUFB), V-220636 (storm control), and V-220623 (802.1x/MAB) are
-still pushed here for real hardware, even though confirmed live that none
-of those commands exist/function on the lab's vios_l2 switches - they're
-silently rejected there, not removed from the script. V-220636's threshold
-is scaled by port speed and skipped entirely on FastEthernet interfaces
-(see storm_control_command()) - DISA's own Fix Text notes storm control
-isn't supported on most FastEthernet ports, and a single flat threshold
-would either violate or fail on ports well outside Gigabit speed.
+V-220632 (UUFB) and V-220636 (storm control) are still pushed here for
+real hardware, even though confirmed live that neither command exists/
+functions on the lab's vios_l2 switches - they're silently rejected
+there, not removed from the script. V-220636's threshold is scaled by
+port speed and skipped entirely on FastEthernet interfaces (see
+storm_control_command()) - DISA's own Fix Text notes storm control isn't
+supported on most FastEthernet ports, and a single flat threshold would
+either violate or fail on ports well outside Gigabit speed.
 V-220630 (BPDU Guard) pushes 'spanning-tree portfast' to every access port -
 the global 'spanning-tree portfast bpduguard default' fix only activates
 BPDU Guard on ports that have PortFast enabled, so without this the global
-command was present but functionally inert everywhere (a false PASS)."""
+command was present but functionally inert everywhere (a false PASS).
+V-220623 (802.1x/MAB): the global prerequisites ('dot1x system-auth-control',
+'aaa authentication dot1x default group radius') are pushed by
+L2_stig_harden_aaa.py instead, not here - the latter needs aaa new-model
+already active, which this script doesn't push (see that script's own
+docstring for why). Only the per-port commands (authentication
+port-control auto / dot1x pae authenticator / mab, in access_fixes below)
+are pushed here; they're inert until the global prerequisites are active,
+same as any config for a globally-disabled feature."""
 
 import argparse
 import re
@@ -124,15 +132,6 @@ BASE_FIXES = {
     'V-220570a (HTTP session limit)': 'ip http max-connections 2',
     'V-220625 (QoS enabled)': 'mls qos',
     'V-220595a (password encryption)': 'service password-encryption',
-    # V-220623 global prerequisites - confirmed live this lab's vios_l2 has no
-    # 802.1x authenticator role at all (dot1x is unrecognized as an
-    # interface-level authenticator command here, only supplicant-side global
-    # commands exist). Pushed anyway per Jorge's request - correct for real
-    # hardware, expected to be rejected/ineffective here. Per-port commands
-    # (authentication port-control auto / dot1x pae authenticator / mab) are
-    # added to access_fixes further down.
-    'V-220623a (dot1x system-auth-control)': 'dot1x system-auth-control',
-    'V-220623b (dot1x AAA method)': 'aaa authentication dot1x default group radius',
     'V-220600 (audit failure alert)': 'logging trap critical',
     # Confirmed live that this lab's vios_l2 rejects 'file privilege 15'
     # ("% Invalid input") - same category as UUFB/storm-control/mls
@@ -523,6 +522,8 @@ if not ntp_key_id:
 print('\nV-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py.')
 print('V-220635 (DAI) is pushed separately by L2_stig_harden_dai.py.')
 print('V-220587/617 (AAA new-model + RADIUS auth) is pushed separately by L2_stig_harden_aaa.py.')
+print('V-220623a/b (dot1x system-auth-control + AAA method) is pushed separately by L2_stig_harden_aaa.py, '
+      'after aaa new-model is confirmed active - only the per-port V-220623 commands above are pushed here.')
 
 print('\nRules satisfied as a side effect of the access-port mode/VLAN push above, not by a dedicated command:')
 for rule in SIDE_EFFECT_RULES:
