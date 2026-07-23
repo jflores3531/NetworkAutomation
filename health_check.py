@@ -104,10 +104,14 @@ def check_ios(device_name, net_connect):
         findings['cpu_flagged'] = findings['cpu_pct'] > CPU_WARN_IOS
 
     # --- Optical: flag transceivers with temp/voltage/Tx/Rx outside generic warning bounds ---
+    # Each numeric field tolerates an optional inline unit suffix (e.g. "32.5C",
+    # "-2.5 dBm") - real hardware output includes units directly in the data
+    # columns, unlike this lab's platform which prints bare numbers.
+    NUM_WITH_UNIT = r'(-?[\d.]+)\s*[A-Za-z%]*'
     transceiver_output = net_connect.send_command('show interfaces transceiver detail')
     for line in transceiver_output.splitlines():
         optics_match = re.match(
-            r'^(\S+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*$', line
+            rf'^(\S+)\s+{NUM_WITH_UNIT}\s+{NUM_WITH_UNIT}\s+{NUM_WITH_UNIT}\s+{NUM_WITH_UNIT}\s*$', line
         )
         if not optics_match:
             continue
