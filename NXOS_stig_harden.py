@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-"""Push the global (non-interface-specific) hardening fixes from the DISA Cisco
-NX-OS Switch L2S STIG to a device. Interface-scoped rules (Unknown Unicast
-Flood Blocking, IP Source Guard, Dynamic ARP Inspection, storm control,
-access/native VLAN) need to know which ports are host-facing vs. trunk/uplink
-and are intentionally left out of this pass.
+"""Push the global and interface-scoped hardening fixes from the DISA Cisco
+NX-OS Switch L2S STIG to a device. Interface-scoped rules classify each
+switchport by whether it has an explicit 'switchport access vlan <n>' line -
+present means access/host-facing, absent means trunk (see
+classify_switchports() for why this signal is used instead of 'switchport
+mode access').
 V-220681 (BPDU Guard) also pushes 'spanning-tree port type edge default' -
 without it, the global bpduguard-default command has no edge ports to
 activate on and is a functional no-op (same false-pass shape as L2S's
@@ -15,11 +16,25 @@ V-220689 (UDLD) only pushes 'feature udld' - 'udld enable' isn't valid
 NX-OS syntax (confirmed live: "% Invalid command"), an IOS-ism that doesn't
 carry over; UDLD is on by default for fiber interfaces once the feature
 itself is enabled.
-Also pushes V-220695 (native VLAN): unless a switchport already has an
-explicit 'switchport access vlan <n>' line, it's pushed to trunk mode with
-the shared native_vlan - the inverse default from L2_stig_harden.py's
+V-220695 (native VLAN): unless a switchport already has an explicit
+'switchport access vlan <n>' line, it's pushed to trunk mode with the
+shared native_vlan - the inverse default from L2_stig_harden.py's
 access-layer switches. Appropriate here since NXCore1/NXCore2 are core
-switches where most ports interconnect other switches, not end hosts."""
+switches where most ports interconnect other switches, not end hosts.
+V-220683 (UUFB) and V-220685 (IP Source Guard) are pushed to every
+access-classified port - V-220685 uses NX-OS's own syntax
+('ip verify source dhcp-snooping-vlan'), confirmed different from IOS's
+'ip verify source'. V-220687 (storm control) uses NX-OS's percentage-based
+threshold ('storm-control broadcast level <percent>'), confirmed different
+from IOS's bps-based form - broadcast is the Check Text's compliance floor,
+same as L2S. V-220686 (DAI) and V-220692 (trunk VLAN pruning) are pushed
+alongside V-220684 (DHCP snooping)/V-220695 respectively, since neither
+needs new interface classification beyond what's already gathered.
+V-220691/694 (default VLAN on host ports / user-facing ports as access)
+aren't pushed by anything here - they're satisfied by construction (access
+ports are never touched, only ports without an explicit access VLAN get
+converted to trunk), but verifying that needs per-port classification in
+NXOS_stig_audit.py, which doesn't have any yet - a separate, later addition."""
 
 import argparse
 import re
@@ -32,24 +47,29 @@ import stig_common
 NXOS_SWITCHPORT_PREFIXES = ('Ethernet', 'port-channel')
 
 
-def classify_non_access_ports(cfg):
-    """Return switchport-capable interface names lacking an explicit
-    'switchport access vlan <n>' line. Checks for the VLAN assignment, not
-    'switchport mode access' - confirmed live that 'switchport mode access'
-    alone doesn't reliably show up in NX-OS running-config (default mode,
-    same omission pattern IOS uses for VLAN 1), so it isn't a trustworthy
-    signal on its own. An explicit access VLAN assignment is. Per Jorge's
-    policy for these core switches: unless a port is already configured as
-    access, it should be trunk - these are the switch's interconnect/uplink
-    ports, or ports left in NX-OS's default negotiated mode."""
-    non_access = []
+def classify_switchports(cfg):
+    """Classify every switchport-capable interface as access (has an
+    explicit 'switchport access vlan <n>' line) or not (everything else -
+    trunk-classified already, or left in NX-OS's default negotiated mode).
+    Checks for the VLAN assignment, not 'switchport mode access' -
+    confirmed live that 'switchport mode access' alone doesn't reliably
+    show up in NX-OS running-config (default mode, same omission pattern
+    IOS uses for VLAN 1), so it isn't a trustworthy signal on its own. Per
+    Jorge's policy for these core switches: unless a port is already
+    configured as access, it should be trunk - these are the switch's
+    interconnect/uplink ports, or ports left in NX-OS's default negotiated
+    mode. Returns (access_names, non_access_names)."""
+    access, non_access = [], []
     for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
         m = re.match(r'interface (\S+)', chunk)
         if not m or not m.group(1).startswith(NXOS_SWITCHPORT_PREFIXES):
             continue
-        if not re.search(r'^\s*switchport access vlan \d+\s*$', chunk, re.M):
-            non_access.append(m.group(1))
-    return non_access
+        name = m.group(1)
+        if re.search(r'^\s*switchport access vlan \d+\s*$', chunk, re.M):
+            access.append(name)
+        else:
+            non_access.append(name)
+    return access, non_access
 
 
 # Global (non-interface-specific) fixes always pushed by this script
@@ -79,15 +99,26 @@ EXEC_TIMEOUT_FIX = ['line console', 'exec-timeout 5', 'line vty', 'exec-timeout 
 # is turned on, no separate enable command needed.
 UDLD_FIX = ['feature udld']
 
-# Rules that need per-interface targeting (host-facing vs. trunk/uplink) and are
-# intentionally not pushed by this global-only pass
+# Pushed to every access-classified port. V-220685 uses NX-OS's own IPSG
+# syntax ('ip verify source dhcp-snooping-vlan'), not IOS's 'ip verify
+# source'. V-220687's threshold is a percentage (NX-OS), not bps (IOS) -
+# 40% matches DISA's own Fix Text example; per the STIG's own note,
+# network engineers are responsible for the actual value, this is a
+# reasonable default, not a mandated one. Only broadcast is pushed -
+# Check Text's compliance floor is broadcast alone, same as L2S's V-220636.
+ACCESS_PORT_FIXES = [
+    'switchport block unicast',               # V-220683 (UUFB)
+    'ip verify source dhcp-snooping-vlan',     # V-220685 (IP Source Guard)
+    'storm-control broadcast level 40',        # V-220687 (storm control)
+]
+
+# Rules that need per-port audit verification this script's audit
+# counterpart doesn't have yet (no interface classification at all in
+# NXOS_stig_audit.py) - satisfied by construction on the harden side
+# (access ports are never touched, only non-access ports get converted to
+# trunk), but not yet independently verified.
 SKIPPED_RULES = [
-    'V-220683 (Unknown Unicast Flood Blocking)',
-    'V-220685 (IP Source Guard)',
-    'V-220686 (Dynamic ARP Inspection)',
-    'V-220687 (storm control)',
     'V-220691 (default VLAN on host ports)',
-    'V-220692 (default VLAN pruned from trunks)',
     'V-220694 (user-facing ports as access)',
 ]
 
@@ -120,24 +151,42 @@ net_connect = netauto.connect(device_name, device_info, username, password)
 if net_connect is None:
     raise SystemExit(1)
 
-# Discover the switch's user VLANs (V-220684: DHCP snooping), excluding
-# management/servers/unused VLANs from inventory.yaml's non_user_vlans
+# Discover the switch's user VLANs (V-220684: DHCP snooping, V-220686: DAI -
+# same VLAN set for both), excluding management/servers/unused VLANs from
+# inventory.yaml's non_user_vlans
 vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=netauto.load_non_user_vlans())
 
-# V-220695: classify switchports so every port lacking explicit access mode
-# gets pushed to trunk with the shared native VLAN. Native VLAN comes from
-# inventory.yaml (same native_vlan value L2_stig_harden.py uses, currently
-# 999) - created in the VLAN database here too.
+# V-220692: trunks should carry only VLANs that actually exist in the switch's
+# VLAN database, minus the default VLAN (1) and the designated unused VLAN -
+# same explicit-list pattern L2_stig_harden.py uses (sidesteps 'except'/
+# 'remove' semantics entirely, no risk of clobbering a pre-existing
+# restriction on first run).
+unused_vlan = netauto.load_unused_vlan()
+trunk_vlan_exclude = [1] + ([unused_vlan] if unused_vlan else [])
+allowed_trunk_vlans = stig_common.discover_user_vlans(net_connect, exclude=trunk_vlan_exclude)
+
+# V-220695/683/685/687: classify switchports so every port lacking explicit
+# access mode gets pushed to trunk with the shared native VLAN, and every
+# access-classified port gets UUFB/IPSG/storm control. Native VLAN comes
+# from inventory.yaml (same native_vlan value L2_stig_harden.py uses,
+# currently 999) - created in the VLAN database here too.
 running_config = str(net_connect.send_command('show running-config'))
-trunk_target_ports = classify_non_access_ports(running_config)
+access_ports, trunk_target_ports = classify_switchports(running_config)
 native_vlan_id = netauto.load_native_vlan()
 
 native_vlan_commands = [f'vlan {native_vlan_id}', 'name NATIVE', 'exit'] if native_vlan_id else []
+
+access_interface_commands = []
+for name in access_ports:
+    access_interface_commands.append(f'interface {name}')
+    access_interface_commands += ACCESS_PORT_FIXES
 
 interface_commands = []
 for name in trunk_target_ports:
     interface_commands.append(f'interface {name}')
     interface_commands.append('switchport mode trunk')
+    if allowed_trunk_vlans:
+        interface_commands.append(f'switchport trunk allowed vlan {",".join(allowed_trunk_vlans)}')
     if native_vlan_id:
         interface_commands.append(f'switchport trunk native vlan {native_vlan_id}')
 
@@ -166,13 +215,23 @@ if ntp_servers:
 applied_fixes = dict(BASE_FIXES)
 applied_fixes['V-220493 (exec-timeout)'] = '; '.join(EXEC_TIMEOUT_FIX)
 applied_fixes['V-220689 (UDLD)'] = '; '.join(UDLD_FIX)
+if access_ports:
+    applied_fixes['V-220683/685/687 (UUFB/IP Source Guard/storm control)'] = (
+        f'{"; ".join(ACCESS_PORT_FIXES)} (on {len(access_ports)} access port(s): {", ".join(access_ports)})'
+    )
 if trunk_target_ports and native_vlan_id:
     applied_fixes['V-220695 (native VLAN)'] = (
         f'switchport mode trunk; switchport trunk native vlan {native_vlan_id} '
         f'(on {len(trunk_target_ports)} non-access port(s): {", ".join(trunk_target_ports)})'
     )
+if trunk_target_ports and allowed_trunk_vlans:
+    applied_fixes['V-220692 (trunk VLAN pruning)'] = (
+        f'switchport trunk allowed vlan {",".join(allowed_trunk_vlans)} '
+        f'(on {len(trunk_target_ports)} trunk port(s))'
+    )
 if vlan_ids:
     applied_fixes['V-220684 (DHCP snooping)'] = f'feature dhcp; ip dhcp snooping; ip dhcp snooping vlan {",".join(vlan_ids)}'
+    applied_fixes['V-220686 (DAI)'] = f'ip arp inspection vlan {",".join(vlan_ids)}'
 if vtp_password and vtp_domain:
     applied_fixes['V-220676 (VTP authentication)'] = (
         f'feature vtp; vtp domain {vtp_domain}; vtp mode transparent; vtp password {vtp_password}'
@@ -186,8 +245,11 @@ if ntp_key_id:
 
 commands = list(BASE_FIXES.values()) + EXEC_TIMEOUT_FIX + UDLD_FIX
 if vlan_ids:
-    commands += ['feature dhcp', 'ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}']
-commands += native_vlan_commands + interface_commands
+    commands += [
+        'feature dhcp', 'ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}',
+        f'ip arp inspection vlan {",".join(vlan_ids)}',  # V-220686 (DAI) - same VLAN set as DHCP snooping
+    ]
+commands += native_vlan_commands + access_interface_commands + interface_commands
 if vtp_password and vtp_domain:
     # Domain must be set before the password takes effect - confirmed live
     # on NXCore1 ('vtp password ...' fails with "Domain not set" otherwise.
@@ -211,10 +273,14 @@ print(f'\nRules addressed by this pass:')
 for rule in applied_fixes:
     print('  - ' + rule)
 
+if not access_ports:
+    print('\nNo access switchports found (explicit `switchport access vlan <n>`) — nothing to push for V-220683/685/687.')
 if not native_vlan_id:
     print('\nSkipped V-220695 (native VLAN) — add native_vlan to inventory.yaml to include it.')
 elif not trunk_target_ports:
-    print(f'\nNo non-access switchports found — every port already has an explicit `switchport access vlan <n>` line, nothing to push for V-220695.')
+    print(f'\nNo non-access switchports found — every port already has an explicit `switchport access vlan <n>` line, nothing to push for V-220695/692.')
+if trunk_target_ports and not allowed_trunk_vlans:
+    print('\nSkipped V-220692 (trunk VLAN pruning) — no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
 if not (vtp_password and vtp_domain):
     missing = []
     if not vtp_password:
