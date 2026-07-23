@@ -2,7 +2,7 @@
 """Push the global and interface-scoped hardening fixes from the DISA Cisco IOS
 Switch L2S STIG to a device. Interface-scoped rules classify each switchport as
 host-facing/access or trunk/uplink based on whether "switchport mode trunk" is
-present, then push the matching fixes to each. V-220642 (default VLAN on
+present, then push the matching fixes to each. V-220642 (no default VLAN on
 host-facing ports) and V-220645 (user-facing ports must be access) don't get a
 dedicated command - they're satisfied as a side effect of the explicit
 'switchport mode access' + 'switchport access vlan <default_access_vlan>'
@@ -161,7 +161,7 @@ ARCHIVE_LOGGING_FIX = [
 # Rules satisfied as a side effect of the access-port mode/VLAN push, not by
 # a dedicated command of their own (see module docstring)
 SIDE_EFFECT_RULES = [
-    'V-220642 (default VLAN on host ports)',
+    'V-220642 (no default VLAN on host ports)',
     'V-220645 (user-facing ports as access)',
 ]
 
