@@ -31,12 +31,20 @@ def load_services(path='inventory.yaml'):
     return inventory.get('services', {})
 
 
-def load_non_user_vlans(path='inventory.yaml'):
+def load_non_user_vlans(path='inventory.yaml', device_name=None):
     """Load the non_user_vlans list from the YAML inventory — VLAN IDs to exclude
     when discovering "user VLANs" for DHCP snooping/DAI pushes (management,
-    servers, unused default VLAN, etc). Returns an empty list if not defined."""
+    servers, unused default VLAN, etc). The same VLAN ID doesn't always mean the
+    same thing on every device (e.g. VLAN 10 is a management segment on the L2S
+    access switches but a real dot1x-authenticated endpoint VLAN on NXCore1) -
+    if device_name is given and has an entry in non_user_vlans_by_device, that
+    device-specific list is returned instead of the shared default. Returns an
+    empty list if nothing is defined."""
     with open(path) as f:
         inventory = yaml.safe_load(f)
+    overrides = inventory.get('non_user_vlans_by_device', {})
+    if device_name and device_name in overrides:
+        return overrides[device_name]
     return inventory.get('non_user_vlans', [])
 
 
@@ -104,9 +112,13 @@ def load_secrets(path='secrets.yaml'):
 
 
 def get_credentials():
-    """Prompt for the SSH username/password used to connect to devices."""
-    username = input('Enter your SSH username: ')
-    password = getpass()
+    """Prompt for the SSH username/password used to connect to devices.
+    Checks SSH_USERNAME/SSH_PASSWORD env vars first - set by the Ansible
+    stig_audit role via `environment:` (not CLI flags) so a fleet-wide run
+    only prompts once instead of once per device. Falls back to interactive
+    prompts for standalone script use."""
+    username = os.environ.get('SSH_USERNAME') or input('Enter your SSH username: ')
+    password = os.environ.get('SSH_PASSWORD') or getpass()
     return username, password
 
 

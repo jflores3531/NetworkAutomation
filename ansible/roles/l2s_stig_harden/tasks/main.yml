@@ -1,5 +1,5 @@
 ---
-# Replicates L2_stig_harden.py's bulk hardening pass. See ../../../README.md
+# Replicates L2_stig_harden_global.py's bulk hardening pass. See ../../../README.md
 # for what's covered vs. deliberately left out (Root Guard and the disabled-
 # port-to-unused-VLAN reassignment both need live state this role doesn't
 # gather yet - see that file for why).

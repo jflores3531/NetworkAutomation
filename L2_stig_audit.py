@@ -44,7 +44,7 @@ def parse_switchports(cfg):
 # directly instead, requiring an explicit 'switchport mode access' or
 # 'switchport mode trunk' line - genuinely catches a port left in IOS's
 # default negotiated/dynamic mode (the actual DTP/VLAN-hopping risk this rule
-# is about), which L2_stig_harden.py now avoids by pushing 'switchport mode
+# is about), which L2_stig_harden_global.py now avoids by pushing 'switchport mode
 # access' explicitly to every access port (it didn't always).
 def _all_ports_explicit_mode(cfg):
     bad, total = [], 0
@@ -669,7 +669,7 @@ def _no_management_on_default_vlan(cfg):
 CHECKS = {
     # --- L2S (Layer 2 Switch) ---
     # V-220642/645 were NOT AUTOMATED for a long time (see git history) until
-    # L2_stig_harden.py started pushing explicit 'switchport access vlan
+    # L2_stig_harden_global.py started pushing explicit 'switchport access vlan
     # <default_access_vlan>' and 'switchport mode access' to every access
     # port. V-220642: IOS omits "switchport access vlan 1" when it's already
     # the default, so a missing explicit-non-1 line now unambiguously means

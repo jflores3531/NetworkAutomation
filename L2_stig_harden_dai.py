@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """Push 'ip arp inspection vlan <ids>' (V-220635, Dynamic ARP Inspection) to
-a device, split out of L2_stig_harden.py's bulk batch on purpose - DAI only
+a device, split out of L2_stig_harden_global.py's bulk batch on purpose - DAI only
 trusts the DHCP snooping binding table, so a statically-addressed host (no
 DHCP lease) is invisible to it and can have its ARP traffic dropped once
 this is pushed (same static-host-binding gap as L2_stig_harden_ipsg.py - see
 project memory). Keeping this isolated makes it easy to push/pull
 independently of the rest of the STIG batch while that gap is unresolved.
 
-Run L2_stig_harden.py first - this assumes DHCP snooping is already enabled
+Run L2_stig_harden_global.py first - this assumes DHCP snooping is already enabled
 and trunk/uplink ports are already 'ip arp inspection trust'ed (both handled
 there), neither of which this script sets up itself. Without trunk trust,
 DAI also drops legitimate transit ARP traffic from hosts behind other
@@ -40,7 +40,7 @@ if net_connect is None:
     raise SystemExit(1)
 
 # Discover the switch's user VLANs, excluding management/servers/unused VLANs
-# from inventory.yaml's non_user_vlans - same discovery L2_stig_harden.py uses
+# from inventory.yaml's non_user_vlans - same discovery L2_stig_harden_global.py uses
 # for V-220633 (DHCP snooping), since DAI must cover the same VLAN set.
 vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=netauto.load_non_user_vlans())
 

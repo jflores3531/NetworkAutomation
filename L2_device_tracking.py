@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Push SISF-based 'device-tracking policy' blocks to a switch, for host IP
 visibility via 'show device-tracking database'. Not a STIG requirement - kept
-separate from L2_stig_harden.py on purpose. Requires IOS-XE (SISF
+separate from L2_stig_harden_global.py on purpose. Requires IOS-XE (SISF
 device-tracking); the classic-IOS lab switches (S1/S2/S3, vios_l2) don't
 support 'device-tracking policy' - confirmed missing from 'device-tracking ?'
 on S3, so this won't do anything useful there.
