@@ -15,9 +15,11 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
                     not_automated_note='need manual review or external infrastructure'):
     """Connect to a device, check its running-config against a DISA STIG checklist's
     rules using `checks` (group_id -> predicate(running_config) -> bool, or
-    -> (bool, reason) to show why a rule passed/failed), and print a
-    PASS/FAIL/NOT AUTOMATED report. Rules with no entry in `checks` are reported
-    as NOT AUTOMATED."""
+    -> (bool, reason) to show why a rule passed/failed, or -> (None, reason)
+    to report NOT APPLICABLE when the rule's precondition doesn't hold on this
+    device - e.g. a host-facing-port rule on a switch with no access ports at
+    all), and print a PASS/FAIL/NOT APPLICABLE/NOT AUTOMATED report. Rules with
+    no entry in `checks` are reported as NOT AUTOMATED."""
     with open(checklist_path, encoding='utf-8') as f:
         checklist = json.load(f)
     rules = [rule for stig in checklist['stigs'] for rule in stig['rules']]
@@ -30,7 +32,7 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
     running_config = str(net_connect.send_command('show running-config'))
     net_connect.disconnect()
 
-    results = {'PASS': 0, 'FAIL': 0, 'NOT AUTOMATED': 0}
+    results = {'PASS': 0, 'FAIL': 0, 'NOT APPLICABLE': 0, 'NOT AUTOMATED': 0}
     findings = []
 
     for rule in rules:
@@ -43,12 +45,13 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
         else:
             result = check(running_config)
             passed, reason = result if isinstance(result, tuple) else (result, None)
-            status = 'PASS' if passed else 'FAIL'
+            status = 'NOT APPLICABLE' if passed is None else ('PASS' if passed else 'FAIL')
         results[status] += 1
         findings.append((status, rule, group_id, reason))
 
     print(f'{title} for {device_name}\n')
-    print(f"{results['PASS']} passed, {results['FAIL']} failed, {results['NOT AUTOMATED']} not automated ({not_automated_note}) out of {len(rules)} rules.\n")
+    print(f"{results['PASS']} passed, {results['FAIL']} failed, {results['NOT APPLICABLE']} not applicable, "
+          f"{results['NOT AUTOMATED']} not automated ({not_automated_note}) out of {len(rules)} rules.\n")
 
     for status, rule, group_id, reason in findings:
         rule_title = re.sub(r'^The Cisco switch\s+', '', rule['rule_title'])

@@ -2,11 +2,11 @@
 """Disable live logging output to the console/terminal on a device - not a
 STIG requirement, pure quality-of-life for anyone actively configuring the
 device interactively (console or SSH). Log messages still go to the buffer
-(`logging buffered`, pushed by L2_stig_harden.py) and syslog servers as
+(`logging buffered`, pushed by L2_stig_harden_global.py) and syslog servers as
 normal - this only stops them from interrupting an active session. Use
 `show logging` on the device to see buffered messages on demand instead.
 
-Kept as its own script rather than folded into L2_stig_harden.py since it's
+Kept as its own script rather than folded into L2_stig_harden_global.py since it's
 unrelated to STIG compliance and purely a terminal-comfort preference."""
 
 import argparse

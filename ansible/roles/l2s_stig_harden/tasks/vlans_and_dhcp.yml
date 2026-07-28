@@ -1,5 +1,5 @@
 ---
-# Mirrors stig_common.discover_user_vlans() + L2_stig_harden.py's VLAN
+# Mirrors stig_common.discover_user_vlans() + L2_stig_harden_global.py's VLAN
 # database creation and DHCP snooping push. VLAN database creation uses
 # the cisco.ios.ios_vlans resource module (state-based); everything else
 # here still uses raw ios_config lines - most of this bulk pass has no

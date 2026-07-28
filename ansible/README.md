@@ -1,7 +1,7 @@
-# Ansible replication of L2_stig_harden.py
+# Ansible replication of L2_stig_harden_global.py
 
 An Ansible role/playbook that replicates the bulk L2S STIG hardening pass
-`../L2_stig_harden.py` performs against S1/S2/S3, using `cisco.ios` instead
+`../L2_stig_harden_global.py` performs against S1/S2/S3, using `cisco.ios` instead
 of Netmiko. Lives alongside the Python scripts on purpose - nothing here
 touches `../netauto.py` or any of the `*_stig_harden.py`/`*_stig_audit.py`
 scripts, and the two can be run independently (built for interview/
@@ -49,7 +49,7 @@ not assumed from documentation.
 
 ## What's covered
 
-Everything in `L2_stig_harden.py`'s current state except V-220629/V-220641a
+Everything in `L2_stig_harden_global.py`'s current state except V-220629/V-220641a
 (below) and V-220623's global prerequisites (moved out of scope entirely,
 see below):
 
@@ -86,7 +86,7 @@ correct commands for real hardware.
 
 ## What's deliberately NOT covered
 
-- **V-220629 (Root Guard)** - `L2_stig_harden.py` discovers this switch's
+- **V-220629 (Root Guard)** - `L2_stig_harden_global.py` discovers this switch's
   live STP root port(s) first (`stig_common.discover_root_port_interfaces`)
   and excludes them, because pushing Root Guard to your own root port forces
   it into root-inconsistent/blocking state - a real outage, not a
@@ -108,7 +108,7 @@ correct commands for real hardware.
   receive them, so they're simply not pushed here at all - only the
   per-port V-220623 commands (`authentication port-control auto`/
   `dot1x pae authenticator`/`mab`) remain in this role, matching
-  `L2_stig_harden.py`'s current scope exactly.
+  `L2_stig_harden_global.py`'s current scope exactly.
 
 ## Why this exists
 

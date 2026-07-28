@@ -11,6 +11,217 @@ import stig_common
 CHECKLIST_PATH = 'New NXOS Checklist.cklb'
 
 
+# Interface types that take switchport commands on NX-OS - mgmt0, Vlan<n>
+# (SVIs), and loopback<n> aren't physical/logical switchports. Same list
+# NXOS_stig_harden_global.py uses.
+NXOS_SWITCHPORT_PREFIXES = ('Ethernet', 'port-channel')
+
+# 'show interface status' uses abbreviated interface names ('Eth1/5',
+# 'Po10') - running-config uses the full form ('Ethernet1/5',
+# 'port-channel10'). Same mapping NXOS_stig_harden_interfaces.py uses.
+_SHORT_TO_FULL_PREFIX = (('Eth', 'Ethernet'), ('Po', 'port-channel'))
+
+# Every status value 'show interface status' actually prints in the Status
+# column - used as an anchor to pull the status out of a fixed-width table
+# whose Name field is free text that can't be reliably column-sliced.
+_INTERFACE_STATUSES = (
+    'connected', 'disabled', 'suspended', 'notconnect', 'noOperMem',
+    'inactive', 'xcvrAbsent', 'sfpAbsent', 'err-disabled',
+)
+
+
+def parse_interface_status(output):
+    """Maps every interface name (expanded to running-config form) found in
+    'show interface status' output to its Status column value. 'disabled'
+    specifically means administratively shutdown - confirmed live on
+    NXCore1, distinct from 'suspended'/'notconnect' which don't mean unused.
+    Same parser NXOS_stig_harden_interfaces.py uses to decide what to push -
+    kept in sync so the audit checks the same "not in use" definition the
+    harden side acts on."""
+    statuses = {}
+    for line in output.splitlines():
+        m = re.match(r'^(\S+)\s+.*?\b(' + '|'.join(_INTERFACE_STATUSES) + r')\b', line)
+        if not m:
+            continue
+        short_name, status = m.group(1), m.group(2)
+        full_name = short_name
+        for short_prefix, full_prefix in _SHORT_TO_FULL_PREFIX:
+            if short_name.startswith(short_prefix) and short_name[len(short_prefix):len(short_prefix) + 1].isdigit():
+                full_name = full_prefix + short_name[len(short_prefix):]
+                break
+        statuses[full_name] = status
+    return statuses
+
+
+def parse_switchports(cfg):
+    """Classify every switchport-capable interface as access or trunk based on
+    explicit evidence in its own config block - NOT NXOS_stig_harden_global.py's
+    push-time assumption that "lacks an access VLAN, so it should become
+    trunk" (that's a policy for what to push, not evidence of what's already
+    there). Access: explicit 'switchport access vlan <n>' line - the only
+    reliable access signal on NX-OS (confirmed live that 'switchport mode
+    access' alone doesn't consistently appear in running-config, same
+    omission NXOS_stig_harden_global.py's own classify_switchports() works around).
+    Trunk: explicit 'switchport mode trunk' line. A port with neither (still
+    in NX-OS's default negotiated/L3-routed state) falls into neither bucket -
+    it's not silently treated as access; V-220694's check below is the one
+    that catches that ambiguous state directly.
+    Returns (access_blocks, trunk_blocks), each {interface_name: block_text}."""
+    access, trunk = {}, {}
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m or not m.group(1).startswith(NXOS_SWITCHPORT_PREFIXES):
+            continue
+        name = m.group(1)
+        if re.search(r'^\s*switchport access vlan \d+\s*$', chunk, re.M):
+            access[name] = chunk
+        elif re.search(r'^\s*switchport mode trunk\s*$', chunk, re.M):
+            trunk[name] = chunk
+    return access, trunk
+
+
+def _all_access_ports_have(cfg, pattern, what, exclude_vlan=None):
+    """exclude_vlan drops ports assigned to the given VLAN from the access
+    population before checking - used to exclude unused_vlan-assigned ports
+    (V-220690's disabled-port bucket) from host-facing-only requirements
+    like UUFB/IPSG/storm control. Those rules' own titles say "host-facing
+    or untrusted access switch ports" - a port deliberately parked on the
+    black-hole VLAN isn't host-facing, it's not in use at all."""
+    access, _ = parse_switchports(cfg)
+    if exclude_vlan:
+        access = {
+            name: block for name, block in access.items()
+            if not re.search(rf'^\s*switchport access vlan {exclude_vlan}\s*$', block, re.M)
+        }
+    if not access:
+        return None, (
+            'not applicable - no access-classified switchports found in config '
+            '(this rule only governs host-facing access ports)'
+        )
+    missing = sorted(name for name, block in access.items() if not re.search(pattern, block))
+    if missing:
+        return False, f'missing {what} on: {", ".join(missing)}'
+    return True, f'{what} present on all {len(access)} access port(s): {", ".join(sorted(access))}'
+
+
+def _all_trunk_ports_have(cfg, pattern, what):
+    _, trunk = parse_switchports(cfg)
+    if not trunk:
+        return False, 'no trunk-classified switchports found in config'
+    missing = sorted(name for name, block in trunk.items() if not re.search(pattern, block))
+    if missing:
+        return False, f'missing {what} on: {", ".join(missing)}'
+    return True, f'{what} present on all {len(trunk)} trunk port(s): {", ".join(sorted(trunk))}'
+
+
+# V-220692: same pruning logic as L2_stig_audit.py's default_vlan_pruned_from_trunks,
+# adapted to NX-OS's identical 'switchport trunk allowed vlan <spec>' syntax
+# (confirmed same command form as IOS, per NXOS_stig_harden_global.py's V-220692 push).
+def _default_vlan_pruned_from_trunks(cfg):
+    _, trunk = parse_switchports(cfg)
+    if not trunk:
+        return False, 'no trunk-classified switchports found in config'
+    bad = []
+    for name, block in sorted(trunk.items()):
+        m = re.search(r'switchport trunk allowed vlan (.+)$', block, re.M)
+        if not m:
+            bad.append(f'{name} (no allowed-vlan restriction, VLAN 1 allowed by default)')
+            continue
+        spec = m.group(1).strip()
+        pruned = (
+            (spec.startswith('except') and _vlan_in_spec(1, spec[len('except'):].strip()))
+            or (spec.startswith('remove') and _vlan_in_spec(1, spec[len('remove'):].strip()))
+            or (not spec.startswith(('except', 'remove', 'add')) and not _vlan_in_spec(1, spec))
+        )
+        if not pruned:
+            bad.append(f'{name} (`switchport trunk allowed vlan {spec}` still allows VLAN 1)')
+    if bad:
+        return False, 'VLAN 1 not pruned on: ' + '; '.join(bad)
+    return True, f'VLAN 1 pruned on all {len(trunk)} trunk port(s): {", ".join(sorted(trunk))}'
+
+
+# V-220694: unlike L2S's access-layer switches (default policy: non-trunk =
+# access), NXOS_stig_harden_global.py's core-switch policy is the inverse (default:
+# non-access = trunk) - so "must be configured as access" can't be checked
+# literally per-port here without topology knowledge this script doesn't
+# have (which ports are host-facing vs. interconnects on a core switch).
+# What IS checkable, and what the rule's underlying intent actually is (see
+# L2_stig_audit.py's V-220645 - same reasoning): no switchport-capable
+# interface should be left without an explicit access-or-trunk
+# classification, i.e. sitting in NX-OS's default negotiated/L3-routed
+# state. That ambiguous state is the real risk DISA is guarding against.
+def _all_ports_explicit_mode(cfg):
+    bad, total = [], 0
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m or not m.group(1).startswith(NXOS_SWITCHPORT_PREFIXES):
+            continue
+        total += 1
+        is_access = bool(re.search(r'^\s*switchport access vlan \d+\s*$', chunk, re.M))
+        is_trunk = bool(re.search(r'^\s*switchport mode trunk\s*$', chunk, re.M))
+        if not (is_access or is_trunk):
+            bad.append(m.group(1))
+    if total == 0:
+        return False, 'no switchport-capable interfaces found in config'
+    if bad:
+        return False, (
+            f'left without an explicit access or trunk classification (still in '
+            f"NX-OS's default negotiated/routed state): {', '.join(sorted(bad))}"
+        )
+    return True, f'all {total} switchport-capable interface(s) explicitly classified as access or trunk'
+
+
+def _no_access_ports_on_native_vlan(cfg, native_vlan_id):
+    """V-220696: no access-classified switchport should be assigned to the
+    native VLAN. Satisfied by construction in this project's design (access
+    ports get real user VLANs like 50/100, the native VLAN is a dedicated
+    unused/black-hole VLAN reserved for trunk native assignment only) - this
+    verifies it independently rather than assuming the design held."""
+    if not native_vlan_id:
+        return None, 'not applicable - no native_vlan configured in inventory.yaml'
+    access, _ = parse_switchports(cfg)
+    if not access:
+        return None, 'not applicable - no access-classified switchports found in config'
+    offenders = sorted(
+        name for name, block in access.items()
+        if re.search(rf'^\s*switchport access vlan {native_vlan_id}\s*$', block, re.M)
+    )
+    if offenders:
+        return False, f'access port(s) assigned to native VLAN {native_vlan_id}: {", ".join(offenders)}'
+    return True, f'no access port(s) assigned to native VLAN {native_vlan_id} (checked {len(access)} access port(s))'
+
+
+def _disabled_ports_on_unused_vlan(cfg, unused_vlan, interface_statuses):
+    """V-220690. Check Content's literal finding condition: "If there are
+    any access switch ports not in use and not in an inactive VLAN, this is
+    a finding." "Not in use" is verified via 'show interface status''s
+    'disabled' status (administratively shutdown) rather than parse_switchports()'s
+    access/trunk split - a disabled port pushed to trunk mode by an earlier
+    NXOS_stig_harden_interfaces.py run (before this feature existed) would
+    otherwise be invisible to this check, which only inspects access-block
+    text. Every switchport-capable interface currently reported 'disabled'
+    needs an explicit 'switchport access vlan <unused_vlan>' line,
+    regardless of its current access/trunk classification."""
+    if not unused_vlan:
+        return None, 'not applicable - no unused_vlan configured in inventory.yaml'
+    offenders, checked = [], 0
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m or not m.group(1).startswith(NXOS_SWITCHPORT_PREFIXES):
+            continue
+        name = m.group(1)
+        if interface_statuses.get(name) != 'disabled':
+            continue
+        checked += 1
+        if not re.search(rf'^\s*switchport access vlan {unused_vlan}\s*$', chunk, re.M):
+            offenders.append(name)
+    if checked == 0:
+        return None, 'not applicable - no administratively-shutdown switchport-capable interfaces found'
+    if offenders:
+        return False, f'disabled port(s) not assigned to unused VLAN {unused_vlan}: {", ".join(sorted(offenders))}'
+    return True, f'all {checked} disabled switchport-capable interface(s) assigned to unused VLAN {unused_vlan}'
+
+
 def _vlan_in_spec(vlan, spec):
     """True if vlan appears in a comma-separated list of VLAN IDs/ranges, e.g. '2-4094'."""
     for part in spec.split(','):
@@ -127,6 +338,57 @@ def _exec_timeout_check(cfg):
     return False, '; '.join(missing)
 
 
+def _ssh_macs_fips_check(cfg):
+    """V-220488/503: both rules share the identical Fix Text example ('ssh
+    macs hmac-sha2-256 hmac-sha2-512') under different CCI categories
+    (replay-resistant auth vs. FIPS-validated HMAC integrity) - one check
+    covers both. That Fix Text example doesn't carry over to NX-OS though
+    (confirmed live on NXCore1: 'ssh macs' takes exactly one algorithm name
+    per invocation, not a list) - and hmac-sha2-256/hmac-sha2-512 are
+    already in NX-OS's default MAC allow-list on this platform ("Config is
+    already present" pushing either), which also means they never appear in
+    plain `show running-config` the way most default state doesn't. What
+    running-config *does* show is explicit 'no ssh macs <algo>' overrides -
+    same as 'no password strength-check' - so the actual compliant state
+    here (confirmed via `show running-config all | include macs`) is
+    verified by checking that everything except hmac-sha2-256/hmac-sha2-512
+    is explicitly disabled: hmac-sha1/hmac-sha1-etm@openssh.com are
+    genuinely weak (SHA-1), while hmac-sha2-256-etm@openssh.com/
+    hmac-sha2-512-etm@openssh.com are still SHA-2-based but outside the two
+    algorithms DISA's Fix Text example names, so disabled too rather than
+    left to interpretation."""
+    non_compliant_macs = [
+        'hmac-sha1', 'hmac-sha1-etm@openssh.com',
+        'hmac-sha2-256-etm@openssh.com', 'hmac-sha2-512-etm@openssh.com',
+    ]
+    still_allowed = [algo for algo in non_compliant_macs if f'no ssh macs {algo}' not in cfg]
+    if still_allowed:
+        return False, f'MAC(s) not explicitly disabled: {", ".join(still_allowed)}'
+    return True, (
+        'all MACs besides hmac-sha2-256/hmac-sha2-512 explicitly disabled '
+        '- those two remain allowed by NX-OS default'
+    )
+
+
+def _ssh_login_attempts_check(cfg):
+    """V-220480: 3 is NX-OS's own default value on this platform - confirmed
+    via `show running-config all | include login-attempts` on NXCore1, which
+    only appears there and not in plain `show running-config`, same
+    hidden-default pattern as `feature ntp`/the FIPS MACs above. No explicit
+    line therefore means the compliant default (3) is in effect, not a
+    missing/failed push. Requires exactly 3, not "3 or fewer" - the Check
+    Text's required value is the literal number 3, not an org-defined
+    ceiling, so a stricter override (e.g. 1) is treated as a deviation from
+    the specified value rather than automatically compliant."""
+    m = re.search(r'^ssh login-attempts (\d+)', cfg, re.M)
+    if not m:
+        return True, 'no explicit override found - NX-OS default of 3 is in effect'
+    attempts = int(m.group(1))
+    if attempts == 3:
+        return True, f'ssh login-attempts {attempts}'
+    return False, f'ssh login-attempts {attempts} does not equal the required value of 3'
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Rules with no entry here need external infrastructure (RADIUS, syslog,
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
@@ -134,16 +396,26 @@ CHECKS = {
     # --- L2S (Layer 2 Switch) ---
     # V-220683/685/687/691/692/694/695 (unicast flood blocking, IP source guard,
     # storm control, default VLAN on host ports, default VLAN pruned from trunks,
-    # access ports, native VLAN) are per-interface: finding the string anywhere in
-    # the config doesn't mean every relevant interface has it (or, for V-220691,
-    # its absence doesn't prove no port is on the default VLAN, since NX-OS often
-    # omits "switchport access vlan 1" when it's already the default). This
-    # script has no interface classification at all yet (unlike L2_stig_audit.py's
-    # parse_switchports()), so all of these stay NOT AUTOMATED here even though
-    # NXOS_stig_harden.py now pushes 683/685/687/692/695 (2026-07-24) - the harden
-    # side satisfies them by construction, but nothing here independently verifies
-    # it per-port yet. Building that classification is separate, later work.
-    'V-220676': lambda cfg: bool(re.search(r'^vtp password \S+', cfg, re.M)),
+    # access ports, native VLAN) are per-interface, verified via parse_switchports()
+    # above - same interface-classification approach as L2_stig_audit.py, adapted
+    # to NX-OS's own reliable signals (see that function's docstring for why).
+    # exclude_vlan=unused_vlan on all four - unused_vlan is a module-level
+    # global assigned further down (after the device connection), but these
+    # lambdas aren't called until stig_common.run_stig_audit() runs, well
+    # after that assignment, so Python's late-binding closures resolve it
+    # correctly at call time.
+    'V-220683': lambda cfg: _all_access_ports_have(cfg, r'switchport block unicast', 'UUFB (`switchport block unicast`)', exclude_vlan=unused_vlan),
+    'V-220685': lambda cfg: _all_access_ports_have(cfg, r'ip verify source dhcp-snooping-vlan', 'IP Source Guard (`ip verify source dhcp-snooping-vlan`)', exclude_vlan=unused_vlan),
+    'V-220687': lambda cfg: _all_access_ports_have(cfg, r'storm-control broadcast level \d+', 'storm control (`storm-control broadcast level <n>`)', exclude_vlan=unused_vlan),
+    'V-220691': lambda cfg: _all_access_ports_have(cfg, r'switchport access vlan (?!1\s*$)\d+', 'an explicit non-default access VLAN (not VLAN 1)', exclude_vlan=unused_vlan),
+    'V-220692': _default_vlan_pruned_from_trunks,
+    'V-220694': _all_ports_explicit_mode,
+    'V-220695': lambda cfg: _all_trunk_ports_have(cfg, r'switchport trunk native vlan (?!1\s*$)\d+', 'a non-default native VLAN'),
+    # V-220676 (VTP password) is added below, after a separate `show vtp
+    # password` command — confirmed live on NXCore1 that NX-OS deliberately
+    # omits the VTP password from `show running-config` entirely (only
+    # 'feature vtp'/'vtp domain' show there), so scanning running-config text
+    # for it can never pass regardless of whether it's actually set.
     'V-220681': _bpdu_guard_check,
     'V-220682': lambda cfg: 'spanning-tree loopguard default' in cfg,
     # V-220684/686 (DHCP snooping/DAI VLAN coverage) are added below, after
@@ -156,13 +428,32 @@ CHECKS = {
     # UDLD is on by default for every fiber interface once the feature itself
     # is enabled, per the STIG's own note - no separate enable line needed.
     'V-220689': lambda cfg: 'feature udld' in cfg,
-    'V-220498': lambda cfg: 'feature ntp' in cfg and len(set(re.findall(r'^ntp server (\S+)', cfg, re.M))) >= 2,
+    # No 'feature ntp' requirement here, unlike V-220689/676/684's feature
+    # checks - confirmed live on NXCore1 that NTP isn't gated behind an
+    # explicit feature toggle on this platform/image ('feature ntp' pushes
+    # as a no-op, "NTP feature is already enabled", and never appears in
+    # `show running-config` even with NTP fully configured and working).
+    # V-220516: same >=2-distinct-servers shape as V-220498's NTP check below.
+    'V-220516': lambda cfg: len(set(re.findall(r'^logging server (\S+)', cfg, re.M))) >= 2,
+    # V-220474: Check Text's example scopes session-limit to 'line vty' only
+    # (not 'line console') - the bare command is unambiguous enough on its
+    # own that a plain search doesn't risk matching anything else.
+    'V-220474': lambda cfg: bool(re.search(r'session-limit \d+', cfg)),
+    # V-220480: Check Text's required value is literally 3, not an
+    # org-defined number - matches the exact command this project pushes.
+    'V-220480': _ssh_login_attempts_check,
+    'V-220488': _ssh_macs_fips_check,
+    'V-220503': _ssh_macs_fips_check,
+    'V-220498': lambda cfg: len(set(re.findall(r'^ntp server (\S+)', cfg, re.M))) >= 2,
     'V-220502': lambda cfg: (
-        'feature ntp' in cfg
-        and 'ntp authenticate' in cfg
+        'ntp authenticate' in cfg
         and bool(re.search(r'ntp authentication-key \d+ md5 \S+', cfg))
         and bool(re.search(r'ntp trusted-key \d+', cfg))
-        and bool(re.search(r'ntp server \S+ key \d+', cfg))
+        # '.*' between the server and 'key <id>' - confirmed live on NXCore1
+        # that NX-OS auto-inserts 'use-vrf default' between them
+        # ('ntp server <ip> use-vrf default key <id>'), so a tight
+        # '\S+ key \d+' adjacency never matches even when correctly configured.
+        and bool(re.search(r'^ntp server \S+.*\bkey \d+', cfg, re.M))
     ),
     # V-220499 (log time stamps mappable to UTC/GMT) is deliberately left out: UTC
     # is the default zone, so the checklist itself notes "clock timezone" may not
@@ -194,19 +485,46 @@ device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 username, password = netauto.get_credentials()
 
 # Discover genuine user VLANs (excludes management/servers/unused VLANs from
-# inventory.yaml's non_user_vlans) so V-220684/V-220686 can verify DHCP
-# snooping/DAI actually cover them, not just that some VLAN list exists. Uses a
-# separate connection since run_stig_audit manages its own for running-config.
+# inventory.yaml's non_user_vlans/non_user_vlans_by_device, plus unused_vlan/
+# native_vlan) so V-220684/V-220686 can verify DHCP snooping/DAI actually
+# cover them, not just that some VLAN list exists. Same exclude set
+# NXOS_stig_harden_global.py uses - without also excluding unused_vlan/native_vlan
+# here, VLAN 999 (the designated black-hole/native VLAN) gets misclassified
+# as an uncovered user VLAN once it exists in the database, the same bug
+# already fixed on the harden side. Uses a separate connection since
+# run_stig_audit manages its own for running-config.
 vlan_discovery_connect = netauto.connect(device_name, device_info, username, password)
 if vlan_discovery_connect is None:
     raise SystemExit(1)
-user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=netauto.load_non_user_vlans())
+non_user_vlan_exclude = list(netauto.load_non_user_vlans(device_name=device_name))
+unused_vlan = netauto.load_unused_vlan()
+native_vlan_id = netauto.load_native_vlan()
+if unused_vlan:
+    non_user_vlan_exclude.append(unused_vlan)
+if native_vlan_id:
+    non_user_vlan_exclude.append(native_vlan_id)
+user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=non_user_vlan_exclude)
+
+# V-220676: 'show vtp password' instead of running-config - see the comment
+# by CHECKS['V-220681'] above for why running-config text can't be used here.
+vtp_password_output = str(vlan_discovery_connect.send_command('show vtp password'))
+
+# V-220690: 'show interface status' for live admin state - see
+# parse_interface_status()'s docstring for why running-config text alone
+# (shutdown/no shutdown presence) isn't used here.
+interface_statuses = parse_interface_status(str(vlan_discovery_connect.send_command('show interface status')))
 vlan_discovery_connect.disconnect()
 
 CHECKS['V-220684'] = lambda cfg: _dhcp_snooping_check(cfg, user_vlans)
 CHECKS['V-220686'] = lambda cfg: _vlan_range_covers_user_vlans(
     cfg, r'ip arp inspection vlan (\S+)', user_vlans, 'an `ip arp inspection vlan <list>` line'
 )
+CHECKS['V-220676'] = lambda cfg: (
+    bool(re.search(r'VTP password:\s*\S+', vtp_password_output)),
+    'verified via `show vtp password` (NX-OS omits it from running-config)'
+)
+CHECKS['V-220696'] = lambda cfg: _no_access_ports_on_native_vlan(cfg, native_vlan_id)
+CHECKS['V-220690'] = lambda cfg: _disabled_ports_on_unused_vlan(cfg, unused_vlan, interface_statuses)
 
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,
