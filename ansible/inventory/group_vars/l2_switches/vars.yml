@@ -3,6 +3,9 @@
 # ../../../../inventory.yaml exactly (same STIG rules, same network-design
 # facts) so the Ansible and Python implementations stay in sync.
 
+# Consumed by the stig_audit role - runs L2_stig_audit.py against this group.
+audit_script: L2_stig_audit.py
+
 # VLAN IDs excluded when discovering "user VLANs" for DHCP snooping/DAI
 # (V-220633/V-220635) - see non_user_vlans in inventory.yaml.
 non_user_vlans:

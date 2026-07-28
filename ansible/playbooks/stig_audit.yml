@@ -1,0 +1,12 @@
+---
+- name: Run STIG audit scripts across L2S and NX-OS switches
+  hosts: l2_switches:nxos_switches
+  gather_facts: false
+  vars_prompt:
+    - name: ssh_username
+      prompt: "SSH username"
+    - name: ssh_password
+      prompt: "SSH password"
+      private: true
+  roles:
+    - stig_audit
