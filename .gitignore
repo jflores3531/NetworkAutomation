@@ -4,6 +4,7 @@ __pycache__/
 
 backups/
 audit_logs/
+ansible/reports/
 
 # Ad-hoc command files passed to push_config.py
 commands*.txt

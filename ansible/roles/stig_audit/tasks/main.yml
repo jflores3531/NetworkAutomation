@@ -1,0 +1,34 @@
+---
+# Runs the existing *_stig_audit.py scripts (per audit_script, set in each
+# group's group_vars) against inventory_hostname and saves the report.
+# Deliberately shells out rather than reimplementing the audit logic in
+# Ansible - see ../../../README.md's "Why this exists" for why the two
+# toolchains stay independent implementations rather than one calling into
+# the other's internals.
+#
+# delegate_to: localhost because the scripts do their own Netmiko connection
+# (via netauto.py) - Ansible here is just a fan-out/report-collection driver,
+# not the thing connecting to the device.
+- name: Run {{ audit_script }} for {{ inventory_hostname }}
+  command: python3 {{ audit_script }} {{ inventory_hostname }}
+  args:
+    chdir: "{{ playbook_dir }}/../.."   # scripts assume repo root (checklist/inventory.yaml/secrets.yaml paths)
+  environment:
+    SSH_USERNAME: "{{ ssh_username }}"
+    SSH_PASSWORD: "{{ ssh_password }}"
+  register: audit_result
+  changed_when: false
+  delegate_to: localhost
+
+- name: Ensure report_dir exists
+  file:
+    path: "{{ report_dir }}"
+    state: directory
+  delegate_to: localhost
+  run_once: true
+
+- name: Save {{ inventory_hostname }} report
+  copy:
+    content: "{{ audit_result.stdout }}"
+    dest: "{{ report_dir }}/{{ inventory_hostname }}_{{ lookup('pipe', 'date +%Y%m%d') }}.txt"
+  delegate_to: localhost

@@ -1,0 +1,4 @@
+---
+# Where per-device audit reports land. Gitignored - live audit output, not
+# something to commit.
+report_dir: "{{ playbook_dir }}/../reports"
