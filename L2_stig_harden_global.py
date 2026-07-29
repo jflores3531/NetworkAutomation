@@ -65,11 +65,14 @@ VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 5', 'exec-timeout 5 0']
 # sat at IOS's un-set default (10 min, non-compliant) indefinitely.
 CONSOLE_EXEC_TIMEOUT_FIX = ['line con 0', 'exec-timeout 5 0']
 
-# V-220608: SSH encryption algorithm — includes "ip ssh version 2" too, since
-# V-220608's own audit check requires both and this makes V-220607 pass as a
-# side effect
+# V-220607/608: SSH MAC (integrity) and encryption (confidentiality) algorithms.
+# Both need "ip ssh version 2" - previously only the encryption line was pushed
+# on the mistaken assumption it would satisfy V-220607 too, but V-220607's audit
+# check looks at the separate `algorithm mac` line specifically, so it always
+# failed live until this was added.
 SSH_ENCRYPTION_FIX = [
     'ip ssh version 2',
+    'ip ssh server algorithm mac hmac-sha2-256',
     'ip ssh server algorithm encryption aes256-ctr aes192-ctr aes128-ctr',
 ]
 
@@ -237,7 +240,7 @@ if ntp_servers:
 applied_fixes = dict(BASE_FIXES)
 applied_fixes.update(OPTIONAL_FIXES)
 applied_fixes['V-220586 (unnecessary services)'] = '; '.join(UNNECESSARY_SERVICES_FIX)
-applied_fixes['V-220608 (SSH encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
+applied_fixes['V-220607/608 (SSH MAC + encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
 applied_fixes['V-220571/572/573/574/582/597/611/613 (archive logging)'] = '; '.join(ARCHIVE_LOGGING_FIX)
 applied_fixes['V-220570b/596 (VTY session limit + exec-timeout)'] = '; '.join(VTY_SESSION_LIMIT_FIX)
 applied_fixes['V-220596b (console exec-timeout)'] = '; '.join(CONSOLE_EXEC_TIMEOUT_FIX)
