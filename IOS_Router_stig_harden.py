@@ -18,6 +18,15 @@ BASE_FIXES = {
 # handled separately from the single-command BASE_FIXES
 AUX_PORT_FIX = ['line aux 0', 'no exec']
 
+# V-215688: exec-timeout on console and vty, plus the HTTP timeout-policy the
+# check text's own example lists alongside them. Pushed unconditionally like
+# CONSOLE_EXEC_TIMEOUT_FIX/VTY_SESSION_LIMIT_FIX are in the L2S/NX-OS harden
+# scripts - `ip http timeout-policy` is a no-op if the HTTP server is never
+# enabled.
+CONSOLE_EXEC_TIMEOUT_FIX = ['line con 0', 'exec-timeout 5 0']
+VTY_EXEC_TIMEOUT_FIX = ['line vty 0 4', 'exec-timeout 5 0']
+HTTP_TIMEOUT_FIX = ['ip http timeout-policy idle 300 life 180 requests 1']
+
 # Rules that need per-interface targeting and are intentionally not pushed by
 # this global-only pass
 SKIPPED_RULES = [
@@ -71,6 +80,7 @@ if ntp_servers:
 
 applied_fixes = dict(BASE_FIXES)
 applied_fixes['V-216571 (AUX port disabled)'] = '; '.join(AUX_PORT_FIX)
+applied_fixes['V-215688 (exec-timeout)'] = '; '.join(CONSOLE_EXEC_TIMEOUT_FIX + VTY_EXEC_TIMEOUT_FIX + HTTP_TIMEOUT_FIX)
 if ntp_servers:
     applied_fixes['V-215693 (NTP time sync)'] = '; '.join(
         f'ntp server {ip}' + (f' key {ntp_key_id}' if ntp_key_id else '') for ip in ntp_servers)
@@ -78,7 +88,7 @@ if ntp_key_id:
     applied_fixes['V-215698 (NTP authentication)'] = '; '.join([
         f'ntp authentication-key {ntp_key_id} md5 {ntp_key_value}', 'ntp authenticate', f'ntp trusted-key {ntp_key_id}'])
 
-commands = list(BASE_FIXES.values()) + AUX_PORT_FIX + ntp_commands
+commands = list(BASE_FIXES.values()) + AUX_PORT_FIX + CONSOLE_EXEC_TIMEOUT_FIX + VTY_EXEC_TIMEOUT_FIX + HTTP_TIMEOUT_FIX + ntp_commands
 
 # Push the hardening commands and close the session
 output = net_connect.send_config_set(commands)

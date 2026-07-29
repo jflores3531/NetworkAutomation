@@ -260,15 +260,26 @@ def _no_access_ports_on_native_vlan(cfg):
 # V-220641: disabled (shutdown) access ports must be assigned to the designated
 # unused VLAN, and that VLAN must be pruned from all trunk links (same pruning
 # logic as default_vlan_pruned_from_trunks, but for the unused VLAN instead of 1).
+# Check Content's Step 1 carries "Note: Switch ports configured for 802.1x are
+# exempt from this requirement" - unlike Discussion-only rationale (see
+# V-220696), this Note is part of Check Content itself, so a shutdown port
+# with 802.1x/MAB configured (_dot1x_mab_check's detection) is skipped rather
+# than required to sit on the unused VLAN.
 def _disabled_ports_unused_vlan_check(cfg, unused_vlan):
     if unused_vlan is None:
         return False, 'no `unused_vlan` configured in inventory.yaml'
     access, trunk = parse_switchports(cfg)
 
     bad_access = []
+    exempt_count = 0
     disabled_count = 0
     for name, block in sorted(access.items()):
         if not re.search(r'^\s*shutdown\s*$', block, re.M):
+            continue
+        has_dot1x = re.search(r'dot1x pae authenticator', block) and re.search(r'authentication port-control auto', block)
+        has_mab = re.search(r'^\s*mab\s*$', block, re.M)
+        if has_dot1x or has_mab:
+            exempt_count += 1
             continue
         disabled_count += 1
         m = re.search(r'switchport access vlan (\d+)', block)
@@ -295,7 +306,8 @@ def _disabled_ports_unused_vlan_check(cfg, unused_vlan):
     if bad_trunk:
         return False, f'VLAN {unused_vlan} not pruned from trunk(s): {"; ".join(bad_trunk)}'
 
-    return True, f'{disabled_count} disabled access port(s) correctly assigned to VLAN {unused_vlan}, pruned from all {len(trunk)} trunk port(s)'
+    exempt_note = f', {exempt_count} exempt (802.1x/MAB configured)' if exempt_count else ''
+    return True, f'{disabled_count} disabled access port(s) correctly assigned to VLAN {unused_vlan}{exempt_note}, pruned from all {len(trunk)} trunk port(s)'
 
 
 # V-220586: presence of any of these directives (not "no "-prefixed) is a finding —
@@ -365,25 +377,28 @@ def _acl_source_in_subnet(source_spec, subnet):
     return False
 
 
-def _vty_acl_block(cfg):
-    """Return (acl_name, acl_block_text) for the ACL applied via `access-class
-    ... in` under `line vty`. acl_name is None if no access-class is applied;
-    acl_block_text is None if the access-class points at an ACL that was
-    never actually defined."""
-    acl_name = None
+def _vty_acl_blocks(cfg):
+    """Return a list of (line_vty_chunk, acl_name_or_None, acl_block_or_None)
+    for EVERY 'line vty ...' stanza in the config - handles split vty ranges
+    (e.g. 'line vty 0 1' / 'line vty 2 4', a real DISA-endorsed pattern shown
+    in the checklist's own V-220570 example). The old version of this
+    function stopped at the first 'line vty' chunk that had an access-class
+    applied, silently ignoring any other vty range that lacked one - a
+    false PASS if a split range left one segment wide open."""
+    results = []
     for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
-        if chunk.startswith('line vty'):
-            m = re.search(r'access-class (\S+) in', chunk)
-            if m:
-                acl_name = m.group(1)
-                break
-    if not acl_name:
-        return None, None
-
-    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
-        if chunk.startswith(f'ip access-list extended {acl_name}'):
-            return acl_name, chunk
-    return acl_name, None
+        if not chunk.startswith('line vty'):
+            continue
+        m = re.search(r'access-class (\S+) in', chunk)
+        acl_name = m.group(1) if m else None
+        acl_block = None
+        if acl_name:
+            for c2 in re.split(r'^(?=\S)', cfg, flags=re.M):
+                if c2.startswith(f'ip access-list extended {acl_name}'):
+                    acl_block = c2
+                    break
+        results.append((chunk, acl_name, acl_block))
+    return results
 
 
 def _vty_management_acl_check(cfg, subnet_str):
@@ -391,20 +406,31 @@ def _vty_management_acl_check(cfg, subnet_str):
         return False, 'no `management_subnet` configured in inventory.yaml'
     subnet = ipaddress.ip_network(subnet_str, strict=False)
 
-    acl_name, acl_block = _vty_acl_block(cfg)
-    if not acl_name:
-        return False, 'no `access-class <name> in` found under any `line vty` block'
-    if acl_block is None:
-        return False, f'`access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found'
+    vty_blocks = _vty_acl_blocks(cfg)
+    if not vty_blocks:
+        return False, 'no `line vty` block found'
 
-    permits = re.findall(r'^\s*(?:\d+\s+)?permit ip (.+?)\s+any\s*$', acl_block, re.M)
-    if not permits:
-        return False, f'`{acl_name}` has no `permit ip <source> any` lines'
-
-    bad = [src for src in permits if not _acl_source_in_subnet(src, subnet)]
-    if bad:
-        return False, f'`{acl_name}` (via `access-class {acl_name} in`) permits source(s) outside {subnet_str}: {", ".join(bad)}'
-    return True, f'`{acl_name}` (via `access-class {acl_name} in`) permits only sources within {subnet_str}: {", ".join(permits)}'
+    problems, compliant = [], []
+    for chunk, acl_name, acl_block in vty_blocks:
+        header = chunk.splitlines()[0].strip()
+        if not acl_name:
+            problems.append(f'{header}: no `access-class <name> in` applied')
+            continue
+        if acl_block is None:
+            problems.append(f'{header}: `access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found')
+            continue
+        permits = re.findall(r'^\s*(?:\d+\s+)?permit ip (.+?)\s+any\s*$', acl_block, re.M)
+        if not permits:
+            problems.append(f'{header}: `{acl_name}` has no `permit ip <source> any` lines')
+            continue
+        bad = [src for src in permits if not _acl_source_in_subnet(src, subnet)]
+        if bad:
+            problems.append(f'{header}: `{acl_name}` permits source(s) outside {subnet_str}: {", ".join(bad)}')
+            continue
+        compliant.append(f'{header}: `{acl_name}` permits only sources within {subnet_str}: {", ".join(permits)}')
+    if problems:
+        return False, '; '.join(problems)
+    return True, '; '.join(compliant)
 
 
 # V-220581: partial coverage only - confirms the vty management ACL's
@@ -414,14 +440,26 @@ def _vty_management_acl_check(cfg, subnet_str):
 # these log entries actually reach the syslog servers (see
 # L2_stig_harden_acl.py - they don't, at `logging trap critical`).
 def _vty_acl_log_input_check(cfg):
-    acl_name, acl_block = _vty_acl_block(cfg)
-    if not acl_name:
-        return False, 'no `access-class <name> in` found under any `line vty` block'
-    if acl_block is None:
-        return False, f'`access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found'
-    if not re.search(r'^\s*(?:\d+\s+)?deny\s+ip any any log-input\s*$', acl_block, re.M):
-        return False, f'`{acl_name}` has no `deny ip any any log-input` line'
-    return True, f'`{acl_name}` has a logged trailing deny (`deny ip any any log-input`)'
+    vty_blocks = _vty_acl_blocks(cfg)
+    if not vty_blocks:
+        return False, 'no `line vty` block found'
+
+    problems, compliant = [], []
+    for chunk, acl_name, acl_block in vty_blocks:
+        header = chunk.splitlines()[0].strip()
+        if not acl_name:
+            problems.append(f'{header}: no `access-class <name> in` applied')
+            continue
+        if acl_block is None:
+            problems.append(f'{header}: `access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found')
+            continue
+        if not re.search(r'^\s*(?:\d+\s+)?deny\s+ip any any log-input\s*$', acl_block, re.M):
+            problems.append(f'{header}: `{acl_name}` has no `deny ip any any log-input` line')
+            continue
+        compliant.append(f'{header}: `{acl_name}` has a logged trailing deny (`deny ip any any log-input`)')
+    if problems:
+        return False, '; '.join(problems)
+    return True, '; '.join(compliant)
 
 
 # V-220571/572/573/574/582/597/611/613: DISA reuses the exact same evidence
@@ -465,18 +503,40 @@ def _session_limit_check(cfg):
     return False, 'missing both `ip http max-connections <n>` and `line vty ... session-limit <n>` (need at least one)'
 
 
-# V-220590/591/592/593/594: password complexity, each is one sub-command inside
-# an `aaa common-criteria policy <name>` block.
+# V-220589/590/591/592/593/594: password complexity, each is one sub-command
+# inside an `aaa common-criteria policy <name>` block.
 def _cc_policy_check(cfg, pattern, min_value, what):
+    """Each of the six sub-rules used to be checked against ANY
+    `aaa common-criteria policy` block found in config, not necessarily the
+    one actually in effect - a stale/leftover block from earlier testing
+    (e.g. missing this specific requirement in the real policy) could
+    satisfy the check even though the policy actually applied to accounts
+    doesn't meet it. Requires there be exactly one policy block; more than
+    one is treated as ambiguous (can't tell which one is in effect) rather
+    than silently picking one. Note: this project's harden script
+    (L2_stig_harden_aaa.py) doesn't currently push a
+    `username <name> common-criteria-policy <name>` line linking a specific
+    account to a specific policy (per V-220587's own Fix Text, it should) -
+    with only one policy block ever created, "exactly one block" is
+    equivalent to "the one in effect" in practice; if this project starts
+    creating multiple named policies, this check would need to correlate
+    against that username-level reference instead."""
     if 'aaa new-model' not in cfg:
         return False, 'missing `aaa new-model`'
-    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
-        if not chunk.startswith('aaa common-criteria policy'):
-            continue
-        m = re.search(pattern, chunk, re.M)
-        if m and int(m.group(1)) >= min_value:
-            return True, f'found: `{m.group(0).strip()}`'
-    return False, f'no `aaa common-criteria policy` block with {what} >= {min_value}'
+    policy_blocks = [
+        chunk for chunk in re.split(r'^(?=\S)', cfg, flags=re.M)
+        if chunk.startswith('aaa common-criteria policy')
+    ]
+    if not policy_blocks:
+        return False, 'no `aaa common-criteria policy` block found'
+    if len(policy_blocks) > 1:
+        names = [c.split()[3] if len(c.split()) > 3 else '?' for c in policy_blocks]
+        return False, f'{len(policy_blocks)} `aaa common-criteria policy` blocks found ({", ".join(names)}) - ambiguous which one is actually applied'
+    chunk = policy_blocks[0]
+    m = re.search(pattern, chunk, re.M)
+    if m and int(m.group(1)) >= min_value:
+        return True, f'found: `{m.group(0).strip()}`'
+    return False, f'the single `aaa common-criteria policy` block does not have {what} >= {min_value}'
 
 
 def _single_local_account_check(cfg):
@@ -586,27 +646,38 @@ def _exec_timeout_reason(cfg):
     if one line (most commonly console, since IOS never prints an unset line
     at its own default) is left unconfigured as long as some other line is
     already compliant. Checks console and vty as separate, required scopes
-    instead."""
-    con_ok = con_match = vty_ok = vty_match = None
+    instead.
+    ALL vty blocks must be individually compliant, not just one - the old
+    version ORed across multiple vty blocks (e.g. a split 'line vty 0 1' /
+    'line vty 2 4' range), so a device with only one segment configured
+    still reported PASS even though the other segment never terminates a
+    session, contradicting the check text's literal 'terminate ALL network
+    connections' requirement."""
+    con_ok = con_match = None
+    vty_results = []
     for chunk in re.split(r'^(?=line \S)', cfg, flags=re.M):
         header = chunk.splitlines()[0] if chunk else ''
         if header.startswith('line con'):
             con_ok, con_match = _line_exec_timeout_ok(chunk)
         elif header.startswith('line vty'):
-            # OR across multiple vty blocks (e.g. "vty 0 1"/"vty 2 4" split)
-            # - any one compliant vty block satisfies the vty side.
             ok, match = _line_exec_timeout_ok(chunk)
-            vty_ok = bool(vty_ok) or ok
-            vty_match = vty_match or match
+            vty_results.append((header.strip(), ok, match))
+
+    vty_ok = bool(vty_results) and all(ok for _, ok, _ in vty_results)
 
     if con_ok and vty_ok:
-        return True, f'compliant on console (`{con_match}`) and vty (`{vty_match}`)'
+        vty_summary = ', '.join(f'{h} (`{m}`)' for h, _, m in vty_results)
+        return True, f'compliant on console (`{con_match}`) and vty: {vty_summary}'
 
     missing = []
     if not con_ok:
         missing.append('console (`line con 0`): ' + (f'non-compliant (`{con_match}`)' if con_match else 'no exec-timeout set'))
     if not vty_ok:
-        missing.append('vty: ' + (f'non-compliant (`{vty_match}`)' if vty_match else 'no exec-timeout set'))
+        if not vty_results:
+            missing.append('vty: no `line vty` block found')
+        else:
+            bad = [f'{h}: ' + (f'non-compliant (`{m}`)' if m else 'no exec-timeout set') for h, ok, m in vty_results if not ok]
+            missing.append('vty: ' + '; '.join(bad))
     return False, '; '.join(missing)
 
 
@@ -663,6 +734,90 @@ def _no_management_on_default_vlan(cfg):
     return True, 'no `interface Vlan1` found in config - default VLAN not used for management'
 
 
+def _snmpv3_user_live_check(show_snmp_user_output, require_priv):
+    """V-220604/605: confirmed live on S1 that Cisco IOS classic never writes
+    SNMPv3 user config to `show running-config` at all - `snmp-server group
+    ... v3 priv` showed, but no `snmp-server user ...` line ever appeared
+    despite `show snmp user` confirming SHA auth + AES128 privacy were
+    genuinely active. Localized/encrypted against the SNMP engine ID, same
+    category of platform quirk as the VTP password (_vtp_password_check),
+    so this needs live `show snmp user` output instead of running-config text."""
+    auth_m = re.search(r'Authentication Protocol:\s*(\S+)', show_snmp_user_output, re.I)
+    if not auth_m or auth_m.group(1).lower() == 'none':
+        return False, 'no SNMPv3 user with an authentication protocol found (`show snmp user`)'
+    if 'sha' not in auth_m.group(1).lower():
+        return False, f'SNMPv3 user authentication protocol is not SHA: `{auth_m.group(0)}`'
+    if not require_priv:
+        return True, f'SNMPv3 user authenticated with SHA (`show snmp user`): `{auth_m.group(0)}`'
+    priv_m = re.search(r'Privacy Protocol:\s*(\S+)', show_snmp_user_output, re.I)
+    if not priv_m or 'aes' not in priv_m.group(1).lower():
+        detail = f'`{priv_m.group(0)}`' if priv_m else 'no `Privacy Protocol` line'
+        return False, f'SNMPv3 user auth is SHA but privacy protocol is not AES: {detail}'
+    return True, f'SNMPv3 user with SHA auth + AES privacy (`show snmp user`): `{auth_m.group(0)}`, `{priv_m.group(0)}`'
+
+
+def _ntp_auth_check(cfg):
+    """V-220606: Check Content's own text: "Cisco IOS is limited to MD5 for
+    NTP authentication, and incurs a permanent finding as it is not FIPS
+    compliant." No IOS configuration can ever satisfy this rule, so it
+    always reports FAIL regardless of config - the old version returned
+    True once all four MD5-based commands were present anywhere in config,
+    a false PASS against the checklist's own stated verdict (same shape as
+    the NX-OS V-220502 bug fixed today). Also verifies the MD5 mitigation's
+    key IDs actually correlate across authentication-key/trusted-key/server
+    lines (not just that each piece exists independently, which the old
+    `_all_of`-based check didn't confirm) when reporting whether the
+    best-effort mitigation is genuinely in place."""
+    key_ids_authenticated = set(re.findall(r'ntp authentication-key (\d+) md5 \S+', cfg))
+    key_ids_trusted = set(re.findall(r'ntp trusted-key (\d+)', cfg))
+    key_ids_used_by_servers = set(re.findall(r'ntp server \S+ key (\d+)', cfg))
+    correlated = key_ids_authenticated & key_ids_trusted & key_ids_used_by_servers
+    if 'ntp authenticate' in cfg and correlated:
+        mitigation = f'MD5-based NTP authentication is configured as the best available mitigation (key id(s) {", ".join(sorted(correlated))} correlated across authentication-key/trusted-key/server)'
+    else:
+        mitigation = 'MD5-based NTP authentication is not fully configured (missing `ntp authenticate`, or no key id is consistently used across the authentication-key/trusted-key/server lines)'
+    return False, (
+        'permanent finding on IOS - Check Text: "Cisco IOS is limited to MD5 for NTP authentication, '
+        f'and incurs a permanent finding as it is not FIPS compliant." {mitigation}.'
+    )
+
+
+def _ssh_algorithm_fips_check(cfg, algo_type, required_substring, algo_desc):
+    """V-220607/608: the old regexes (`algorithm mac\\s+\\S*hmac-sha2`,
+    `algorithm encryption\\s+\\S*aes`) can't cross a space, so they only
+    matched when the required algorithm happened to be listed FIRST in the
+    command - IOS accepts algorithms in any order. `ip ssh server algorithm
+    mac hmac-sha1 hmac-sha2-256` has a compliant algorithm present and
+    negotiable but would false-FAIL under the old regex. Checks for the
+    required substring anywhere in the algorithm list instead."""
+    if 'ip ssh version 2' not in cfg:
+        return False, 'missing `ip ssh version 2`'
+    m = re.search(rf'^ip ssh server algorithm {algo_type}\s+(.+)$', cfg, re.M)
+    if not m:
+        return False, f'missing `ip ssh server algorithm {algo_type} ...`'
+    algos = m.group(1).strip()
+    if required_substring in algos:
+        return True, f'`ip ssh version 2` + FIPS-validated {algo_desc}: `ip ssh server algorithm {algo_type} {algos}`'
+    return False, f'`ip ssh server algorithm {algo_type} {algos}` does not include a FIPS-validated ({required_substring}) algorithm'
+
+
+# V-220639: check text's own examples show UDLD can be enabled globally
+# ("udld enable" in global config) OR per-interface ("udld port" under an
+# interface block) - the old check only recognized the global form, false-
+# failing a device that used per-interface `udld port`/`udld port aggressive`.
+def _udld_check(cfg):
+    if re.search(r'^udld (enable|aggressive)', cfg, re.M):
+        return True, 'enabled globally: `udld enable`/`udld aggressive`'
+    per_interface = []
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if m and re.search(r'^\s*udld port\b', chunk, re.M):
+            per_interface.append(m.group(1))
+    if per_interface:
+        return True, f'enabled per-interface (`udld port`) on: {", ".join(sorted(per_interface))}'
+    return False, 'no `udld enable`/`udld aggressive` globally and no `udld port` on any interface'
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Rules with no entry here need external infrastructure (RADIUS, syslog,
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
@@ -700,14 +855,9 @@ CHECKS = {
     # snooping enabled on VLAN 1,10 while the real user VLAN 55 has none).
     'V-220637': lambda cfg: _absence(cfg, r'no ip igmp snooping', what='`no ip igmp snooping` (would disable it)'),
     'V-220638': lambda cfg: _presence(cfg, r'spanning-tree mode rapid-pvst', what='`spanning-tree mode rapid-pvst`'),
-    'V-220639': lambda cfg: _presence(cfg, r'udld (enable|aggressive)', what='`udld enable` or `udld aggressive`'),
+    'V-220639': _udld_check,
     'V-220601': lambda cfg: _count_distinct(cfg, r'^ntp server (\S+)', 2, 'NTP server(s)'),
-    'V-220606': lambda cfg: _all_of(cfg, [
-        ('ntp authenticate', r'ntp authenticate'),
-        ('ntp authentication-key <id> md5 <value>', r'ntp authentication-key \d+ md5 \S+'),
-        ('ntp trusted-key <id>', r'ntp trusted-key \d+'),
-        ('ntp server <ip> key <id>', r'ntp server \S+ key \d+'),
-    ]),
+    'V-220606': _ntp_auth_check,
 
     # --- NDM (Network Device Management) ---
     'V-220571': _archive_logging_enabled,
@@ -737,8 +887,6 @@ CHECKS = {
     ]),
     'V-220576': _login_block_check,
     'V-220625': lambda cfg: _presence(cfg, r'^mls qos\s*$', re.M, what='`mls qos`'),
-    'V-220604': lambda cfg: _presence(cfg, r'snmp-server group \S+ v3 (auth|priv)', what='an `snmp-server group <name> v3 auth` or `v3 priv` line'),
-    'V-220605': lambda cfg: _presence(cfg, r'snmp-server group \S+ v3 priv', what='an `snmp-server group <name> v3 priv` line'),
     'V-220577': lambda cfg: _presence(cfg, r'banner (login|motd)', what='a `banner login` or `banner motd`'),
     'V-220589': lambda cfg: _cc_policy_check(cfg, r'^\s*min-length (\d+)', 15, '`min-length <n>`'),
     'V-220595': lambda cfg: _all_of(cfg, [
@@ -751,11 +899,8 @@ CHECKS = {
     'V-220584': _audit_info_protection_check,
     'V-220585': _audit_info_protection_check,
     'V-220644': _no_management_on_default_vlan,
-    'V-220607': lambda cfg: _presence(cfg, r'ip ssh version 2', what='`ip ssh version 2`'),
-    'V-220608': lambda cfg: _all_of(cfg, [
-        ('ip ssh version 2', r'ip ssh version 2'),
-        ('ip ssh server algorithm encryption ...aes...', r'ip ssh server algorithm encryption\s+\S*aes'),
-    ]),
+    'V-220607': lambda cfg: _ssh_algorithm_fips_check(cfg, 'mac', 'hmac-sha2', 'MAC (HMAC integrity)'),
+    'V-220608': lambda cfg: _ssh_algorithm_fips_check(cfg, 'encryption', 'aes', 'encryption algorithm'),
     # V-220620: matches "logging host x.x.x.x" or the bare legacy "logging x.x.x.x"
     # form. Deliberately excludes non-IP "logging ..." directives (buffered, trap,
     # on, console, etc.) by requiring the token after "logging"/"logging host" to
@@ -780,18 +925,33 @@ device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 username, password = netauto.get_credentials()
 
 # Discover genuine user VLANs (excludes management/servers/unused VLANs from
-# inventory.yaml's non_user_vlans) so V-220633/V-220635 can verify DHCP
-# snooping/DAI actually cover them, not just that some VLAN list exists. Also
-# discovers the live STP root port(s) for V-220629 (Root Guard must never be
-# checked/pushed there), and the live VTP password for V-220624 (never appears
-# in running-config, see _vtp_password_check). Uses a separate connection
-# since run_stig_audit manages its own for running-config.
+# inventory.yaml's non_user_vlans/non_user_vlans_by_device, plus unused_vlan/
+# native_vlan) so V-220633/V-220635 can verify DHCP snooping/DAI actually
+# cover them, not just that some VLAN list exists. Same exclude set
+# L2_stig_harden_global.py uses - without also excluding unused_vlan/native_vlan
+# here, VLAN 999 (native) and VLAN 1000 (unused, no live hosts) get
+# misclassified as uncovered user VLANs once they exist in the database, the
+# same bug already fixed for NXOS_stig_audit.py's V-220684/686 (confirmed live
+# on S1: V-220635 false-failed over VLAN 1000 not being in the DAI VLAN list).
+# Also discovers the live STP root port(s) for V-220629 (Root Guard must never
+# be checked/pushed there), the live VTP password for V-220624 (never appears
+# in running-config, see _vtp_password_check), and the live SNMPv3 user info
+# for V-220604/605 (same platform quirk, see _snmpv3_user_live_check). Uses a
+# separate connection since run_stig_audit manages its own for running-config.
 vlan_discovery_connect = netauto.connect(device_name, device_info, username, password)
 if vlan_discovery_connect is None:
     raise SystemExit(1)
-user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=netauto.load_non_user_vlans())
+non_user_vlan_exclude = list(netauto.load_non_user_vlans(device_name=device_name))
+unused_vlan = netauto.load_unused_vlan()
+native_vlan_id = netauto.load_native_vlan()
+if unused_vlan:
+    non_user_vlan_exclude.append(unused_vlan)
+if native_vlan_id:
+    non_user_vlan_exclude.append(native_vlan_id)
+user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=non_user_vlan_exclude)
 root_ports = stig_common.discover_root_port_interfaces(vlan_discovery_connect)
 vtp_password_output = str(vlan_discovery_connect.send_command('show vtp password'))
+snmp_user_output = str(vlan_discovery_connect.send_command('show snmp user'))
 vlan_discovery_connect.disconnect()
 
 CHECKS['V-220633'] = lambda cfg: _dhcp_snooping_check(cfg, user_vlans)
@@ -800,6 +960,8 @@ CHECKS['V-220635'] = lambda cfg: _vlan_range_covers_user_vlans(
 )
 CHECKS['V-220629'] = lambda cfg: _root_guard_check(cfg, root_ports)
 CHECKS['V-220624'] = lambda cfg: _vtp_password_check(vtp_password_output)
+CHECKS['V-220604'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=False)
+CHECKS['V-220605'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=True)
 
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,

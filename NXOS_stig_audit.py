@@ -4,6 +4,7 @@ STIG rules in New NXOS Checklist.cklb, reporting PASS/FAIL for the rules that
 can be checked from config text alone."""
 
 import argparse
+import ipaddress
 import re
 import netauto
 import stig_common
@@ -222,6 +223,40 @@ def _disabled_ports_on_unused_vlan(cfg, unused_vlan, interface_statuses):
     return True, f'all {checked} disabled switchport-capable interface(s) assigned to unused VLAN {unused_vlan}'
 
 
+def _default_vlan_not_for_mgmt(cfg):
+    """V-220693. Check Content's literal finding condition: "If the default
+    VLAN is being used for management access to the switch, this is a
+    finding" - its own example shows a bare 'interface Vlan1' (no config
+    under it) as compliant, vs. 'interface Vlan44' carrying the actual
+    management IP. Checks for an 'ip address' line specifically in Vlan1's
+    block, not just any config there."""
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        if re.match(r'interface Vlan1\s*$', chunk, re.M):
+            if re.search(r'^\s*ip address \S+', chunk, re.M):
+                return False, 'interface Vlan1 has an IP address configured - default VLAN used for management'
+            return True, 'interface Vlan1 has no IP address configured'
+    return None, 'not applicable - no interface Vlan1 found in config'
+
+
+def _snmp_v3_fips_check(cfg):
+    """V-220500/501: both rules share the identical Check/Fix Text example
+    ('snmp-server user NETOPS auth sha ... priv aes-128 ...') under
+    different CCI categories (auth HMAC vs. priv encryption) - one check
+    covers both, same shape as _ssh_macs_fips_check. Checks every
+    'snmp-server user' line, not just the first - confirmed live on
+    NXCore1 that a pre-existing default 'admin'/'network-admin' user (MD5
+    auth, not SHA) sorts before the pushed compliant user in running-config,
+    so a first-match-only search reports the wrong user's line and false
+    FAILs even though a compliant user exists."""
+    lines = [m.group(0).strip() for m in re.finditer(r'^snmp-server user \S+.*$', cfg, re.M)]
+    if not lines:
+        return False, 'no `snmp-server user` line found'
+    for line in lines:
+        if 'auth sha' in line and 'priv aes-128' in line:
+            return True, f'FIPS-validated SNMPv3 auth/priv configured: `{line}`'
+    return False, f'no `snmp-server user` line uses both auth sha and priv aes-128 - found: {"; ".join(f"`{l}`" for l in lines)}'
+
+
 def _vlan_in_spec(vlan, spec):
     """True if vlan appears in a comma-separated list of VLAN IDs/ranges, e.g. '2-4094'."""
     for part in spec.split(','):
@@ -389,6 +424,240 @@ def _ssh_login_attempts_check(cfg):
     return False, f'ssh login-attempts {attempts} does not equal the required value of 3'
 
 
+def _igmp_snooping_check(cfg):
+    """V-220688: 'no ip igmp snooping' as a bare substring also matches inside
+    unrelated NX-OS subcommands that start with the same prefix but disable a
+    different feature entirely - 'no ip igmp snooping querier', 'no ip igmp
+    snooping report-suppression', 'no ip igmp snooping proxy', etc. don't
+    disable snooping itself, so a device using any of those false-failed.
+    Check text's last sentence requires snooping enabled "for each VLAN" with
+    no stated exemption (same literal-reading discipline as V-220696's native
+    VLAN check), so any per-VLAN disable is still a finding regardless of
+    which VLAN it targets."""
+    if re.search(r'^no ip igmp snooping\s*$', cfg, re.M):
+        return False, 'IGMP snooping disabled globally: `no ip igmp snooping`'
+    per_vlan_disabled = re.findall(r'^no ip igmp snooping vlan (\d+)', cfg, re.M)
+    if per_vlan_disabled:
+        return False, f'IGMP snooping disabled on VLAN(s): {", ".join(sorted(per_vlan_disabled, key=int))}'
+    return True, 'IGMP snooping enabled globally (default), no global or per-VLAN `no ip igmp snooping` override found'
+
+
+def _udld_check(cfg):
+    """V-220689: Fix Text's only command is 'feature udld' - confirmed live
+    on NXCore1 that 'udld enable' isn't valid NX-OS syntax at all ("%
+    Invalid command"). UDLD is on by default for every fiber interface once
+    the feature itself is enabled, per the STIG's own note - no separate
+    enable line needed. But Check Content's own compliant-example shows a
+    second, independent form: per-interface 'udld disabled' can override
+    that global default on a specific port - a plain 'feature udld in cfg'
+    check missed that override entirely, a false PASS if any interface has
+    it. Doesn't verify the Check Content's "has fiber optic interconnections
+    with neighbors" precondition (not determinable from running-config text
+    alone - would need live transceiver/interface-type data) - pushing UDLD
+    unconditionally is harmless even absent fiber, so this stays automated
+    rather than downgraded to NOT AUTOMATED for that unverifiable precondition."""
+    if 'feature udld' not in cfg:
+        return False, 'missing `feature udld`'
+    offenders = []
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if m and re.search(r'^\s*udld disabled\s*$', chunk, re.M):
+            offenders.append(m.group(1))
+    if offenders:
+        return False, f'`feature udld` enabled globally but overridden with `udld disabled` on: {", ".join(sorted(offenders))}'
+    return True, '`feature udld` enabled globally, no per-interface `udld disabled` override found'
+
+
+def _ntp_auth_check(cfg):
+    """V-220502: Check Content's own text is explicit: "Cisco NX-OS is
+    limited to MD5 for NTP authentication, and incurs a permanent finding
+    as it is not FIPS compliant." No NX-OS configuration can ever satisfy
+    this rule, so it always reports FAIL regardless of config - the old
+    version of this check returned True once MD5-based auth commands were
+    present, which is a genuine false PASS against the checklist's own
+    stated verdict. Still verifies whether the MD5-based mitigation (still
+    DISA's own Fix Text recommendation, despite the permanent-finding note)
+    is actually in place, since that's the practical remediation even
+    though it can never achieve compliance - reported as context, not as a
+    pass condition. '.*' between the server and 'key <id>' below - confirmed
+    live on NXCore1 that NX-OS auto-inserts 'use-vrf default' between them
+    ('ntp server <ip> use-vrf default key <id>'), so a tight '\\S+ key \\d+'
+    adjacency never matches even when correctly configured."""
+    md5_configured = (
+        'ntp authenticate' in cfg
+        and bool(re.search(r'ntp authentication-key \d+ md5 \S+', cfg))
+        and bool(re.search(r'ntp trusted-key \d+', cfg))
+        and bool(re.search(r'^ntp server \S+.*\bkey \d+', cfg, re.M))
+    )
+    mitigation = (
+        'MD5-based NTP authentication is configured as the best available mitigation'
+        if md5_configured else
+        'MD5-based NTP authentication is not even configured'
+    )
+    return False, (
+        'permanent finding on NX-OS - Check Text: "Cisco NX-OS is limited to MD5 for NTP authentication, '
+        f'and incurs a permanent finding as it is not FIPS compliant." {mitigation}.'
+    )
+
+
+def _dot1x_mab_check(cfg):
+    """V-220675/679: identical Check Content example ('dot1x pae authenticator'
+    + 'dot1x port-control auto' on every host-facing access port) under
+    different CCI categories - one check covers both, same shape as L2S's
+    V-220623 (_dot1x_mab_check there). NX-OS's MAB indicator is the
+    interface subcommand 'dot1x mac-auth-bypass' (not IOS's standalone
+    'mab') - not shown in this rule's own Check Content example (only the
+    802.1x form is), so this is inferred from real NX-OS dot1x command
+    syntax rather than lifted directly from the checklist text; worth
+    confirming live if NXCore1 ever needs MAB rather than full 802.1x.
+    exclude_vlan=unused_vlan, same as sibling host-facing-only checks
+    V-220683/685/687/691 (_all_access_ports_have) - confirmed live on
+    NXCore1 that parse_switchports()'s access bucket also includes the 59
+    disabled ports parked on the black-hole VLAN (they carry an explicit
+    'switchport access vlan <unused_vlan>' line too), which don't need
+    endpoint authentication since nothing is plugged into them."""
+    access, _ = parse_switchports(cfg)
+    if unused_vlan:
+        access = {
+            name: block for name, block in access.items()
+            if not re.search(rf'^\s*switchport access vlan {unused_vlan}\s*$', block, re.M)
+        }
+    if not access:
+        return None, 'not applicable - no access-classified switchports found in config'
+    missing = []
+    for name, block in sorted(access.items()):
+        has_dot1x = re.search(r'dot1x pae authenticator', block) and re.search(r'dot1x port-control auto', block)
+        has_mab = re.search(r'dot1x mac-auth-bypass', block)
+        if not (has_dot1x or has_mab):
+            missing.append(name)
+    if missing:
+        return False, f'missing 802.1x (`dot1x pae authenticator` + `dot1x port-control auto`) or MAB (`dot1x mac-auth-bypass`) on: {", ".join(missing)}'
+    return True, f'802.1x or MAB present on all {len(access)} access port(s): {", ".join(sorted(access))}'
+
+
+# V-220513: at least 2 RADIUS servers, actually used as the primary auth source
+# - same reasoning as L2S's V-220617 (_radius_redundancy_check there), adapted
+# to NX-OS's 'aaa group server radius <name>' / 'server <ip>' block syntax
+# shown in this rule's own Check Content example.
+def _radius_redundancy_check(cfg):
+    if not re.search(r'^aaa authentication login \S+ group \S+', cfg, re.M):
+        return False, 'missing an `aaa authentication login ... group <name> ...` line using a RADIUS group as the primary source'
+    legacy_servers = re.findall(r'^radius-server host (\S+)', cfg, re.M)
+    modern_servers = []
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if chunk.startswith('aaa group server radius'):
+            modern_servers += re.findall(r'^\s*server (\S+)', chunk, re.M)
+    servers = sorted(set(legacy_servers + modern_servers))
+    if len(servers) >= 2:
+        return True, f'found {len(servers)} RADIUS server(s): {", ".join(servers)}'
+    if servers:
+        return False, f'only {len(servers)} of 2+ required RADIUS server(s) found: {", ".join(servers)}'
+    return False, 'no RADIUS servers found (checked `radius-server host` and `aaa group server radius` `server` lines - need 2+)'
+
+
+def _acl_source_in_subnet_nxos(source_spec, subnet):
+    """NX-OS ACL source syntax is CIDR-based ('10.1.48.0/24', 'host <ip>',
+    'any'), unlike IOS's wildcard-mask form - see L2_stig_audit.py's
+    _acl_source_in_subnet for the IOS equivalent this mirrors."""
+    source_spec = source_spec.strip()
+    if source_spec == 'any':
+        return False
+    m = re.match(r'host (\S+)$', source_spec)
+    if m:
+        try:
+            return ipaddress.ip_address(m.group(1)) in subnet
+        except ValueError:
+            return False
+    try:
+        acl_net = ipaddress.ip_network(source_spec, strict=False)
+        return acl_net.subnet_of(subnet)
+    except ValueError:
+        return False
+
+
+def _mgmt_acl_check(cfg, subnet_str):
+    """V-220479: applied either via 'line vty' + 'access-class <name> in'
+    (classic, first Check Content example) or 'interface mgmt0' +
+    'ip access-group <name> in' (NX-OS v8+, the rule's own second example) -
+    accepts either. Same intent as L2S's V-220575 (_vty_management_acl_check
+    there), adapted to NX-OS's CIDR-based ACL syntax."""
+    if not subnet_str:
+        return False, 'no `management_subnet` configured in inventory.yaml'
+    subnet = ipaddress.ip_network(subnet_str, strict=False)
+
+    acl_name = None
+    m = re.search(r'^line vty\b.*\n(?:.*\n)*?\s*access-class (\S+) in', cfg, re.M)
+    if m:
+        acl_name = m.group(1)
+    else:
+        m = re.search(r'^interface mgmt0\s*\n(?:.*\n)*?\s*ip access-group (\S+) in', cfg, re.M)
+        if m:
+            acl_name = m.group(1)
+    if not acl_name:
+        return False, 'no `access-class <name> in` on `line vty`, or `ip access-group <name> in` on `interface mgmt0`'
+
+    acl_block = None
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if chunk.startswith(f'ip access-list {acl_name}'):
+            acl_block = chunk
+            break
+    if acl_block is None:
+        return False, f'ACL `{acl_name}` applied but no `ip access-list {acl_name}` block found'
+
+    permits = re.findall(r'^\s*\d+\s+permit ip (host \S+|\S+) any', acl_block, re.M)
+    if not permits:
+        return False, f'`{acl_name}` has no `permit ip <source> any` lines'
+    bad = [src for src in permits if not _acl_source_in_subnet_nxos(src, subnet)]
+    if bad:
+        return False, f'`{acl_name}` permits source(s) outside {subnet_str}: {", ".join(bad)}'
+    return True, f'`{acl_name}` permits only sources within {subnet_str}: {", ".join(permits)}'
+
+
+def _root_guard_check(cfg, root_ports):
+    """V-220680: same reasoning as L2S's V-220629 (_root_guard_check there) -
+    Root Guard belongs on trunk ports connecting to other switches, never on
+    this switch's own STP root port toward the root bridge (forcing that
+    port into root-inconsistent/blocking state would be a real outage risk)."""
+    _, trunk = parse_switchports(cfg)
+    eligible = sorted(name for name in trunk if name not in root_ports)
+    if not eligible:
+        return True, (
+            "no eligible trunk ports - every trunk port is this switch's STP root port "
+            'toward the root bridge, and Root Guard must not be applied there'
+        )
+    missing = [name for name in eligible if not re.search(r'spanning-tree guard root', trunk[name])]
+    if missing:
+        return False, (
+            f'missing `spanning-tree guard root` on: {", ".join(missing)} '
+            f'(root port(s) excluded from this check: {", ".join(sorted(root_ports)) or "none"})'
+        )
+    return True, f'`spanning-tree guard root` present on all {len(eligible)} eligible trunk port(s): {", ".join(eligible)}'
+
+
+def _aaa_accounting_check(cfg):
+    """Shared by V-220475/476/477/478/482/485/494/495/506/507/509 - all
+    eleven rules share the identical Check Content pattern (verify `aaa
+    accounting default group <name>` is configured, and that group has a
+    real AAA server behind it) under different CCI categories (account
+    creation/modification/disabling/removal/enabling, admin activity,
+    config-change logging, privilege modification/deletion, logon success/
+    failure, privileged activities). NX-OS reports all of these as
+    accounting records sent to the same AAA server group, so one check
+    covers all eleven - same reuse pattern as L2S's
+    _audit_info_protection_check for V-220583/584/585."""
+    m = re.search(r'^aaa accounting default group (\S+)', cfg, re.M)
+    if not m:
+        return False, 'missing `aaa accounting default group <name>` line'
+    group_name = m.group(1)
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if chunk.startswith(f'aaa group server radius {group_name}'):
+            servers = re.findall(r'^\s*server (\S+)', chunk, re.M)
+            if servers:
+                return True, f'`aaa accounting default group {group_name}` configured, with {len(servers)} server(s): {", ".join(servers)}'
+            return False, f'`aaa accounting default group {group_name}` configured, but `aaa group server radius {group_name}` block has no `server` lines'
+    return False, f'`aaa accounting default group {group_name}` configured, but no matching `aaa group server radius {group_name}` block found'
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Rules with no entry here need external infrastructure (RADIUS, syslog,
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
@@ -422,12 +691,8 @@ CHECKS = {
     # discovering the device's genuine user VLANs — a plain presence check can't
     # tell "configured for the wrong VLANs" from "configured correctly" (e.g.
     # snooping enabled on VLAN 1,10 while the real user VLAN has none).
-    'V-220688': lambda cfg: 'no ip igmp snooping' not in cfg,
-    # Fix Text's only command is 'feature udld' - confirmed live on NXCore1
-    # that 'udld enable' isn't valid NX-OS syntax at all ("% Invalid command").
-    # UDLD is on by default for every fiber interface once the feature itself
-    # is enabled, per the STIG's own note - no separate enable line needed.
-    'V-220689': lambda cfg: 'feature udld' in cfg,
+    'V-220688': _igmp_snooping_check,
+    'V-220689': _udld_check,
     # No 'feature ntp' requirement here, unlike V-220689/676/684's feature
     # checks - confirmed live on NXCore1 that NTP isn't gated behind an
     # explicit feature toggle on this platform/image ('feature ntp' pushes
@@ -445,16 +710,7 @@ CHECKS = {
     'V-220488': _ssh_macs_fips_check,
     'V-220503': _ssh_macs_fips_check,
     'V-220498': lambda cfg: len(set(re.findall(r'^ntp server (\S+)', cfg, re.M))) >= 2,
-    'V-220502': lambda cfg: (
-        'ntp authenticate' in cfg
-        and bool(re.search(r'ntp authentication-key \d+ md5 \S+', cfg))
-        and bool(re.search(r'ntp trusted-key \d+', cfg))
-        # '.*' between the server and 'key <id>' - confirmed live on NXCore1
-        # that NX-OS auto-inserts 'use-vrf default' between them
-        # ('ntp server <ip> use-vrf default key <id>'), so a tight
-        # '\S+ key \d+' adjacency never matches even when correctly configured.
-        and bool(re.search(r'^ntp server \S+.*\bkey \d+', cfg, re.M))
-    ),
+    'V-220502': _ntp_auth_check,
     # V-220499 (log time stamps mappable to UTC/GMT) is deliberately left out: UTC
     # is the default zone, so the checklist itself notes "clock timezone" may not
     # appear in the config even when compliant. Its absence doesn't indicate a
@@ -468,6 +724,39 @@ CHECKS = {
     'V-220491': _password_strength_check,
     'V-220492': _password_strength_check,
     'V-220493': _exec_timeout_check,
+    'V-220693': _default_vlan_not_for_mgmt,
+    'V-220500': _snmp_v3_fips_check,
+    'V-220501': _snmp_v3_fips_check,
+    'V-220675': _dot1x_mab_check,
+    'V-220679': _dot1x_mab_check,
+    'V-220513': _radius_redundancy_check,
+    'V-220479': lambda cfg: _mgmt_acl_check(cfg, netauto.load_management_subnet()),
+    # V-220487 (single local fallback account) is deliberately left NOT AUTOMATED
+    # on NX-OS, unlike L2S's V-220587 - confirmed live on NXCore1 that NX-OS ties
+    # every CLI username to an auto-generated SNMPv3 credential (both `admin` and
+    # an explicitly-provisioned SNMPv3 user show up in both `show running-config`
+    # `username`/`snmp-server user` lines AND `show user-account`), so there's no
+    # config-text or live-command signal that reliably separates "real" login
+    # accounts from SNMP-only shadow entries. Don't re-attempt a heuristic here
+    # without new evidence - two attempts (cross-referencing snmp-server user
+    # names, then the `username <name> passphrase lifetime` line) were tried and
+    # reverted; Jorge explicitly chose NOT AUTOMATED over a single-example guess.
+    'V-220475': _aaa_accounting_check,
+    'V-220476': _aaa_accounting_check,
+    'V-220477': _aaa_accounting_check,
+    'V-220478': _aaa_accounting_check,
+    'V-220482': _aaa_accounting_check,
+    'V-220485': _aaa_accounting_check,
+    'V-220494': _aaa_accounting_check,
+    'V-220495': _aaa_accounting_check,
+    'V-220506': _aaa_accounting_check,
+    'V-220507': _aaa_accounting_check,
+    'V-220509': _aaa_accounting_check,
+    # V-220510: distinct from the aaa-accounting group above - Check Content's
+    # example is a plain presence check on 'logging level authpri(v) 6', not
+    # the accounting-record mechanism. Checklist itself misspells it 'authpri'
+    # in Check Content but 'authpriv' in Fix Text - accepts either.
+    'V-220510': lambda cfg: bool(re.search(r'^logging level authpriv? 6', cfg, re.M)),
 }
 
 # Parse the target device from the command line
@@ -513,6 +802,11 @@ vtp_password_output = str(vlan_discovery_connect.send_command('show vtp password
 # parse_interface_status()'s docstring for why running-config text alone
 # (shutdown/no shutdown presence) isn't used here.
 interface_statuses = parse_interface_status(str(vlan_discovery_connect.send_command('show interface status')))
+
+# V-220680: same live STP root-port discovery L2_stig_audit.py uses for
+# V-220629 - stig_common.discover_root_port_interfaces() parses 'show
+# spanning-tree' generically, no NX-OS-specific handling needed.
+root_ports = stig_common.discover_root_port_interfaces(vlan_discovery_connect)
 vlan_discovery_connect.disconnect()
 
 CHECKS['V-220684'] = lambda cfg: _dhcp_snooping_check(cfg, user_vlans)
@@ -525,6 +819,7 @@ CHECKS['V-220676'] = lambda cfg: (
 )
 CHECKS['V-220696'] = lambda cfg: _no_access_ports_on_native_vlan(cfg, native_vlan_id)
 CHECKS['V-220690'] = lambda cfg: _disabled_ports_on_unused_vlan(cfg, unused_vlan, interface_statuses)
+CHECKS['V-220680'] = lambda cfg: _root_guard_check(cfg, root_ports)
 
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,

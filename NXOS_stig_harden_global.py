@@ -176,6 +176,18 @@ secrets = netauto.load_secrets()
 vtp_password = str(secrets.get('vtp_password') or '').strip()
 vtp_domain = netauto.load_vtp_domain()
 
+# SNMPv3 auth/priv passwords (V-220500/501) come from secrets.yaml - same
+# snmpv3.auth_password/priv_password keys L2_stig_harden_global.py uses.
+# Config-only push - no SNMP monitoring station in this lab to actually poll
+# it, same as the L2S side. NX-OS's own syntax needs no separate
+# 'snmp-server group ... v3 priv' step unlike IOS - the Check Text's own
+# example creates just the user, defaulting to NX-OS's built-in
+# 'network-operator' group when none is given.
+SNMPV3_USER = 'SNMPV3_USER'
+snmpv3 = secrets.get('snmpv3') or {}
+snmp_auth_password = str(snmpv3.get('auth_password') or '').strip()
+snmp_priv_password = str(snmpv3.get('priv_password') or '').strip()
+
 # Connect, bailing out if it fails
 net_connect = netauto.connect(device_name, device_info, username, password)
 if net_connect is None:
@@ -270,8 +282,14 @@ if ntp_key_id:
         f'ntp authentication-key {ntp_key_id} md5 {ntp_key_value}', 'ntp authenticate', f'ntp trusted-key {ntp_key_id}'])
 if syslog_servers:
     applied_fixes['V-220516 (syslog servers)'] = '; '.join(syslog_commands)
+if snmp_auth_password and snmp_priv_password:
+    applied_fixes['V-220500/501 (SNMPv3 auth/priv)'] = (
+        f'snmp-server user {SNMPV3_USER} auth sha ... priv aes-128 ... (defaults to the built-in network-operator group)'
+    )
 
 commands = list(BASE_FIXES.values()) + EXEC_TIMEOUT_FIX + SESSION_LIMIT_FIX + SSH_MACS_FIX + UDLD_FIX + TCAM_FIX + BANNER_FIX + syslog_commands
+if snmp_auth_password and snmp_priv_password:
+    commands.append(f'snmp-server user {SNMPV3_USER} auth sha {snmp_auth_password} priv aes-128 {snmp_priv_password}')
 if vlan_ids:
     commands += [
         'feature dhcp', 'ip dhcp snooping', f'ip dhcp snooping vlan {",".join(vlan_ids)}',
@@ -331,6 +349,8 @@ if not ntp_key_id:
     print('\nSkipped V-220502 (NTP authentication) — add ntp_auth_key to secrets.yaml to include it.')
 if not syslog_servers:
     print('\nSkipped V-220516 (syslog servers) — add syslog_servers to inventory.yaml\'s services section to include it.')
+if not (snmp_auth_password and snmp_priv_password):
+    print('\nSkipped V-220500/501 (SNMPv3 auth/priv) — add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
 
 print(
     '\nNext: reload the device, then run NXOS_stig_harden_interfaces.py to push the interface-scoped '
