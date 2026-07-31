@@ -405,6 +405,35 @@ def _ssh_macs_fips_check(cfg):
     )
 
 
+def _ssh_ciphers_fips_check(cfg):
+    """V-220504: Fix Text's example ('ssh ciphers aes128-ctr aes256-ctr')
+    doesn't carry over to NX-OS as a space-separated list either - same
+    one-algorithm-per-invocation quirk already confirmed for 'ssh macs'
+    (V-220488/503, _ssh_macs_fips_check above). Confirmed live on NXCore1
+    via `show ssh ciphers`: aes128-ctr/aes256-ctr (DISA's named pair) are
+    both already permitted by NX-OS default, along with three others not
+    named by DISA - aes256-gcm@openssh.com/aes128-gcm@openssh.com (still
+    FIPS-validated per the platform's own `show ssh ciphers` table, just
+    not the exact pair DISA names - disabled anyway rather than left to
+    interpretation, same treatment as the MACs check's sha2-etm variants)
+    and chacha20-poly1305@openssh.com (confirmed FIPS=no on this platform -
+    genuinely non-compliant). aes192-ctr/aes128-cbc/aes192-cbc/aes256-cbc
+    are already denied by NX-OS default (also confirmed via the same live
+    table), so they're not part of this check - only the currently-
+    permitted-but-not-DISA-named set needs an explicit `no ssh ciphers
+    <algo>` override to verify."""
+    non_compliant_ciphers = [
+        'aes256-gcm@openssh.com', 'aes128-gcm@openssh.com', 'chacha20-poly1305@openssh.com',
+    ]
+    still_allowed = [algo for algo in non_compliant_ciphers if f'no ssh ciphers {algo}' not in cfg]
+    if still_allowed:
+        return False, f'cipher(s) not explicitly disabled: {", ".join(still_allowed)}'
+    return True, (
+        'all ciphers besides aes128-ctr/aes256-ctr explicitly disabled '
+        '- those two remain allowed by NX-OS default'
+    )
+
+
 def _ssh_login_attempts_check(cfg):
     """V-220480: 3 is NX-OS's own default value on this platform - confirmed
     via `show running-config all | include login-attempts` on NXCore1, which
@@ -714,6 +743,42 @@ def _pki_trustpoint_check(cfg):
     return 'NOT AUTOMATED', f'CA trustpoint `{m.group(1)}` configured - verify its issuer is a DOD/DOD-approved provider via `show crypto ca certificates` (CN/O/OU review), not derivable from running-config text'
 
 
+# V-220486: Check Content's own wording only condemns telnet outright
+# ("should never be enabled"); everything else in its example list "should
+# only be enabled if required for operations" - deliberately not a blanket
+# list like L2S's V-220586. 'feature dhcp' is excluded on purpose even
+# though Check Content lists it as an example: this project requires it for
+# DHCP snooping/V-220684 on NXCore1's server-facing ports, a genuine
+# operational need per the rule's own carve-out. 'feature imp' from Check
+# Content isn't included either - not a recognized real NX-OS feature name,
+# worth confirming live before ever adding it. wccp/nxapi have no
+# operational use anywhere in this project, so they're treated as
+# unconditionally unnecessary alongside telnet.
+UNNECESSARY_FEATURES_PATTERN = r'^\s*feature (telnet|wccp|nxapi)\s*$'
+
+
+def _no_unnecessary_features_check(cfg):
+    found = sorted(set(re.findall(UNNECESSARY_FEATURES_PATTERN, cfg, re.M)))
+    if found:
+        return False, f'enabled (should be disabled): {", ".join(f"feature {name}" for name in found)}'
+    return True, 'none of the unnecessary/nonsecure features (telnet/wccp/nxapi) found enabled'
+
+
+def _logon_audit_records_check(cfg):
+    """V-220508: Check Content's evidence ('logging logfile LOG_FILE 6' +
+    'logging level authpri 6') is identical to V-220496/V-220510's already-
+    automated checks, just without V-220496's 'size nnnnn' clause - reuses
+    both existing patterns rather than duplicating a third slightly-looser
+    logfile regex. No new harden-side push needed; both commands are
+    already pushed by NXOS_stig_harden_global.py."""
+    has_logfile = re.search(r'^logging logfile \S+ \d+', cfg, re.M)
+    has_level = re.search(r'^logging level authpriv? 6', cfg, re.M)
+    if has_logfile and has_level:
+        return True, 'both `logging logfile <name> <level> ...` and `logging level authpriv 6` present'
+    missing = [name for name, present in (('`logging logfile <name> <level> ...`', has_logfile), ('`logging level authpriv 6`', has_level)) if not present]
+    return False, f'missing: {", ".join(missing)}'
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Rules with no entry here need external infrastructure (RADIUS, syslog,
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
@@ -771,6 +836,7 @@ CHECKS = {
     'V-220480': _ssh_login_attempts_check,
     'V-220488': _ssh_macs_fips_check,
     'V-220503': _ssh_macs_fips_check,
+    'V-220504': _ssh_ciphers_fips_check,
     'V-220498': lambda cfg: len(set(re.findall(r'^ntp server (\S+)', cfg, re.M))) >= 2,
     'V-220502': _ntp_auth_check,
     # V-220499: UTC is the default zone (compliant, and the checklist itself
@@ -780,6 +846,8 @@ CHECKS = {
     # state is mappable to UTC/GMT. This can never fail from config text.
     'V-220499': lambda cfg: (True, 'UTC is the default (compliant); if `clock timezone` is set, NX-OS requires an explicit offset, which is inherently mappable to UTC too - this rule can never fail from config text alone'),
     'V-220515': _pki_trustpoint_check,
+    'V-220486': _no_unnecessary_features_check,
+    'V-220508': _logon_audit_records_check,
 
     # --- NDM (Network Device Management) ---
     'V-220481': lambda cfg: bool(re.search(r'banner (login|motd)', cfg)),

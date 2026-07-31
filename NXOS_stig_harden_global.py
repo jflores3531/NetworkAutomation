@@ -56,6 +56,22 @@ BASE_FIXES = {
     # uses for V-220599's 'logging buffered 64000 informational' (same
     # org-defined-size convention, level 6/informational too).
     'V-220496 (logfile size)': 'logging logfile STIG_LOGFILE 6 size 64000',
+    # V-220486: Check Content only condemns telnet unconditionally ("should
+    # never be enabled") - everything else in its example list "should only
+    # be enabled if required for operations." 'feature dhcp' is deliberately
+    # NOT included here even though Check Content lists it as an example -
+    # this project requires it for DHCP snooping/V-220684 on NXCore1's
+    # server-facing ports, a genuine operational need per the rule's own
+    # carve-out. nxapi has no operational use anywhere in this project, so
+    # it's disabled unconditionally alongside telnet - idempotent no-ops if
+    # already absent, same as L2S's V-220586 pattern. 'no feature wccp' is
+    # NOT pushed - confirmed live on NXCore1 that it's rejected outright
+    # ("% Invalid command"), wccp isn't a supported feature on this
+    # platform/image at all (telnet/nxapi both worked fine). Since it can
+    # never be enabled here either, _no_unnecessary_features_check in
+    # NXOS_stig_audit.py still passes trivially without this push.
+    'V-220486a (unnecessary services - telnet)': 'no feature telnet',
+    'V-220486c (unnecessary services - nxapi)': 'no feature nxapi',
     # V-220510: admin session start/end logging - a plain presence check
     # (_dot1x_mab_check-style shared-evidence pattern doesn't apply here,
     # this is its own separate rule from the aaa-accounting-group cluster
@@ -92,6 +108,22 @@ SSH_MACS_FIX = [
     'no ssh macs hmac-sha1-etm@openssh.com',
     'no ssh macs hmac-sha2-256-etm@openssh.com',
     'no ssh macs hmac-sha2-512-etm@openssh.com',
+]
+
+# V-220504: same shape as SSH_MACS_FIX above - 'ssh ciphers aes128-ctr
+# aes256-ctr' (Fix Text's example) doesn't work as a space-separated list
+# on NX-OS either. Confirmed live on NXCore1 via `show ssh ciphers`:
+# aes128-ctr/aes256-ctr are already permitted by default, alongside three
+# others not named by DISA - aes256-gcm@openssh.com/aes128-gcm@openssh.com
+# (still FIPS-validated per the platform's own table, just not the exact
+# pair DISA names - disabled anyway, same treatment as the MACs sha2-etm
+# variants) and chacha20-poly1305@openssh.com (confirmed FIPS=no on this
+# platform). aes192-ctr/aes128-cbc/aes192-cbc/aes256-cbc are already denied
+# by default (also confirmed live), so no push needed for those.
+SSH_CIPHERS_FIX = [
+    'no ssh ciphers aes256-gcm@openssh.com',
+    'no ssh ciphers aes128-gcm@openssh.com',
+    'no ssh ciphers chacha20-poly1305@openssh.com',
 ]
 
 # V-220481: DoD-mandated banner text verbatim from the checklist's Fix/Check
@@ -272,6 +304,9 @@ applied_fixes['V-220474 (session limit)'] = '; '.join(SESSION_LIMIT_FIX)
 applied_fixes['V-220488/503 (SSH MACs - FIPS-validated HMAC)'] = (
     '; '.join(SSH_MACS_FIX) + ' (hmac-sha2-256/512 already allowed by default; this disables the non-FIPS ones alongside them)'
 )
+applied_fixes['V-220504 (SSH ciphers - confidentiality)'] = (
+    '; '.join(SSH_CIPHERS_FIX) + ' (aes128-ctr/aes256-ctr already allowed by default; this disables the rest alongside them)'
+)
 applied_fixes['V-220689 (UDLD)'] = '; '.join(UDLD_FIX)
 applied_fixes['V-220685/686 (TCAM regions for IPSG/DAI) - STAGED, NEEDS RELOAD'] = (
     '; '.join(TCAM_FIX) + ' - takes effect only after the next device reload (not performed by this script)'
@@ -297,7 +332,7 @@ if snmp_auth_password and snmp_priv_password:
         f'snmp-server user {SNMPV3_USER} auth sha ... priv aes-128 ... (defaults to the built-in network-operator group)'
     )
 
-commands = list(BASE_FIXES.values()) + EXEC_TIMEOUT_FIX + SESSION_LIMIT_FIX + SSH_MACS_FIX + UDLD_FIX + TCAM_FIX + BANNER_FIX + syslog_commands
+commands = list(BASE_FIXES.values()) + EXEC_TIMEOUT_FIX + SESSION_LIMIT_FIX + SSH_MACS_FIX + SSH_CIPHERS_FIX + UDLD_FIX + TCAM_FIX + BANNER_FIX + syslog_commands
 if snmp_auth_password and snmp_priv_password:
     commands.append(f'snmp-server user {SNMPV3_USER} auth sha {snmp_auth_password} priv aes-128 {snmp_priv_password}')
 if vlan_ids:
