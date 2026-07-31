@@ -18,8 +18,11 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
     -> (bool, reason) to show why a rule passed/failed, or -> (None, reason)
     to report NOT APPLICABLE when the rule's precondition doesn't hold on this
     device - e.g. a host-facing-port rule on a switch with no access ports at
-    all), and print a PASS/FAIL/NOT APPLICABLE/NOT AUTOMATED report. Rules with
-    no entry in `checks` are reported as NOT AUTOMATED."""
+    all, or -> ('NOT AUTOMATED', reason) when a rule is only conditionally
+    automatable - e.g. a check that can determine NOT APPLICABLE from config
+    text alone but needs manual review, like a live command's output, the
+    rest of the time), and print a PASS/FAIL/NOT APPLICABLE/NOT AUTOMATED
+    report. Rules with no entry in `checks` are reported as NOT AUTOMATED."""
     with open(checklist_path, encoding='utf-8') as f:
         checklist = json.load(f)
     rules = [rule for stig in checklist['stigs'] for rule in stig['rules']]
@@ -45,7 +48,10 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
         else:
             result = check(running_config)
             passed, reason = result if isinstance(result, tuple) else (result, None)
-            status = 'NOT APPLICABLE' if passed is None else ('PASS' if passed else 'FAIL')
+            if isinstance(passed, str):
+                status = passed
+            else:
+                status = 'NOT APPLICABLE' if passed is None else ('PASS' if passed else 'FAIL')
         results[status] += 1
         findings.append((status, rule, group_id, reason))
 
