@@ -658,6 +658,31 @@ def _aaa_accounting_check(cfg):
     return False, f'`aaa accounting default group {group_name}` configured, but no matching `aaa group server radius {group_name}` block found'
 
 
+def _logging_server_present_check(cfg):
+    """V-220497 (alert on audit-failure events) and V-220512 (offload log
+    records to a different system) both just need >=1 syslog server
+    configured - a weaker version of V-220516's >=2-distinct-servers
+    redundancy check, so a device already passing V-220516 passes these
+    two for free."""
+    m = re.search(r'^logging server (\S+)', cfg, re.M)
+    if not m:
+        return False, 'no `logging server <host>` line found'
+    return True, f'`logging server {m.group(1)}` configured'
+
+
+def _pki_trustpoint_check(cfg):
+    """V-220515: Check Content itself says this is NOT APPLICABLE when no
+    PKI is implemented. When a trustpoint does exist, confirming its issuer
+    is a DOD/DOD-approved provider requires reading `show crypto ca
+    certificates` CN/O/OU fields against an approved-provider list - not
+    derivable from running-config text, so that case stays NOT AUTOMATED
+    rather than being guessed at as a PASS or FAIL."""
+    m = re.search(r'^crypto ca trustpoint (\S+)', cfg, re.M)
+    if not m:
+        return None, 'not applicable - no CA trustpoint configured'
+    return 'NOT AUTOMATED', f'CA trustpoint `{m.group(1)}` configured - verify its issuer is a DOD/DOD-approved provider via `show crypto ca certificates` (CN/O/OU review), not derivable from running-config text'
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Rules with no entry here need external infrastructure (RADIUS, syslog,
 # NTP, PKI) or manual/topology review, and are reported as NOT AUTOMATED.
@@ -700,6 +725,12 @@ CHECKS = {
     # `show running-config` even with NTP fully configured and working).
     # V-220516: same >=2-distinct-servers shape as V-220498's NTP check below.
     'V-220516': lambda cfg: len(set(re.findall(r'^logging server (\S+)', cfg, re.M))) >= 2,
+    # V-220497/V-220512: weaker single-server versions of V-220516 above.
+    'V-220497': _logging_server_present_check,
+    'V-220512': _logging_server_present_check,
+    # V-220496: buffer size for the local logfile, distinct from the syslog
+    # server checks above.
+    'V-220496': lambda cfg: bool(re.search(r'^logging logfile \S+ \d+ size \d+', cfg, re.M)),
     # V-220474: Check Text's example scopes session-limit to 'line vty' only
     # (not 'line console') - the bare command is unambiguous enough on its
     # own that a plain search doesn't risk matching anything else.
@@ -711,11 +742,13 @@ CHECKS = {
     'V-220503': _ssh_macs_fips_check,
     'V-220498': lambda cfg: len(set(re.findall(r'^ntp server (\S+)', cfg, re.M))) >= 2,
     'V-220502': _ntp_auth_check,
-    # V-220499 (log time stamps mappable to UTC/GMT) is deliberately left out: UTC
-    # is the default zone, so the checklist itself notes "clock timezone" may not
-    # appear in the config even when compliant. Its absence doesn't indicate a
-    # finding, so this can't be turned into a meaningful PASS/FAIL from config text
-    # alone and is reported as NOT AUTOMATED.
+    # V-220499: UTC is the default zone (compliant, and the checklist itself
+    # notes `clock timezone` may not appear in the config even when
+    # compliant), and NX-OS's `clock timezone` command always requires an
+    # explicit offset when it IS set - so every possible running-config
+    # state is mappable to UTC/GMT. This can never fail from config text.
+    'V-220499': lambda cfg: (True, 'UTC is the default (compliant); if `clock timezone` is set, NX-OS requires an explicit offset, which is inherently mappable to UTC too - this rule can never fail from config text alone'),
+    'V-220515': _pki_trustpoint_check,
 
     # --- NDM (Network Device Management) ---
     'V-220481': lambda cfg: bool(re.search(r'banner (login|motd)', cfg)),
