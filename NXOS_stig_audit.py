@@ -502,20 +502,43 @@ def _ntp_auth_check(cfg):
 
 def _dot1x_mab_check(cfg):
     """V-220675/679: identical Check Content example ('dot1x pae authenticator'
-    + 'dot1x port-control auto' on every host-facing access port) under
-    different CCI categories - one check covers both, same shape as L2S's
-    V-220623 (_dot1x_mab_check there). NX-OS's MAB indicator is the
-    interface subcommand 'dot1x mac-auth-bypass' (not IOS's standalone
-    'mab') - not shown in this rule's own Check Content example (only the
-    802.1x form is), so this is inferred from real NX-OS dot1x command
-    syntax rather than lifted directly from the checklist text; worth
-    confirming live if NXCore1 ever needs MAB rather than full 802.1x.
+    + 'dot1x port-control auto' + 'dot1x host-mode single-host' on every
+    host-facing access port) under different CCI categories - one check
+    covers both, same shape as L2S's V-220623 (_dot1x_mab_check there). The
+    host-mode line is required too - Check Content's own Note: "Host-mode
+    must be set to single-host, multi-domain, or multi-auth. Host-mode
+    multi-host is not compliant" - so an explicit non-multi-host value is
+    required, not just any/no host-mode line (same strict-on-silence
+    treatment as V-220645). NX-OS's MAB indicator is the interface
+    subcommand 'dot1x mac-auth-bypass' (not IOS's standalone 'mab') - not
+    shown in this rule's own Check Content example (only the 802.1x form
+    is), so this is inferred from real NX-OS dot1x command syntax rather
+    than lifted directly from the checklist text; worth confirming live if
+    NXCore1 ever needs MAB rather than full 802.1x.
     exclude_vlan=unused_vlan, same as sibling host-facing-only checks
     V-220683/685/687/691 (_all_access_ports_have) - confirmed live on
     NXCore1 that parse_switchports()'s access bucket also includes the 59
     disabled ports parked on the black-hole VLAN (they carry an explicit
     'switchport access vlan <unused_vlan>' line too), which don't need
-    endpoint authentication since nothing is plugged into them."""
+    endpoint authentication since nothing is plugged into them.
+
+    NOT APPLICABLE whenever IP Source Guard is active anywhere on the
+    device: confirmed live on NXCore1 that 'feature dot1x' is rejected
+    outright ("802.1X can't be enabled, IPSG is enabled in system") while
+    IPSG is configured - the two are mutually exclusive at the Nexus 9000
+    platform level (not just a per-port conflict), confirmed against
+    Cisco's own documentation. Since this project's V-220685 (IP Source
+    Guard) push is unconditional on every access port with a discovered
+    user VLAN, 802.1x/MAB can never be enabled on these switches without
+    first removing IPSG entirely - N/A, not a permanent FAIL, since the
+    device is structurally incapable of running both, unlike the NTP MD5
+    rule where compliance is simply out of reach."""
+    if re.search(r'^\s*ip verify source dhcp-snooping-vlan\s*$', cfg, re.M):
+        return None, (
+            'not applicable - IP Source Guard is active on this device, and Nexus 9000 platform rejects '
+            '`feature dot1x` while IPSG is enabled (confirmed live: "802.1X can\'t be enabled, IPSG is '
+            'enabled in system") - mutually exclusive by platform design, not a configuration gap'
+        )
     access, _ = parse_switchports(cfg)
     if unused_vlan:
         access = {
@@ -526,12 +549,20 @@ def _dot1x_mab_check(cfg):
         return None, 'not applicable - no access-classified switchports found in config'
     missing = []
     for name, block in sorted(access.items()):
-        has_dot1x = re.search(r'dot1x pae authenticator', block) and re.search(r'dot1x port-control auto', block)
+        has_dot1x = (
+            re.search(r'dot1x pae authenticator', block)
+            and re.search(r'dot1x port-control auto', block)
+            and re.search(r'dot1x host-mode (single-host|multi-domain|multi-auth)\b', block)
+        )
         has_mab = re.search(r'dot1x mac-auth-bypass', block)
         if not (has_dot1x or has_mab):
             missing.append(name)
     if missing:
-        return False, f'missing 802.1x (`dot1x pae authenticator` + `dot1x port-control auto`) or MAB (`dot1x mac-auth-bypass`) on: {", ".join(missing)}'
+        return False, (
+            f'missing 802.1x (`dot1x pae authenticator` + `dot1x port-control auto` + a compliant '
+            f'`dot1x host-mode single-host|multi-domain|multi-auth`) or MAB (`dot1x mac-auth-bypass`) on: '
+            f'{", ".join(missing)}'
+        )
     return True, f'802.1x or MAB present on all {len(access)} access port(s): {", ".join(sorted(access))}'
 
 

@@ -56,6 +56,11 @@ BASE_FIXES = {
     # uses for V-220599's 'logging buffered 64000 informational' (same
     # org-defined-size convention, level 6/informational too).
     'V-220496 (logfile size)': 'logging logfile STIG_LOGFILE 6 size 64000',
+    # V-220510: admin session start/end logging - a plain presence check
+    # (_dot1x_mab_check-style shared-evidence pattern doesn't apply here,
+    # this is its own separate rule from the aaa-accounting-group cluster
+    # NXOS_stig_harden_aaa.py covers), verbatim from Check Text's example.
+    'V-220510 (admin session logging)': 'logging level authpriv 6',
 }
 
 # V-220474: session-limit only applies under 'line vty' per the Check Text's
