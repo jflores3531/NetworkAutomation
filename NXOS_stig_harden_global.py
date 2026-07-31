@@ -51,6 +51,11 @@ BASE_FIXES = {
     # four character-class rules (upper/lower/numeric/special) at once.
     'V-220489/490/491/492 (password complexity)': 'password strength-check',
     'V-220480 (SSH login attempts)': 'ssh login-attempts 3',
+    # Check Text's example is 'logging logfile LOGFILE1 6 size nnnnn' -
+    # 64000 bytes matches the buffer size L2_stig_harden_global.py already
+    # uses for V-220599's 'logging buffered 64000 informational' (same
+    # org-defined-size convention, level 6/informational too).
+    'V-220496 (logfile size)': 'logging logfile STIG_LOGFILE 6 size 64000',
 }
 
 # V-220474: session-limit only applies under 'line vty' per the Check Text's
