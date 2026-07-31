@@ -54,7 +54,27 @@ every trunk's allowed-VLAN list, satisfying the Fix Text's Step 2 with no
 extra work. These reclassified ports deliberately don't get
 UUFB/IPSG/storm control (ACCESS_PORT_FIXES) - they're not host-facing, just
 parked, and NXOS_stig_audit.py's _all_access_ports_have() excludes
-unused_vlan-assigned ports from that requirement for the same reason."""
+unused_vlan-assigned ports from that requirement for the same reason.
+
+V-220680 (Root Guard): pushed to every trunk-classified port except this
+switch's own live-detected STP root port(s), via the shared
+stig_common.discover_root_port_interfaces() (same function L2S's
+L2_stig_harden_interfaces.py uses) - guarding the root port would force it
+into root-inconsistent (blocking) state, a real outage risk. Reuses the
+connection this script already keeps open rather than opening a second one.
+
+V-220675/679 (802.1x): pushed to every access-classified port not already
+parked on unused_vlan (V-220690's black-hole ports don't need endpoint
+authentication - nothing is plugged in), per Check Content's full documented
+form: 'dot1x pae authenticator' + 'dot1x port-control auto' + 'dot1x
+host-mode single-host'. These commands are valid to configure even before
+NXOS_stig_harden_aaa.py's global prerequisites ('feature dot1x' + 'aaa
+authentication dot1x default group ...') are active - they're just inert
+until that script runs, same as L2S's equivalent split. MAB isn't pushed
+here - its NX-OS command syntax isn't documented in this rule's own Check
+Content/Fix Text at all, only inferred in NXOS_stig_audit.py's own comment,
+so it needs a live `dot1x mac-auth-bypass ?` confirmation first before this
+script should push it too."""
 
 import argparse
 import re
@@ -151,6 +171,16 @@ ACCESS_PORT_FIXES = [
 # pushed when its prerequisite wasn't.
 IPSG_FIX = 'ip verify source dhcp-snooping-vlan'
 
+# V-220675/679 (802.1x). Per Check Content's own documented example - MAB is
+# deliberately not included, see the module docstring for why. Stays inert
+# until NXOS_stig_harden_aaa.py's global prerequisites ('feature dot1x' +
+# 'aaa authentication dot1x default group ...') are active.
+DOT1X_FIX = [
+    'dot1x pae authenticator',
+    'dot1x port-control auto',
+    'dot1x host-mode single-host',
+]
+
 # Satisfied by construction (access ports are never touched, only
 # non-access ports get converted to trunk) rather than by a dedicated
 # command of their own - independently verified by NXOS_stig_audit.py's
@@ -231,29 +261,77 @@ for name in disabled_ports:
     disabled_interface_commands.append('switchport mode access')
     disabled_interface_commands.append(f'switchport access vlan {unused_vlan}')
 
+# Port-channel member interfaces (carry a 'channel-group <n>' line) inherit
+# their L2/trunk config from the port-channel interface itself - confirmed
+# live on NXCore1 that NX-OS rejects re-issuing 'switchport'/'switchport
+# mode trunk'/'switchport trunk ...' directly on a member once it's bundled
+# ("% Incomplete command"/"% Invalid command"), even though the member
+# already carries that same config from before it was bundled. Skipped here
+# to stop every run re-attempting (and failing) a redundant push - the
+# port-channel interface (also in trunk_target_ports) still gets pushed
+# normally, and Root Guard below is unaffected either way.
+channel_members = set()
+for chunk in re.split(r'^(?=interface \S+)', running_config, flags=re.M):
+    m = re.match(r'interface (\S+)', chunk)
+    if m and re.search(r'^\s*channel-group \d+', chunk, re.M):
+        channel_members.add(m.group(1))
+
+# V-220675/679 (802.1x): NOT pushed at all when IPSG is (or is about to be)
+# active - confirmed live on NXCore1 that Nexus 9000 rejects 'feature
+# dot1x' outright ("802.1X can't be enabled, IPSG is enabled in system")
+# whenever IP Source Guard is configured, platform-level mutually exclusive
+# per Cisco's own documentation, not a per-port conflict. vlan_ids being
+# non-empty means IPSG_FIX is about to be pushed to every access port this
+# run (see below); the running_config check also catches IPSG already
+# configured from a prior run. Matches NXOS_stig_audit.py's
+# _dot1x_mab_check, which reports V-220675/679 NOT APPLICABLE under the
+# same condition.
+ipsg_active = bool(vlan_ids) or bool(re.search(r'^\s*ip verify source dhcp-snooping-vlan\s*$', running_config, re.M))
+dot1x_target_ports = []
+if not ipsg_active:
+    dot1x_target_ports = access_ports
+    if unused_vlan:
+        parked_ports = set()
+        for chunk in re.split(r'^(?=interface \S+)', running_config, flags=re.M):
+            m = re.match(r'interface (\S+)', chunk)
+            if m and re.search(rf'^\s*switchport access vlan {unused_vlan}\s*$', chunk, re.M):
+                parked_ports.add(m.group(1))
+        dot1x_target_ports = [name for name in access_ports if name not in parked_ports]
+
 access_interface_commands = []
 for name in access_ports:
     access_interface_commands.append(f'interface {name}')
     access_interface_commands += ACCESS_PORT_FIXES
     if vlan_ids:
         access_interface_commands.append(IPSG_FIX)
+    if name in dot1x_target_ports:
+        access_interface_commands += DOT1X_FIX
+
+# V-220680 (Root Guard): live STP root port(s) must never receive this -
+# see the module docstring for why. root_guard_ports is trunk_target_ports
+# minus whatever discover_root_port_interfaces() finds.
+root_ports = stig_common.discover_root_port_interfaces(net_connect)
+root_guard_ports = [name for name in trunk_target_ports if name not in root_ports]
 
 interface_commands = []
 for name in trunk_target_ports:
     interface_commands.append(f'interface {name}')
-    # Confirmed live on NXCore1: a port with no explicit 'switchport access
-    # vlan <n>' (this loop's whole population) may still be in NX-OS's
-    # default L3/routed state, where 'switchport mode trunk' is rejected
-    # outright. The bare 'switchport' command converts it to L2 mode first -
-    # a no-op if it's already there. access_ports never need this: an
-    # explicit 'switchport access vlan <n>' line can't exist unless the port
-    # was already in L2 mode.
-    interface_commands.append('switchport')
-    interface_commands.append('switchport mode trunk')
-    if allowed_trunk_vlans:
-        interface_commands.append(f'switchport trunk allowed vlan {",".join(allowed_trunk_vlans)}')
-    if native_vlan_id:
-        interface_commands.append(f'switchport trunk native vlan {native_vlan_id}')
+    if name not in channel_members:
+        # Confirmed live on NXCore1: a port with no explicit 'switchport
+        # access vlan <n>' (this loop's whole population) may still be in
+        # NX-OS's default L3/routed state, where 'switchport mode trunk' is
+        # rejected outright. The bare 'switchport' command converts it to
+        # L2 mode first - a no-op if it's already there. access_ports never
+        # need this: an explicit 'switchport access vlan <n>' line can't
+        # exist unless the port was already in L2 mode.
+        interface_commands.append('switchport')
+        interface_commands.append('switchport mode trunk')
+        if allowed_trunk_vlans:
+            interface_commands.append(f'switchport trunk allowed vlan {",".join(allowed_trunk_vlans)}')
+        if native_vlan_id:
+            interface_commands.append(f'switchport trunk native vlan {native_vlan_id}')
+    if name in root_guard_ports:
+        interface_commands.append('spanning-tree guard root')
 
 applied_fixes = {}
 if access_ports:
@@ -269,6 +347,20 @@ if access_ports:
             'no user VLANs discovered (vlan_ids empty) - run NXOS_stig_harden_global.py first if DHCP '
             'snooping should already be covering VLANs here; pushing IPSG anyway would silently fail'
         )
+    if ipsg_active:
+        applied_fixes['V-220675/679 (802.1x) - NOT APPLICABLE'] = (
+            'IP Source Guard is active/being pushed on this device - Nexus 9000 rejects `feature dot1x` '
+            'while IPSG is enabled (confirmed live), so 802.1x/MAB is never pushed here'
+        )
+    elif dot1x_target_ports:
+        applied_fixes['V-220675/679 (802.1x)'] = (
+            f'{"; ".join(DOT1X_FIX)} (on {len(dot1x_target_ports)} access port(s): {", ".join(dot1x_target_ports)}) '
+            f'- stays inert until NXOS_stig_harden_aaa.py\'s globals are active'
+        )
+if trunk_target_ports and root_guard_ports:
+    applied_fixes['V-220680 (Root Guard)'] = (
+        f'spanning-tree guard root (on {len(root_guard_ports)} trunk port(s): {", ".join(root_guard_ports)})'
+    )
 if trunk_target_ports and native_vlan_id:
     applied_fixes['V-220695 (native VLAN)'] = (
         f'switchport mode trunk; switchport trunk native vlan {native_vlan_id} '
@@ -309,6 +401,10 @@ for rule in applied_fixes:
 
 if not access_ports:
     print('\nNo access switchports found (explicit `switchport access vlan <n>`) — nothing to push for V-220683/685/687.')
+elif not ipsg_active and not dot1x_target_ports:
+    print('\nEvery access port is parked on unused_vlan — nothing to push for V-220675/679.')
+if trunk_target_ports and not root_guard_ports:
+    print("\nSkipped V-220680 (Root Guard) — every trunk port is this switch's STP root port toward the root bridge; Root Guard must not be applied there.")
 if not native_vlan_id:
     print('\nSkipped V-220695 (native VLAN) — add native_vlan to inventory.yaml to include it.')
 elif not trunk_target_ports:

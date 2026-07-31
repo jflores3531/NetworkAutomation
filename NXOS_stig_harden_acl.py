@@ -1,0 +1,99 @@
+#!/usr/bin/env python
+"""Push a management ACL (V-220479: enforce approved authorizations for
+controlling the flow of management information) to a device, kept as its
+own script on purpose - of everything in this repo, a wrongly-scoped vty
+ACL is the single most direct lockout risk (worse than the AAA/RADIUS push
+in NXOS_stig_harden_aaa.py: it blocks new connections outright, no
+fallback-to-local path applies once it's enforced). Direct NX-OS port of
+L2_stig_harden_acl.py - same safety pattern, same inventory.yaml keys
+(automation_host, not L2S-specific despite the name it was introduced under).
+
+Scoped to just the automation host (inventory.yaml's automation_host), not
+the whole management_subnet - least privilege, and simpler to reason about.
+Applied via 'line vty' + 'access-class ... in' - NXOS_stig_audit.py's
+_mgmt_acl_check also accepts an 'interface mgmt0' + 'ip access-group' form,
+but only one push path is needed here.
+
+Safety approach: the ACL is created first, entirely separate from applying
+it - creating an ip access-list on its own has no effect on anything until
+it's referenced. Only once that's committed does this script apply
+'access-class ... in' to line vty, using the already-established primary
+session (unaffected by the ACL - it only governs new connections). It then
+immediately opens a *second*, independent SSH connection to verify the
+automation host can still get in. If that verification connection fails,
+the still-open primary session reverts the access-class immediately - the
+ACL was never given a chance to lock anything out for more than a moment."""
+
+import argparse
+import netauto
+
+ACL_NAME = 'MGMT_ACL'
+
+# Parse the target device from the command line
+parser = argparse.ArgumentParser(description='Push a management ACL scoped to the automation host (V-220479)')
+parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. NXCore1)')
+args = parser.parse_args()
+
+device_name = args.device
+
+# Load the target device from the YAML inventory
+all_devices = netauto.load_inventory()
+device_info = netauto.require_devices(all_devices, [device_name])[device_name]
+
+# Prompt for credentials (reused for the verification connection later too)
+username, password = netauto.get_credentials()
+
+automation_host = netauto.load_automation_host()
+if not automation_host:
+    print('Aborting: no automation_host in inventory.yaml. This is the sole permitted source for the ACL - required.')
+    raise SystemExit(1)
+
+# Connect (primary session - stays open as the safety net until verified)
+net_connect = netauto.connect(device_name, device_info, username, password)
+if net_connect is None:
+    raise SystemExit(1)
+
+# Step 1: create the ACL on its own. Has no effect on anything until it's
+# actually referenced by an access-class - completely safe on its own.
+# NX-OS's 'ip access-list <name>' auto-numbers each permit/deny line the
+# same way IOS does (confirmed via NXOS_stig_audit.py's _mgmt_acl_check
+# regex, which expects that numbering) - no 'extended' keyword needed here,
+# unlike L2S.
+acl_commands = [
+    f'ip access-list {ACL_NAME}',
+    f'permit ip host {automation_host} any',
+    'exit',
+]
+net_connect.send_config_set(acl_commands)
+netauto.log_push('NXOS_stig_harden_acl.py', device_name, username, acl_commands)
+print(f'ACL {ACL_NAME} created on {device_name}, scoped to {automation_host} only.')
+
+# Step 2: apply it. This is the actual risky moment - everything before this
+# point was fully reversible with zero exposure window.
+apply_commands = ['line vty', f'access-class {ACL_NAME} in']
+net_connect.send_config_set(apply_commands)
+netauto.log_push('NXOS_stig_harden_acl.py', device_name, username, apply_commands)
+print(f'Applied `access-class {ACL_NAME} in` to line vty on {device_name}.')
+
+# Step 3: verify with a *second*, independent connection - the primary
+# session is unaffected by the ACL (already established before it took
+# effect), so it can't prove new connections still work. Only a fresh
+# connection attempt can.
+print('Opening a second, independent connection to verify new logins still work...')
+verify_connect = netauto.connect(device_name, device_info, username, password)
+if verify_connect is None:
+    print(f'\nABORT: verification connection failed - the automation host may have been locked out. '
+          f'Reverting `access-class {ACL_NAME} in` via the still-open primary session now.')
+    revert_commands = ['line vty', f'no access-class {ACL_NAME} in']
+    net_connect.send_config_set(revert_commands)
+    netauto.log_push('NXOS_stig_harden_acl.py', device_name, username, revert_commands)
+    net_connect.disconnect()
+    print('Reverted. The ACL itself is still defined but no longer applied to line vty - investigate before retrying.')
+    raise SystemExit(1)
+
+print(f'Verification connection succeeded - {automation_host} still has access after the ACL was applied.')
+verify_connect.disconnect()
+net_connect.disconnect()
+
+print(f'\nRules addressed by this pass:')
+print(f'  - V-220479 (management ACL, scoped to {automation_host} only)')
