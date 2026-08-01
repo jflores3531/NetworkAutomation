@@ -32,7 +32,7 @@ Python scripts for automating common network engineering tasks (Cisco IOS/NX-OS)
 - **`L2_stig_harden_aaa.py`** — Push `aaa new-model` + RADIUS auth (V-220587/617) + password length/complexity policy (V-220589-594). Kept isolated and run **last**: verifies the enable secret actually works (a `disable`→`enable` round-trip) before touching `aaa new-model` at all, aborting cleanly if that fails. See the "Bugs" folder in the project vault for the live incident that drove this design.
 - **`L2_device_tracking.py`** — Push SISF `device-tracking policy` blocks (`IPV4_VISIBILITY` per access port, `DT-NOIPV6`/`NOTRACK` per VLAN) for host IP visibility. Not a STIG requirement. **IOS-XE only** — requires the modern SISF CLI, untested against real hardware so far (see Notes below).
 - **`NXOS_stig_harden_global.py`** — Same idea as `L2_stig_harden_global.py` for NX-OS, enabling required features (`feature udld`, `feature dhcp`, `feature vtp`, `feature ntp`) before applying fixes.
-- **`IOS_Router_stig_harden.py`** — Push global RTR STIG hardening fixes to an IOS router (disable gratuitous ARPs, CDP, AUX port; enable CEF; configure NTP).
+- **`IOS_Router_stig_harden_global.py`** — Push global RTR STIG hardening fixes to an IOS router (disable gratuitous ARPs, CDP, AUX port; enable CEF; configure NTP).
 
 ## Requirements
 
@@ -82,7 +82,7 @@ python3 L2_stig_harden_aaa.py S1    # AAA/RADIUS + password policy - run last, v
 
 # NX-OS / IOS router hardening
 python3 NXOS_stig_harden_global.py NXCore1
-python3 IOS_Router_stig_harden.py R1
+python3 IOS_Router_stig_harden_global.py R1
 
 # Optional, non-STIG
 python3 L2_quiet_console.py S1      # quiet the console during interactive config work
@@ -110,7 +110,7 @@ python3 L2_device_tracking.py S1    # IOS-XE only, host IP visibility
 - [ ] Config push dry-run / diff-before-push mode
 - [ ] Config removal/undo mode — no script currently has a way to revert what it pushed
 - [ ] Static-host binding gap for IP Source Guard (`L2_stig_harden_ipsg.py`)/DAI (`L2_stig_harden_dai.py`) — both only trust the DHCP snooping binding table, so statically-addressed hosts get dropped; needs a dynamic fix (diff `show ip device tracking all` against `show ip dhcp snooping binding`), blocked on IP Device Tracking not activating on this lab's `vios_l2`
-- [ ] Interface-scoped RTR STIG hardening for `IOS_Router_stig_harden.py` (directed broadcast, ICMP redirects/unreachables/mask-reply, proxy ARP, LLDP transmit)
+- [ ] Interface-scoped RTR STIG hardening for `IOS_Router_stig_harden_global.py` (directed broadcast, ICMP redirects/unreachables/mask-reply, proxy ARP, LLDP transmit)
 - [ ] Port the L2S-style interface-scoped hardening approach to `NXOS_stig_audit.py`/`NXOS_stig_harden_global.py`
 - [ ] Validate `L2_device_tracking.py` and the AAA/ACL/password-policy scripts against real IOS-XE hardware — untested beyond this lab's classic-IOS `vios_l2` switches, which can't run any of it
 - [ ] Nornir-based parallel execution for larger inventories
