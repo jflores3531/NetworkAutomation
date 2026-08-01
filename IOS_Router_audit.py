@@ -533,6 +533,135 @@ def _rsvp_message_pacing_check(cfg):
     return False, 'MPLS TE enabled but no `ip rsvp signaling rate-limit ...` (message pacing) found'
 
 
+def _snmpv3_user_live_check(show_snmp_user_output, require_priv):
+    """V-215696/697: confirmed live (project memory) that Cisco IOS classic
+    never writes SNMPv3 user config to `show running-config` at all - needs
+    live `show snmp user` output instead of running-config text, same
+    platform quirk as L2S/NX-OS. Ported from L2_stig_audit.py's
+    _snmpv3_user_live_check."""
+    auth_m = re.search(r'Authentication Protocol:\s*(\S+)', show_snmp_user_output, re.I)
+    if not auth_m or auth_m.group(1).lower() == 'none':
+        return False, 'no SNMPv3 user with an authentication protocol found (`show snmp user`)'
+    if 'sha' not in auth_m.group(1).lower():
+        return False, f'SNMPv3 user authentication protocol is not SHA: `{auth_m.group(0)}`'
+    if not require_priv:
+        return True, f'SNMPv3 user authenticated with SHA (`show snmp user`): `{auth_m.group(0)}`'
+    priv_m = re.search(r'Privacy Protocol:\s*(\S+)', show_snmp_user_output, re.I)
+    if not priv_m or 'aes' not in priv_m.group(1).lower():
+        detail = f'`{priv_m.group(0)}`' if priv_m else 'no `Privacy Protocol` line'
+        return False, f'SNMPv3 user auth is SHA but privacy protocol is not AES: {detail}'
+    return True, f'SNMPv3 user with SHA auth + AES privacy (`show snmp user`): `{auth_m.group(0)}`, `{priv_m.group(0)}`'
+
+
+# V-215711: Check Content's own note - "This requirement is not applicable
+# if the router does not have any public key certificates." When a
+# trustpoint exists, confirming its issuer is DOD/DOD-approved needs live CA
+# certificate review (show crypto pki certificates), not derivable from
+# running-config text. Same pattern as NXOS_stig_audit.py's
+# _pki_trustpoint_check, adapted for IOS's `crypto pki trustpoint` keyword
+# (NX-OS uses `crypto ca trustpoint`).
+def _pki_trustpoint_check(cfg):
+    m = re.search(r'^crypto pki trustpoint (\S+)', cfg, re.M)
+    if not m:
+        return None, 'not applicable - no CA trustpoint configured'
+    return 'NOT AUTOMATED', (
+        f'CA trustpoint `{m.group(1)}` configured - verify its issuer is a DOD/DOD-approved provider via '
+        f'`show crypto pki certificates` (CN/O/OU review), not derivable from running-config text'
+    )
+
+
+# V-216560/V-215701: DISA's own check text is a deep 4-step traffic-
+# classification/ACL-content/policing review that can't be verified from
+# config text alone (what counts as "critical" vs "undesirable" traffic is
+# an organizational judgment call, not derivable from syntax) - this only
+# confirms the CoPP *structure* is actually in place (a policy-map with
+# class entries applied to control-plane), not that the classification/
+# policing values inside are organizationally appropriate. Partial coverage
+# only, same category as V-215667's log-input check. Both rules share the
+# identical check/fix text verbatim.
+def _copp_structural_check(cfg):
+    m = re.search(r'^control-plane\s*$\n((?:.*\n)*?)(?=^\S|\Z)', cfg, re.M)
+    policy_m = re.search(r'^\s*service-policy input (\S+)', m.group(1), re.M) if m else None
+    if not policy_m:
+        return False, 'no `service-policy input <name>` applied under `control-plane`'
+    policy_name = policy_m.group(1)
+    policy_block = None
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        if chunk.startswith(f'policy-map {policy_name}'):
+            policy_block = chunk
+            break
+    if policy_block is None:
+        return False, f'`service-policy input {policy_name}` applied but no `policy-map {policy_name}` block found'
+    if not re.search(r'^\s*class \S+', policy_block, re.M):
+        return False, f'`policy-map {policy_name}` has no `class <name>` entries'
+    return True, (
+        f'CoPP structure present: `control-plane` has `service-policy input {policy_name}`, referencing a '
+        f'`policy-map` with class entries (partial coverage only - does not verify traffic classification/'
+        f'ACL content or policing rates are organizationally appropriate)'
+    )
+
+
+# V-215673/V-216568/V-216569/V-216570: interface-bound ACL deny statements
+# must carry log-input (or, for V-216568 only, plain `log` also satisfies
+# its looser "packets being dropped are logged" wording - DISA's own example
+# for that rule uses `log`, not `log-input`, unlike the other three). Not
+# the same ACL as V-215667's vty management ACL (`access-class`, not an
+# interface `ip access-group`) - vty ACLs are covered separately.
+def _interface_acl_blocks(cfg):
+    referenced = set()
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        if not chunk.startswith('interface '):
+            continue
+        referenced.update(re.findall(r'^\s*ip access-group (\S+) (?:in|out)\s*$', chunk, re.M))
+    if not referenced:
+        return {}
+    blocks = {}
+    for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
+        m = re.match(r'ip access-list extended (\S+)', chunk)
+        if m and m.group(1) in referenced:
+            blocks[m.group(1)] = chunk
+    return blocks
+
+
+def _interface_acl_log_check(cfg, require_log_input, what):
+    acl_blocks = _interface_acl_blocks(cfg)
+    if not acl_blocks:
+        return None, 'not applicable - no ACL applied to any interface via `ip access-group`'
+    keyword_pattern = r'log-input\s*$' if require_log_input else r'log(?:-input)?\s*$'
+    problems, compliant = [], []
+    for name, block in acl_blocks.items():
+        deny_lines = [line.strip() for line in re.findall(r'^\s*(?:\d+\s+)?deny\s+.*$', block, re.M)]
+        if not deny_lines:
+            continue
+        bad = [line for line in deny_lines if not re.search(keyword_pattern, line)]
+        if bad:
+            problems.append(f'`{name}`: deny line(s) missing {what}: {"; ".join(bad)}')
+        else:
+            compliant.append(f'`{name}`: all deny statement(s) have {what}')
+    if problems:
+        return False, '; '.join(problems)
+    return True, '; '.join(compliant) if compliant else 'applied interface ACL(s) have no deny statements'
+
+
+# V-216555: check text requires verifying per-neighbor/per-interface
+# authentication config, a FIPS 198-1 algorithm, and a <=180-day key
+# lifetime across whichever dynamic routing protocol(s) are actually
+# running - genuinely protocol-specific (BGP uses `neighbor ... ao
+# <keychain>`, OSPF uses `ip ospf authentication key-chain`, EIGRP/IS-IS
+# have their own forms) and too varied to verify generically here. Not
+# applicable if the router runs no dynamic routing protocol at all -
+# nothing to authenticate.
+def _routing_protocol_auth_check(cfg):
+    protocols = ('router bgp', 'router ospf', 'router eigrp', 'router isis')
+    if not any(re.search(rf'^{re.escape(p)} ', cfg, re.M) for p in protocols):
+        return None, 'not applicable - no dynamic routing protocol (BGP/OSPF/EIGRP/IS-IS) configured'
+    return 'NOT AUTOMATED', (
+        'dynamic routing protocol configured - needs manual review of per-neighbor/per-interface '
+        'authentication, FIPS 198-1 algorithm, and <=180-day key lifetime (protocol-specific syntax, not '
+        'generically automatable)'
+    )
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Most RTR rules describe perimeter/BGP/MPLS/multicast topology and policy
 # decisions (authorized sources, AS numbers, site address space, etc.) that can't
@@ -578,6 +707,14 @@ CHECKS = {
     'V-216607': _mpls_ldp_router_id_check,
     'V-216608': _mpls_ldp_sync_check,
     'V-216609': _rsvp_message_pacing_check,
+    'V-215711': _pki_trustpoint_check,
+    'V-216560': _copp_structural_check,
+    'V-215701': _copp_structural_check,
+    'V-215673': lambda cfg: _interface_acl_log_check(cfg, require_log_input=True, what='`log-input`'),
+    'V-216569': lambda cfg: _interface_acl_log_check(cfg, require_log_input=True, what='`log-input`'),
+    'V-216570': lambda cfg: _interface_acl_log_check(cfg, require_log_input=True, what='`log-input`'),
+    'V-216568': lambda cfg: _interface_acl_log_check(cfg, require_log_input=False, what='`log` or `log-input`'),
+    'V-216555': _routing_protocol_auth_check,
 
     # --- RTR (Router) ---
     # V-216564/565/566/567/584/586 (directed broadcast, ICMP unreachables/mask-reply/
@@ -608,6 +745,19 @@ device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 
 # Prompt for credentials
 username, password = netauto.get_credentials()
+
+# V-215696/697 need live `show snmp user` output (see _snmpv3_user_live_check) -
+# IOS classic never writes SNMPv3 user config to running-config. Uses a
+# separate connection since run_stig_audit manages its own for running-config,
+# same pattern as L2_stig_audit.py.
+snmp_discovery_connect = netauto.connect(device_name, device_info, username, password)
+if snmp_discovery_connect is None:
+    raise SystemExit(1)
+snmp_user_output = str(snmp_discovery_connect.send_command('show snmp user'))
+snmp_discovery_connect.disconnect()
+
+CHECKS['V-215696'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=False)
+CHECKS['V-215697'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=True)
 
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,

@@ -97,16 +97,40 @@ if net_connect is None:
     raise SystemExit(1)
 
 # NTP server IPs (V-215693) and syslog server IPs (V-220136) come from
-# inventory.yaml's services section. NTP authentication key (V-215698) comes
-# from secrets.yaml (gitignored, never committed - see secrets.yaml.example).
+# inventory.yaml's services section. NTP authentication key (V-215698) and
+# SNMPv3 auth/priv passwords (V-215696/697) come from secrets.yaml (gitignored,
+# never committed - see secrets.yaml.example).
 services = netauto.load_services()
 ntp_servers = services.get('ntp_servers', [])
 syslog_servers = services.get('syslog_servers', [])
-ntp_auth_key = netauto.load_secrets().get('ntp_auth_key') or {}
+secrets = netauto.load_secrets()
+ntp_auth_key = secrets.get('ntp_auth_key') or {}
 ntp_key_id = ntp_auth_key.get('id')
 ntp_key_value = ntp_auth_key.get('value')
 if not ntp_key_value:
     ntp_key_id = None
+
+# V-215696/697: FIPS-validated HMAC (SHA) auth + FIPS 140-2 approved (AES)
+# privacy for SNMPv3. Same shared secrets.yaml fields as L2S's identical
+# push (L2_stig_harden_global.py) - config-only, no NMS in this lab actually
+# polls it yet. Skips the view/host lines from V-215696's own Fix Text
+# example (SNMP access scoping + trap destination) since
+# IOS_Router_audit.py's check only verifies `show snmp user` output (auth/
+# privacy protocol), not those - same simplification L2S already made.
+# AES 256 matches V-215697's own Fix Text example specifically (unlike
+# L2S's AES 128 choice) - either satisfies the audit's `'aes' in ...` check.
+SNMPV3_GROUP = 'SNMPV3_GROUP'
+SNMPV3_USER = 'SNMPV3_USER'
+snmpv3 = secrets.get('snmpv3') or {}
+snmp_auth_password = str(snmpv3.get('auth_password') or '').strip()
+snmp_priv_password = str(snmpv3.get('priv_password') or '').strip()
+
+snmpv3_commands = []
+if snmp_auth_password and snmp_priv_password:
+    snmpv3_commands = [
+        f'snmp-server group {SNMPV3_GROUP} v3 priv',
+        f'snmp-server user {SNMPV3_USER} {SNMPV3_GROUP} v3 auth sha {snmp_auth_password} priv aes 256 {snmp_priv_password}',
+    ]
 
 ntp_commands = []
 if ntp_key_id:
@@ -132,11 +156,13 @@ if ntp_key_id:
         f'ntp authentication-key {ntp_key_id} md5 {ntp_key_value}', 'ntp authenticate', f'ntp trusted-key {ntp_key_id}'])
 if syslog_servers:
     applied_fixes['V-220136 (dual syslog servers)'] = '; '.join(f'logging host {ip}' for ip in syslog_servers)
+if snmpv3_commands:
+    applied_fixes['V-215696/697 (SNMPv3 auth/priv)'] = f'snmp-server group {SNMPV3_GROUP} v3 priv; snmp-server user {SNMPV3_USER} ... v3 auth sha ... priv aes 256 ...'
 
 commands = (
     list(BASE_FIXES.values()) + AUX_PORT_FIX + CONSOLE_EXEC_TIMEOUT_FIX + VTY_EXEC_TIMEOUT_FIX
     + HTTP_TIMEOUT_FIX + VTY_SESSION_LIMIT_FIX + ARCHIVE_LOGGING_FIX + ntp_commands
-    + [f'logging host {ip}' for ip in syslog_servers]
+    + [f'logging host {ip}' for ip in syslog_servers] + snmpv3_commands
 )
 
 # Push the hardening commands and close the session
@@ -160,6 +186,8 @@ if not ntp_key_id:
     print('\nSkipped V-215698 (NTP authentication) — add ntp_auth_key to secrets.yaml to include it.')
 if not syslog_servers:
     print('\nSkipped V-220136 (dual syslog servers) — add syslog_servers to inventory.yaml\'s services section to include it.')
+if not (snmp_auth_password and snmp_priv_password):
+    print('\nSkipped V-215696/697 (SNMPv3 auth/priv) — add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
 
 print('\nRules requiring interface targeting (not pushed by this script):')
 for rule in SKIPPED_RULES:
