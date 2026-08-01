@@ -701,6 +701,168 @@ def _inactive_interfaces_check(cfg):
     return True, f'all {len(unaddressed)} unaddressed (inactive) interface(s) are shut down: {", ".join(unaddressed)}'
 
 
+def _addressed_interfaces(cfg):
+    """Yield (name, chunk) for every interface with an IP address configured -
+    used to scope per-interface external/internal checks to interfaces that
+    are actually carrying traffic, not spares/placeholders."""
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if m and re.search(r'^\s*ip address \S+', chunk, re.M):
+            yield m.group(1), chunk
+
+
+# V-216564: scoped to ALL interfaces (unlike the external-only rules below,
+# despite being grouped with them by the original "per-interface" comment) -
+# 'ip directed-broadcast' has been off by default since IOS 12.0, so its
+# absence everywhere is compliant; only an explicit positive line is a
+# finding.
+def _directed_broadcast_check(cfg):
+    bad = [name for name, chunk in _addressed_interfaces(cfg) if re.search(r'^\s*ip directed-broadcast\s*$', chunk, re.M)]
+    if bad:
+        return False, f'`ip directed-broadcast` enabled on: {", ".join(bad)}'
+    return True, 'no interface has `ip directed-broadcast` enabled (off by default)'
+
+
+def _external_interface_chunks(cfg, external_interfaces):
+    chunks = {}
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if m and m.group(1) in external_interfaces:
+            chunks[m.group(1)] = chunk
+    return chunks
+
+
+# V-216565/567/586: each of these commands is ENABLED by default on IOS
+# (ip unreachables, ip redirects, ip proxy-arp), so IOS never prints them
+# when compliant - the finding condition is the ABSENCE of the explicit
+# negation ('no ip unreachables' etc.) on a declared external interface.
+# NOT APPLICABLE if the device has no external interfaces declared at all
+# (inventory.yaml's external_interfaces_by_device) - nothing to check, same
+# as R2 in this lab (see Topology.png: R1 is the actual perimeter router).
+def _external_interface_absence_check(cfg, external_interfaces, pattern, what):
+    if not external_interfaces:
+        return None, 'not applicable - no external interfaces declared for this device (inventory.yaml)'
+    chunks = _external_interface_chunks(cfg, external_interfaces)
+    missing = [name for name in external_interfaces if not re.search(pattern, chunks.get(name, ''), re.M)]
+    if missing:
+        return False, f'missing {what} on external interface(s): {", ".join(missing)}'
+    return True, f'{what} present on all {len(external_interfaces)} external interface(s): {", ".join(external_interfaces)}'
+
+
+# V-216566: 'ip mask-reply' is DISABLED by default (opposite of the three
+# above) - the finding condition is the PRESENCE of the explicit positive
+# command on a declared external interface.
+def _external_interface_positive_check(cfg, external_interfaces, pattern, what):
+    if not external_interfaces:
+        return None, 'not applicable - no external interfaces declared for this device (inventory.yaml)'
+    chunks = _external_interface_chunks(cfg, external_interfaces)
+    bad = [name for name, chunk in chunks.items() if re.search(pattern, chunk, re.M)]
+    if bad:
+        return False, f'{what} enabled on external interface(s): {", ".join(bad)}'
+    return True, f'{what} not found on any of the {len(external_interfaces)} external interface(s) (default-compliant)'
+
+
+# V-216584: check text's own Step 1 - LLDP is off globally by default, and
+# compliant regardless of interfaces unless 'lldp run' has been explicitly
+# enabled; only then does Step 2 (per-external-interface 'no lldp transmit')
+# apply.
+def _lldp_external_check(cfg, external_interfaces):
+    if not re.search(r'^lldp run\s*$', cfg, re.M):
+        return True, 'LLDP not enabled globally (`lldp run` absent) - off by default, compliant regardless of interfaces'
+    return _external_interface_absence_check(cfg, external_interfaces, r'^\s*no lldp transmit\s*$', '`no lldp transmit`')
+
+
+# V-216989: uRPF or an egress ACL on every INTERNAL interface (addressed,
+# not declared external, and not a loopback - loopbacks aren't a traffic-
+# forwarding boundary). Partial coverage only for the ACL path: confirms an
+# inbound ACL is applied, not that its content actually blocks spoofed
+# source addresses (same category as V-215667/CoPP's partial-coverage
+# checks elsewhere in this file). NOT APPLICABLE if there are no internal
+# interfaces to check.
+def _urpf_egress_check(cfg, external_interfaces):
+    internal = [
+        name for name, _ in _addressed_interfaces(cfg)
+        if name not in external_interfaces and not name.lower().startswith('loopback')
+    ]
+    if not internal:
+        return None, 'not applicable - no internal (non-loopback, non-external) interfaces found'
+    chunks = {}
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if m and m.group(1) in internal:
+            chunks[m.group(1)] = chunk
+    missing = []
+    for name in internal:
+        chunk = chunks.get(name, '')
+        has_urpf = bool(re.search(r'^\s*ip verify unicast source reachable-via \S+', chunk, re.M))
+        has_egress_acl = bool(re.search(r'^\s*ip access-group \S+ in\s*$', chunk, re.M))
+        if not (has_urpf or has_egress_acl):
+            missing.append(name)
+    if missing:
+        return False, f'no uRPF (`ip verify unicast source reachable-via ...`) or inbound ACL found on internal interface(s): {", ".join(missing)}'
+    return True, (
+        f'all {len(internal)} internal interface(s) have uRPF or an inbound ACL applied: {", ".join(internal)} '
+        f'(partial coverage - presence only, not verified that any applied ACL actually blocks spoofed sources)'
+    )
+
+
+# V-216575: DISA gives the exact bogon prefixes as fixed values (not
+# site-specific), unlike most perimeter rules - genuinely checkable against
+# an ACL's deny-line content. Requires an inbound ACL on every declared
+# external interface whose deny statements collectively cover all 14
+# ranges (a broader deny line - e.g. a supernet - still counts as coverage).
+_BOGON_PREFIXES = [
+    ipaddress.ip_network(net) for net in (
+        '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
+        '169.254.0.0/16', '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24',
+        '192.168.0.0/16', '198.18.0.0/15', '198.51.100.0/24', '203.0.113.0/24',
+        '224.0.0.0/3', '240.0.0.0/4',
+    )
+]
+
+
+def _acl_deny_networks(acl_block):
+    nets = []
+    for addr, wildcard in re.findall(r'^\s*(?:\d+\s+)?deny\s+ip\s+(\S+)\s+(\S+)\s+any', acl_block, re.M):
+        try:
+            netmask = ipaddress.ip_address(int(ipaddress.ip_address(wildcard)) ^ 0xFFFFFFFF)
+            nets.append(ipaddress.ip_network(f'{addr}/{netmask}', strict=False))
+        except ValueError:
+            continue
+    return nets
+
+
+def _bogon_filter_check(cfg, external_interfaces):
+    if not external_interfaces:
+        return None, 'not applicable - no external interfaces declared for this device (inventory.yaml)'
+    chunks = _external_interface_chunks(cfg, external_interfaces)
+    problems, compliant = [], []
+    for name in external_interfaces:
+        chunk = chunks.get(name, '')
+        acl_m = re.search(r'^\s*ip access-group (\S+) in\s*$', chunk, re.M)
+        if not acl_m:
+            problems.append(f'{name}: no inbound ACL applied')
+            continue
+        acl_name = acl_m.group(1)
+        acl_block = None
+        for c2 in re.split(r'^(?=\S)', cfg, flags=re.M):
+            if c2.startswith(f'ip access-list extended {acl_name}'):
+                acl_block = c2
+                break
+        if acl_block is None:
+            problems.append(f'{name}: `ip access-group {acl_name} in` applied, but no matching ACL block found')
+            continue
+        denied = _acl_deny_networks(acl_block)
+        missing = [str(bogon) for bogon in _BOGON_PREFIXES if not any(bogon.subnet_of(net) for net in denied)]
+        if missing:
+            problems.append(f'{name}: `{acl_name}` missing bogon deny coverage for: {", ".join(missing)}')
+        else:
+            compliant.append(f'{name}: `{acl_name}` covers all {len(_BOGON_PREFIXES)} bogon prefixes')
+    if problems:
+        return False, '; '.join(problems)
+    return True, '; '.join(compliant)
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Most RTR rules describe perimeter/BGP/MPLS/multicast topology and policy
 # decisions (authorized sources, AS numbers, site address space, etc.) that can't
@@ -758,11 +920,10 @@ CHECKS = {
     'V-216556': _inactive_interfaces_check,
 
     # --- RTR (Router) ---
-    # V-216564/565/566/567/584/586 (directed broadcast, ICMP unreachables/mask-reply/
-    # redirects, LLDP transmit, proxy ARP) are per-interface commands: finding the
-    # "no ip ..." string anywhere in the config doesn't mean every interface has it,
-    # so they're deliberately left out and reported as NOT AUTOMATED (same reasoning
-    # IOS_Router_stig_harden_global.py already uses to skip them as needing interface targeting).
+    # V-216564/565/566/567/584/586/989/575 need per-interface iteration scoped to
+    # external/internal interface roles - wired below via closure once
+    # external_interfaces is loaded from inventory.yaml (a topology fact, not
+    # derivable from a device's own config alone).
     'V-216563': lambda cfg: 'no ip gratuitous-arps' in cfg,
     'V-216571': aux_port_disabled,
     'V-216585': _cdp_check,
@@ -799,6 +960,19 @@ snmp_discovery_connect.disconnect()
 
 CHECKS['V-215696'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=False)
 CHECKS['V-215697'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=True)
+
+# External/internal interface roles (see Topology.png + inventory.yaml's
+# external_interfaces_by_device) for the external-scoped rules
+# (V-216565/566/567/584/586/575) and the internal-scoped V-216989.
+external_interfaces = netauto.load_external_interfaces(device_name)
+CHECKS['V-216564'] = _directed_broadcast_check
+CHECKS['V-216565'] = lambda cfg: _external_interface_absence_check(cfg, external_interfaces, r'^\s*no ip unreachables\s*$', '`no ip unreachables`')
+CHECKS['V-216566'] = lambda cfg: _external_interface_positive_check(cfg, external_interfaces, r'^\s*ip mask-reply\s*$', '`ip mask-reply`')
+CHECKS['V-216567'] = lambda cfg: _external_interface_absence_check(cfg, external_interfaces, r'^\s*no ip redirects\s*$', '`no ip redirects`')
+CHECKS['V-216584'] = lambda cfg: _lldp_external_check(cfg, external_interfaces)
+CHECKS['V-216586'] = lambda cfg: _external_interface_absence_check(cfg, external_interfaces, r'^\s*no ip proxy-arp\s*$', '`no ip proxy-arp`')
+CHECKS['V-216989'] = lambda cfg: _urpf_egress_check(cfg, external_interfaces)
+CHECKS['V-216575'] = lambda cfg: _bogon_filter_check(cfg, external_interfaces)
 
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,

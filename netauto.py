@@ -101,6 +101,18 @@ def load_default_access_vlan(path='inventory.yaml'):
     return inventory.get('default_access_vlan')
 
 
+def load_external_interfaces(device_name, path='inventory.yaml'):
+    """Load the list of external-facing interface names for a router from the
+    YAML inventory's external_interfaces_by_device section — a security-
+    boundary/topology fact (see Topology.png) that can't be derived from a
+    device's own config, used by IOS_Router_audit.py for STIG rules scoped to
+    "external" vs "internal" interfaces. Returns an empty list if the device
+    has no entry (all its active interfaces are treated as internal)."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('external_interfaces_by_device', {}).get(device_name, [])
+
+
 def load_secrets(path='secrets.yaml'):
     """Load plaintext secrets used by the *_stig_harden.py scripts (VTP password,
     NTP auth key, etc.) from secrets.yaml - gitignored, never committed. Returns
