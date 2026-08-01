@@ -48,13 +48,13 @@ services:
   ntp_servers:
     - 192.168.100.10
     - 192.168.100.11
-  # V-220620 (L2_stig_harden_global.py only - dual syslog servers). Skipped with a
-  # warning if empty.
+  # V-220620 (L2_stig_harden_global.py), V-220136 (IOS_Router_stig_harden_global.py) -
+  # dual syslog servers. Skipped with a warning if empty.
   syslog_servers:
     - 192.168.100.10
     - 192.168.100.11
-  # V-220587/617 (L2_stig_harden_aaa.py - RADIUS as primary auth source).
-  # Script aborts if empty (paired with secrets.yaml's radius_key).
+  # V-220587/617 (L2_stig_harden_aaa.py), V-215709 (IOS_Router_stig_harden_aaa.py) -
+  # RADIUS as primary auth source. Script aborts if empty (paired with secrets.yaml's radius_key).
   radius_servers:
     - 192.168.100.10
     - 192.168.100.11
