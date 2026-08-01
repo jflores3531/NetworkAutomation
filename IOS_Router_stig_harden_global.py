@@ -18,6 +18,12 @@ BASE_FIXES = {
     'V-216563 (Gratuitous ARPs)': 'no ip gratuitous-arps',
     'V-216585 (CDP)': 'no cdp run',
     'V-229030 (CEF)': 'ip cef',
+    # Retroactively re-encodes any existing type-0 (cleartext) passwords
+    # already in the config - including the local admin account's - to type 7
+    # (weak, reversible, but that's the literal Check Content requirement for
+    # this rule). Doesn't change the password value itself, just its stored
+    # representation - zero login/lockout risk.
+    'V-215687 (password encryption)': 'service password-encryption',
     'V-215672 (log timestamps)': 'service timestamps log datetime localtime',
     'V-215691 (logging buffer size)': 'logging buffered 64000 informational',
     'V-215692 (audit failure alert)': 'logging trap critical',
