@@ -143,3 +143,21 @@ default_access_vlan: 50
 # NXOS_stig_harden_global.py pushes this before 'vtp mode transparent' and the
 # password itself.
 vtp_domain: NETAUTO
+
+# External-facing interfaces per router, read via netauto.load_external_interfaces()
+# for IOS_Router_audit.py's V-216565/566/567/584/586 (rules scoped to "external
+# interfaces") and V-216575 (bogon ingress filter, also external-scoped) vs
+# V-216989 (uRPF/egress ACL, scoped to "internal" interfaces - anything addressed
+# and not listed here). This is a security-boundary/topology fact, not derivable
+# from a device's own config - see Topology.png. R1 is the actual perimeter router
+# (Gi0/2 -> Cloud1, Gi0/3 -> NAT1); Gi0/0 (-> S2) and Gi0/1 (-> R2) face the
+# internal lab. R2 sits one hop behind R1 with no direct external connection at
+# all - empty list, meaning ALL its active interfaces are internal and the
+# external-scoped rules report NOT APPLICABLE there. A device with no entry here
+# is treated the same as an empty list. R1 audit-only (per
+# project_r1_connectivity_chokepoint memory, never a harden-push target).
+external_interfaces_by_device:
+  R1:
+    - GigabitEthernet0/2
+    - GigabitEthernet0/3
+  R2: []
