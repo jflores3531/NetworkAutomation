@@ -72,6 +72,19 @@ ARCHIVE_LOGGING_FIX = [
     'hidekeys',
 ]
 
+# V-215699/700: FIPS-validated HMAC (MAC/integrity) and encryption
+# (confidentiality) algorithms for SSH, both gated on 'ip ssh version 2'
+# being active - same shape as L2S's SSH_ENCRYPTION_FIX. Classic IOS accepts
+# a space-separated algorithm list in one command (confirmed already working
+# via L2S), unlike NX-OS's 'ssh macs'/'ssh ciphers', which needed one
+# algorithm per invocation (see project memory) - R2 is cisco_ios, same
+# platform family as the switches, not NX-OS.
+SSH_ENCRYPTION_FIX = [
+    'ip ssh version 2',
+    'ip ssh server algorithm mac hmac-sha2-256',
+    'ip ssh server algorithm encryption aes256-ctr aes192-ctr aes128-ctr',
+]
+
 # Rules that need per-interface targeting and are intentionally not pushed by
 # this global-only pass
 SKIPPED_RULES = [
@@ -154,6 +167,7 @@ applied_fixes['V-216571 (AUX port disabled)'] = '; '.join(AUX_PORT_FIX)
 applied_fixes['V-215688 (exec-timeout)'] = '; '.join(CONSOLE_EXEC_TIMEOUT_FIX + VTY_EXEC_TIMEOUT_FIX + HTTP_TIMEOUT_FIX)
 applied_fixes['V-215662 (session limit)'] = '; '.join(VTY_SESSION_LIMIT_FIX)
 applied_fixes['V-215670b (admin activity logging: archive)'] = '; '.join(ARCHIVE_LOGGING_FIX)
+applied_fixes['V-215699/700 (SSH MAC + encryption)'] = '; '.join(SSH_ENCRYPTION_FIX)
 if ntp_servers:
     applied_fixes['V-215693 (NTP time sync)'] = '; '.join(
         f'ntp server {ip}' + (f' key {ntp_key_id}' if ntp_key_id else '') for ip in ntp_servers)
@@ -167,8 +181,8 @@ if snmpv3_commands:
 
 commands = (
     list(BASE_FIXES.values()) + AUX_PORT_FIX + CONSOLE_EXEC_TIMEOUT_FIX + VTY_EXEC_TIMEOUT_FIX
-    + HTTP_TIMEOUT_FIX + VTY_SESSION_LIMIT_FIX + ARCHIVE_LOGGING_FIX + ntp_commands
-    + [f'logging host {ip}' for ip in syslog_servers] + snmpv3_commands
+    + HTTP_TIMEOUT_FIX + VTY_SESSION_LIMIT_FIX + ARCHIVE_LOGGING_FIX + SSH_ENCRYPTION_FIX
+    + ntp_commands + [f'logging host {ip}' for ip in syslog_servers] + snmpv3_commands
 )
 
 # Push the hardening commands and close the session
