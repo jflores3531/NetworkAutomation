@@ -44,7 +44,7 @@ devices:
 # never connected to by netauto.connect(). Read via netauto.load_services().
 services:
   # V-220601 (L2_stig_harden_global.py), V-220498 (NXOS_stig_harden_global.py), V-215693
-  # (IOS_Router_stig_harden.py). Skipped with a warning by all three if empty.
+  # (IOS_Router_stig_harden_global.py). Skipped with a warning by all three if empty.
   ntp_servers:
     - 192.168.100.10
     - 192.168.100.11

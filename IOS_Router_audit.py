@@ -35,7 +35,7 @@ def _http_timeout_ok(cfg):
     network connections associated with a device management'. If neither `ip
     http server` nor `ip http secure-server` is enabled there's no HTTP
     management connection to time out, so there's nothing to check."""
-    if 'ip http server' not in cfg and 'ip http secure-server' not in cfg:
+    if not re.search(r'^ip http server\s*$', cfg, re.M) and not re.search(r'^ip http secure-server\s*$', cfg, re.M):
         return True, None
     m = re.search(r'ip http timeout-policy idle (\d+)', cfg)
     if not m:
@@ -123,7 +123,7 @@ def _cdp_check(cfg):
     this is a finding") requires all of them. Config text alone can't identify
     which interfaces are 'external' (that's topology context), so the only
     condition this can verify unambiguously is the global disable, which is
-    also the only remediation IOS_Router_stig_harden.py actually pushes."""
+    also the only remediation IOS_Router_stig_harden_global.py actually pushes."""
     if 'no cdp run' in cfg:
         return True, 'CDP disabled globally: `no cdp run`'
     return False, (
@@ -162,7 +162,7 @@ def _confidentiality_check(cfg):
     if ssh_ok:
         return True, ssh_detail
 
-    if 'ip http secure-server' not in cfg:
+    if not re.search(r'^ip http secure-server\s*$', cfg, re.M):
         return False, f'SSH: {ssh_detail}; HTTPS: `ip http secure-server` not enabled'
     m = re.search(r'^ip http secure-ciphersuite\s+(.+)$', cfg, re.M)
     if m and 'aes' in m.group(1):
@@ -177,7 +177,7 @@ def _confidentiality_check(cfg):
 # Requires there be exactly one policy block, same reasoning as L2S's
 # _cc_policy_check (L2_stig_audit.py) for the analogous L2S rules.
 def _cc_policy_check(cfg, pattern, min_value, what):
-    if 'aaa new-model' not in cfg:
+    if not re.search(r'^aaa new-model\s*$', cfg, re.M):
         return False, 'missing `aaa new-model`'
     policy_blocks = [chunk for chunk in re.split(r'^(?=\S)', cfg, flags=re.M) if chunk.startswith('aaa common-criteria policy')]
     if not policy_blocks:
@@ -201,7 +201,7 @@ CHECKS = {
     # --- NDM (Network Device Management) ---
     'V-215669': lambda cfg: bool(re.search(r'banner (login|motd)', cfg)),
     'V-215681': lambda cfg: _cc_policy_check(cfg, r'^\s*min-length (\d+)', 15, '`min-length <n>`'),
-    'V-215687': lambda cfg: 'service password-encryption' in cfg,
+    'V-215687': lambda cfg: bool(re.search(r'^service password-encryption\s*$', cfg, re.M)),
     'V-215688': _exec_timeout_reason,
     'V-215699': lambda cfg: _ssh_algorithm_fips_check(cfg, 'mac', 'hmac-sha2', 'MAC (HMAC integrity)'),
     'V-215700': _confidentiality_check,
@@ -213,7 +213,7 @@ CHECKS = {
     # redirects, LLDP transmit, proxy ARP) are per-interface commands: finding the
     # "no ip ..." string anywhere in the config doesn't mean every interface has it,
     # so they're deliberately left out and reported as NOT AUTOMATED (same reasoning
-    # IOS_Router_stig_harden.py already uses to skip them as needing interface targeting).
+    # IOS_Router_stig_harden_global.py already uses to skip them as needing interface targeting).
     'V-216563': lambda cfg: 'no ip gratuitous-arps' in cfg,
     'V-216571': aux_port_disabled,
     'V-216585': _cdp_check,
