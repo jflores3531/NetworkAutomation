@@ -662,6 +662,45 @@ def _routing_protocol_auth_check(cfg):
     )
 
 
+# V-215679: exactly one local `username` account (the account of last
+# resort), with `local` configured as the fallback after the AAA server
+# group in the authentication order - same evidence L2S's V-220587 checks
+# for. Direct port of L2_stig_audit.py's _single_local_account_check.
+def _single_local_account_check(cfg):
+    usernames = re.findall(r'^username (\S+)', cfg, re.M)
+    if len(usernames) != 1:
+        found = ', '.join(usernames) if usernames else 'none'
+        return False, f'found {len(usernames)} `username` line(s) (need exactly 1): {found}'
+    if not re.search(r'^aaa authentication \S+ \S+ group \S+ local\s*$', cfg, re.M):
+        return False, f'exactly 1 local account (`{usernames[0]}`) found, but no `aaa authentication ... group <server> local` fallback line'
+    return True, f'exactly 1 local account (`{usernames[0]}`), configured as fallback after the AAA server group'
+
+
+# V-216556: check text's finding condition is "If an interface is not being
+# used but is configured or enabled, this is a finding" - "not being used"
+# is read here as "no ip address configured" (the router's own example
+# shows bare, unaddressed interfaces), same signal used elsewhere in this
+# file (e.g. the exec-timeout/CDP checks) to distinguish live interfaces
+# from disabled/spare ones. An interface WITH an address is in active use
+# and out of scope for this rule regardless of admin state.
+def _inactive_interfaces_check(cfg):
+    unaddressed, not_shutdown = [], []
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m:
+            continue
+        if not re.search(r'^\s*no ip address\s*$', chunk, re.M):
+            continue
+        unaddressed.append(m.group(1))
+        if not re.search(r'^\s*shutdown\s*$', chunk, re.M):
+            not_shutdown.append(m.group(1))
+    if not unaddressed:
+        return True, 'no unaddressed interfaces found - nothing inactive to disable'
+    if not_shutdown:
+        return False, f'unaddressed (inactive) interface(s) not shut down: {", ".join(not_shutdown)}'
+    return True, f'all {len(unaddressed)} unaddressed (inactive) interface(s) are shut down: {", ".join(unaddressed)}'
+
+
 # Regex/keyword checks for rules that can be verified directly from running-config
 # text. Most RTR rules describe perimeter/BGP/MPLS/multicast topology and policy
 # decisions (authorized sources, AS numbers, site address space, etc.) that can't
@@ -715,6 +754,8 @@ CHECKS = {
     'V-216570': lambda cfg: _interface_acl_log_check(cfg, require_log_input=True, what='`log-input`'),
     'V-216568': lambda cfg: _interface_acl_log_check(cfg, require_log_input=False, what='`log` or `log-input`'),
     'V-216555': _routing_protocol_auth_check,
+    'V-215679': _single_local_account_check,
+    'V-216556': _inactive_interfaces_check,
 
     # --- RTR (Router) ---
     # V-216564/565/566/567/584/586 (directed broadcast, ICMP unreachables/mask-reply/
