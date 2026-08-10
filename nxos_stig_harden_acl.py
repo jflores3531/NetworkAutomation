@@ -5,12 +5,12 @@ own script on purpose - a vty access-class that excludes the automation
 host's own source IP blocks every future SSH connection from it, with no
 fallback-to-local path once it's enforced, so this is run and reviewed
 independently of the bulk hardening pass. Direct NX-OS port of
-L2_stig_harden_acl.py - same pattern, same inventory.yaml keys
+l2_stig_harden_acl.py - same pattern, same inventory.yaml keys
 (automation_host, not L2S-specific despite the name it was introduced under).
 
 Scoped to just the automation host (inventory.yaml's automation_host), not
 the whole management_subnet - least privilege, and simpler to reason about.
-Applied via 'line vty' + 'access-class ... in' - NXOS_stig_audit.py's
+Applied via 'line vty' + 'access-class ... in' - nxos_stig_audit.py's
 _mgmt_acl_check also accepts an 'interface mgmt0' + 'ip access-group' form,
 but only one push path is needed here.
 
@@ -52,7 +52,7 @@ if net_connect is None:
 # Step 1: create the ACL on its own. Has no effect on anything until it's
 # actually referenced by an access-class - completely safe on its own.
 # NX-OS's 'ip access-list <name>' auto-numbers each permit/deny line the
-# same way IOS does (confirmed via NXOS_stig_audit.py's _mgmt_acl_check
+# same way IOS does (confirmed via nxos_stig_audit.py's _mgmt_acl_check
 # regex, which expects that numbering) - no 'extended' keyword needed here,
 # unlike L2S.
 acl_commands = [
@@ -61,14 +61,14 @@ acl_commands = [
     'exit',
 ]
 net_connect.send_config_set(acl_commands)
-netauto.log_push('NXOS_stig_harden_acl.py', device_name, username, acl_commands)
+netauto.log_push('nxos_stig_harden_acl.py', device_name, username, acl_commands)
 print(f'ACL {ACL_NAME} created on {device_name}, scoped to {automation_host} only.')
 
 # Step 2: apply it. This is the actual risky moment - everything before this
 # point was fully reversible with zero exposure window.
 apply_commands = ['line vty', f'access-class {ACL_NAME} in']
 net_connect.send_config_set(apply_commands)
-netauto.log_push('NXOS_stig_harden_acl.py', device_name, username, apply_commands)
+netauto.log_push('nxos_stig_harden_acl.py', device_name, username, apply_commands)
 print(f'Applied `access-class {ACL_NAME} in` to line vty on {device_name}.')
 
 # Step 3: verify with a *second*, independent connection - the primary
@@ -82,7 +82,7 @@ if verify_connect is None:
           f'Reverting `access-class {ACL_NAME} in` via the still-open primary session now.')
     revert_commands = ['line vty', f'no access-class {ACL_NAME} in']
     net_connect.send_config_set(revert_commands)
-    netauto.log_push('NXOS_stig_harden_acl.py', device_name, username, revert_commands)
+    netauto.log_push('nxos_stig_harden_acl.py', device_name, username, revert_commands)
     net_connect.disconnect()
     print('Reverted. The ACL itself is still defined but no longer applied to line vty - investigate before retrying.')
     raise SystemExit(1)

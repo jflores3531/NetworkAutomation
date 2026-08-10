@@ -3,7 +3,7 @@
 illegitimate source address, via Unicast Reverse Path Forwarding) to every
 internal interface on a router - the complement of the external role
 declared in inventory.yaml's external_interfaces_by_device, same
-classification IOS_Router_audit.py's _urpf_egress_check uses.
+classification ios_router_audit.py's _urpf_egress_check uses.
 
 LIVE INCIDENT, 2026-08-01: the first version of this script pushed
 'ip verify unicast source reachable-via rx' without the 'allow-default'
@@ -18,7 +18,7 @@ exactly this topology (a stub/single-uplink router with no specific
 routes) and is now always included below.
 
 Second lesson from that incident: the create-verify-revert pattern that
-works for IOS_Router_stig_harden_acl.py/L2_stig_harden_acl.py does NOT
+works for ios_router_stig_harden_acl.py/l2_stig_harden_acl.py does NOT
 transfer cleanly to uRPF. Those scripts' safety net relies on the primary
 session being unaffected by the change (an access-class/authentication
 check only applies to NEW connections, so an already-established session
@@ -63,7 +63,7 @@ if net_connect is None:
 
 # Discover internal interfaces live - addressed, not declared external
 # (inventory.yaml), and not a loopback (not a traffic-forwarding boundary).
-# Same classification as IOS_Router_audit.py's _urpf_egress_check.
+# Same classification as ios_router_audit.py's _urpf_egress_check.
 running_config = str(net_connect.send_command('show running-config'))
 external_interfaces = netauto.load_external_interfaces(device_name)
 internal_interfaces = []
@@ -95,7 +95,7 @@ for name in internal_interfaces:
 
 try:
     net_connect.send_config_set(urpf_commands)
-    netauto.log_push('IOS_Router_stig_harden_urpf.py', device_name, username, urpf_commands)
+    netauto.log_push('ios_router_stig_harden_urpf.py', device_name, username, urpf_commands)
     print(f'uRPF (allow-default) pushed to {device_name} on internal interface(s): {", ".join(internal_interfaces)}')
 except Exception as e:
     print(f'\nABORT: the push itself failed or hung ({type(e).__name__}: {e}). Attempting a best-effort revert '
@@ -103,7 +103,7 @@ except Exception as e:
           f'not succeed. Console access (not SSH) will be the only guaranteed recovery path in that case.')
     try:
         net_connect.send_config_set(revert_commands)
-        netauto.log_push('IOS_Router_stig_harden_urpf.py', device_name, username, revert_commands)
+        netauto.log_push('ios_router_stig_harden_urpf.py', device_name, username, revert_commands)
         print('Best-effort revert command sent - verify manually with a fresh connection before trusting it.')
     except Exception as revert_e:
         print(f'Revert attempt also failed ({type(revert_e).__name__}: {revert_e}). Console access required.')
@@ -111,7 +111,7 @@ except Exception as e:
     raise SystemExit(1)
 
 # Verify with a *second*, independent connection - same pattern as
-# IOS_Router_stig_harden_acl.py, though see module docstring for why this
+# ios_router_stig_harden_acl.py, though see module docstring for why this
 # is weaker protection for uRPF than it is for an ACL/AAA change.
 print('Opening a second, independent connection to verify new logins still work...')
 verify_connect = netauto.connect(device_name, device_info, username, password)
@@ -120,7 +120,7 @@ if verify_connect is None:
           f'Reverting uRPF via the still-open primary session now.')
     try:
         net_connect.send_config_set(revert_commands)
-        netauto.log_push('IOS_Router_stig_harden_urpf.py', device_name, username, revert_commands)
+        netauto.log_push('ios_router_stig_harden_urpf.py', device_name, username, revert_commands)
         print('Reverted. Investigate before retrying.')
     except Exception as revert_e:
         print(f'Revert attempt also failed ({type(revert_e).__name__}: {revert_e}). Console access required.')

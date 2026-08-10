@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Push SISF-based 'device-tracking policy' blocks to a switch, for host IP
 visibility via 'show device-tracking database'. Not a STIG requirement - kept
-separate from L2_stig_harden_global.py on purpose. Requires IOS-XE (SISF
+separate from l2_stig_harden_global.py on purpose. Requires IOS-XE (SISF
 device-tracking); the classic-IOS lab switches (S1/S2/S3, vios_l2) don't
 support 'device-tracking policy' - confirmed missing from 'device-tracking ?'
 on S3, so this won't do anything useful there.
@@ -147,7 +147,7 @@ commands = policy_commands + interface_commands + vlan_commands
 # Push the commands and close the session
 output = net_connect.send_config_set(commands)
 net_connect.disconnect()
-netauto.log_push('L2_device_tracking.py', device_name, username, commands)
+netauto.log_push('l2_device_tracking.py', device_name, username, commands)
 
 print(f'Device tracking policies pushed to {device_name}:')
 for command in commands:

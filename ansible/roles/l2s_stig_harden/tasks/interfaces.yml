@@ -1,5 +1,5 @@
 ---
-# Mirrors L2_stig_harden_global.py's parse_switchports()/access_fixes/trunk_fixes -
+# Mirrors l2_stig_harden_global.py's parse_switchports()/access_fixes/trunk_fixes -
 # an interface counts as trunk only if its block has 'switchport mode
 # trunk'; everything else switchport-capable is access. NOT ported here,
 # on purpose (see ../../../README.md for why):

@@ -124,7 +124,7 @@ def _cdp_check(cfg):
     this is a finding") requires all of them. Config text alone can't identify
     which interfaces are 'external' (that's topology context), so the only
     condition this can verify unambiguously is the global disable, which is
-    also the only remediation IOS_Router_stig_harden_global.py actually pushes."""
+    also the only remediation ios_router_stig_harden_global.py actually pushes."""
     if 'no cdp run' in cfg:
         return True, 'CDP disabled globally: `no cdp run`'
     return False, (
@@ -176,7 +176,7 @@ def _confidentiality_check(cfg):
 # policy` block - checking the pattern anywhere in cfg (old behavior) could
 # match a stale/leftover policy block never actually applied to any account.
 # Requires there be exactly one policy block, same reasoning as L2S's
-# _cc_policy_check (L2_stig_audit.py) for the analogous L2S rules.
+# _cc_policy_check (l2_stig_audit.py) for the analogous L2S rules.
 def _cc_policy_check(cfg, pattern, min_value, what):
     if not re.search(r'^aaa new-model\s*$', cfg, re.M):
         return False, 'missing `aaa new-model`'
@@ -195,7 +195,7 @@ def _cc_policy_check(cfg, pattern, min_value, what):
 
 def _presence(cfg, pattern, flags=0, what=None):
     """PASS if pattern is found; reason shows the matched line, or what was
-    searched for if it wasn't. Ported from L2_stig_audit.py."""
+    searched for if it wasn't. Ported from l2_stig_audit.py."""
     m = re.search(pattern, cfg, flags)
     label = what or f'a line matching `{pattern}`'
     if m:
@@ -206,7 +206,7 @@ def _presence(cfg, pattern, flags=0, what=None):
 def _all_of(cfg, conditions):
     """conditions: list of (label, pattern), each tested with re.search(pattern,
     cfg, re.M). PASS only if all match; reason lists what's missing/present.
-    Ported from L2_stig_audit.py."""
+    Ported from l2_stig_audit.py."""
     missing, present = [], []
     for label, pattern in conditions:
         (present if re.search(pattern, cfg, re.M) else missing).append(label)
@@ -221,7 +221,7 @@ def _all_of(cfg, conditions):
 # V-215678: presence of any of these directives (not "no "-prefixed) is a
 # finding — unnecessary/nonsecure services that should stay disabled by
 # default. Same exact command list as L2S's V-220586 (UNNECESSARY_SERVICES_PATTERN
-# in L2_stig_audit.py) - the check/fix text is identical between the two
+# in l2_stig_audit.py) - the check/fix text is identical between the two
 # checklists for this rule.
 UNNECESSARY_SERVICES_PATTERN = (
     r'^\s*(boot network|ip boot server|ip bootp server|ip dns server|ip identd|'
@@ -240,7 +240,7 @@ def _no_unnecessary_services(cfg):
 
 # V-215662: concurrent management sessions limited via either ip http
 # max-connections or line vty session-limit (either is sufficient per DISA's
-# check text). Ported from L2_stig_audit.py's _session_limit_check.
+# check text). Ported from l2_stig_audit.py's _session_limit_check.
 def _session_limit_check(cfg):
     http_m = re.search(r'^ip http max-connections (\d+)', cfg, re.M)
     session_m = re.search(r'^\s*session-limit (\d+)', cfg, re.M)
@@ -255,7 +255,7 @@ def _session_limit_check(cfg):
 
 
 # V-215668: exactly 3 consecutive invalid attempts, blocked for >= 900s (15
-# min). Ported from L2_stig_audit.py's _login_block_check.
+# min). Ported from l2_stig_audit.py's _login_block_check.
 def _login_block_check(cfg):
     m = re.search(r'^login block-for (\d+) attempts (\d+) within (\d+)', cfg, re.M)
     if not m:
@@ -312,7 +312,7 @@ def _radius_redundancy_check(cfg):
 
 # V-215670/V-215672/V-215691/V-215692's shared evidence: an `archive` block
 # with `log config`/`logging enable` sub-commands. Ported from
-# L2_stig_audit.py's _archive_logging_enabled/_admin_activity_logged.
+# l2_stig_audit.py's _archive_logging_enabled/_admin_activity_logged.
 def _archive_logging_enabled(cfg):
     for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
         if chunk.startswith('archive'):
@@ -345,7 +345,7 @@ _SYSLOG_SEVERITY_RANK = {
 # logging trap command will not be shown in the configuration" - so an
 # absent `logging trap` line is compliant (defaults to informational, which
 # is broader/more inclusive than the required "critical" minimum), not a
-# finding. Ported from L2_stig_audit.py/NXOS_stig_audit.py's
+# finding. Ported from l2_stig_audit.py/nxos_stig_audit.py's
 # _logging_trap_check.
 def _logging_trap_check(cfg):
     m = re.search(r'^logging trap (\S+)', cfg, re.M)
@@ -366,7 +366,7 @@ def _logging_trap_check(cfg):
 # explicitly conditional in the check text: "If persistent logging is
 # enabled ... Otherwise, this requirement is not applicable." No `logging
 # persistent` line means PASS (not a finding), not FAIL. Ported from
-# L2_stig_audit.py's _audit_info_protection_check.
+# l2_stig_audit.py's _audit_info_protection_check.
 def _audit_info_protection_check(cfg):
     if not re.search(r'^logging persistent', cfg, re.M):
         return True, 'persistent logging not configured - not applicable per DISA (only required when `logging persistent` is enabled)'
@@ -378,7 +378,7 @@ def _audit_info_protection_check(cfg):
 # V-215667: vty access-class ACL must actually be scoped to the management
 # subnet, not just present. A "permit any" or out-of-subnet source doesn't
 # satisfy "controlling the flow of management information." Ported from
-# L2_stig_audit.py's _acl_source_in_subnet/_vty_acl_blocks/_vty_management_acl_check
+# l2_stig_audit.py's _acl_source_in_subnet/_vty_acl_blocks/_vty_management_acl_check
 # (V-220575's equivalent) - IOS Router's own check text uses the identical
 # `permit ip x.x.x.0 0.0.0.255 any` / `deny ip any any log-input` example.
 def _acl_source_in_subnet(source_spec, subnet):
@@ -537,7 +537,7 @@ def _snmpv3_user_live_check(show_snmp_user_output, require_priv):
     """V-215696/697: confirmed live (project memory) that Cisco IOS classic
     never writes SNMPv3 user config to `show running-config` at all - needs
     live `show snmp user` output instead of running-config text, same
-    platform quirk as L2S/NX-OS. Ported from L2_stig_audit.py's
+    platform quirk as L2S/NX-OS. Ported from l2_stig_audit.py's
     _snmpv3_user_live_check."""
     auth_m = re.search(r'Authentication Protocol:\s*(\S+)', show_snmp_user_output, re.I)
     if not auth_m or auth_m.group(1).lower() == 'none':
@@ -557,7 +557,7 @@ def _snmpv3_user_live_check(show_snmp_user_output, require_priv):
 # if the router does not have any public key certificates." When a
 # trustpoint exists, confirming its issuer is DOD/DOD-approved needs live CA
 # certificate review (show crypto pki certificates), not derivable from
-# running-config text. Same pattern as NXOS_stig_audit.py's
+# running-config text. Same pattern as nxos_stig_audit.py's
 # _pki_trustpoint_check, adapted for IOS's `crypto pki trustpoint` keyword
 # (NX-OS uses `crypto ca trustpoint`).
 def _pki_trustpoint_check(cfg):
@@ -665,7 +665,7 @@ def _routing_protocol_auth_check(cfg):
 # V-215679: exactly one local `username` account (the account of last
 # resort), with `local` configured as the fallback after the AAA server
 # group in the authentication order - same evidence L2S's V-220587 checks
-# for. Direct port of L2_stig_audit.py's _single_local_account_check.
+# for. Direct port of l2_stig_audit.py's _single_local_account_check.
 def _single_local_account_check(cfg):
     usernames = re.findall(r'^username (\S+)', cfg, re.M)
     if len(usernames) != 1:
@@ -951,7 +951,7 @@ username, password = netauto.get_credentials()
 # V-215696/697 need live `show snmp user` output (see _snmpv3_user_live_check) -
 # IOS classic never writes SNMPv3 user config to running-config. Uses a
 # separate connection since run_stig_audit manages its own for running-config,
-# same pattern as L2_stig_audit.py.
+# same pattern as l2_stig_audit.py.
 snmp_discovery_connect = netauto.connect(device_name, device_info, username, password)
 if snmp_discovery_connect is None:
     raise SystemExit(1)

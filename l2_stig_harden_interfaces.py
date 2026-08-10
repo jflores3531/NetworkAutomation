@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """Push the interface-scoped hardening fixes from the DISA Cisco IOS Switch
-L2S STIG to a device - split out of L2_stig_harden_global.py so global fixes and
+L2S STIG to a device - split out of l2_stig_harden_global.py so global fixes and
 per-port fixes can be run/reviewed independently, same pattern as
-L2_stig_harden_dai.py/NXOS_stig_harden_interfaces.py. Classifies each
+l2_stig_harden_dai.py/nxos_stig_harden_interfaces.py. Classifies each
 switchport as host-facing/access or trunk/uplink based on whether
 "switchport mode trunk" is present, then pushes the matching fixes to each.
 
-Run L2_stig_harden_global.py first: it creates the native/unused/default-access
+Run l2_stig_harden_global.py first: it creates the native/unused/default-access
 VLANs in the database (referenced here but not created here) and enables
 DHCP snooping globally (V-220633) - 'ip dhcp snooping trust'/'ip arp
 inspection trust' below are inert until that's active, same as any
@@ -16,10 +16,10 @@ V-220642 (no default VLAN on host-facing ports) and V-220645 (user-facing
 ports must be access) don't get a dedicated command - they're satisfied as
 a side effect of the explicit 'switchport mode access' + 'switchport
 access vlan <default_access_vlan>' push every access port already gets
-(see the comment above L2_stig_audit.py's CHECKS dict for how the audit
+(see the comment above l2_stig_audit.py's CHECKS dict for how the audit
 verifies this now that both are explicit).
-V-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py,
-and V-220635 (DAI) separately by L2_stig_harden_dai.py - both split out
+V-220634 (IP Source Guard) is pushed separately by l2_stig_harden_ipsg.py,
+and V-220635 (DAI) separately by l2_stig_harden_dai.py - both split out
 because they only trust the DHCP snooping binding table, so a statically-
 addressed host with no DHCP lease gets its traffic dropped once either is
 pushed (see the static-host-binding gap tracked in project memory).
@@ -33,13 +33,13 @@ supported on most FastEthernet ports, and a single flat threshold would
 either violate or fail on ports well outside Gigabit speed.
 V-220630 (BPDU Guard) pushes 'spanning-tree portfast' to every access port -
 the global 'spanning-tree portfast bpduguard default' fix (in
-L2_stig_harden_global.py) only activates BPDU Guard on ports that have PortFast
+l2_stig_harden_global.py) only activates BPDU Guard on ports that have PortFast
 enabled, so without this the global command was present but functionally
 inert everywhere (a false PASS).
 V-220623 (802.1x/MAB): the global prerequisites ('dot1x system-auth-control',
 'aaa authentication dot1x default group radius') are pushed by
-L2_stig_harden_aaa.py instead, not here - the latter needs aaa new-model
-already active, which neither this nor L2_stig_harden_global.py pushes (see that
+l2_stig_harden_aaa.py instead, not here - the latter needs aaa new-model
+already active, which neither this nor l2_stig_harden_global.py pushes (see that
 script's own docstring for why). Only the per-port commands (authentication
 port-control auto / dot1x pae authenticator / mab, in access_fixes below)
 are pushed here; they're inert until the global prerequisites are active,
@@ -165,12 +165,12 @@ root_guard_ports = [name for name in trunk_ports if name not in root_ports]
 
 # V-220641: already-shutdown access ports get reassigned to the designated
 # unused VLAN (safe - they're not passing traffic). The VLAN's own database
-# entry is created by L2_stig_harden_global.py, not here.
+# entry is created by l2_stig_harden_global.py, not here.
 unused_vlan = netauto.load_unused_vlan()
 disabled_ports = shutdown_access_ports(running_config, access_ports) if unused_vlan else []
 
 # Native VLAN for trunk ports (V-220646) comes from inventory.yaml instead of a
-# prompt. Its own database entry is created by L2_stig_harden_global.py, not here.
+# prompt. Its own database entry is created by l2_stig_harden_global.py, not here.
 native_vlan_id = netauto.load_native_vlan()
 
 # V-220643/641: trunks should carry only VLANs that actually exist in the switch's
@@ -191,14 +191,14 @@ allowed_trunk_vlans = stig_common.discover_user_vlans(net_connect, exclude=trunk
 # all, which silently breaks other access-port fixes that require the port to
 # already be in access mode first - confirmed live on a fresh S3 in GNS3.
 # Every non-trunk port gets 'switchport mode access' + this VLAN explicitly;
-# the VLAN's own database entry is created by L2_stig_harden_global.py, not here.
+# the VLAN's own database entry is created by l2_stig_harden_global.py, not here.
 default_access_vlan = netauto.load_default_access_vlan()
 
 access_fixes = ['switchport mode access']
 if default_access_vlan:
     access_fixes.append(f'switchport access vlan {default_access_vlan}')
 # V-220630 (BPDU Guard): the global 'spanning-tree portfast bpduguard default'
-# fix (in L2_stig_harden_global.py) only activates BPDU Guard on ports that have
+# fix (in l2_stig_harden_global.py) only activates BPDU Guard on ports that have
 # PortFast enabled - per the STIG's own Discussion text, BPDU Guard disables
 # "the port that has PortFast configured" on BPDU reception. Without this,
 # that global command is a no-op everywhere: it was present in the config
@@ -281,7 +281,7 @@ commands = interface_commands
 # Push the interface commands and close the session
 output = net_connect.send_config_set(commands) if commands else ''
 net_connect.disconnect()
-netauto.log_push('L2_stig_harden_interfaces.py', device_name, username, commands)
+netauto.log_push('l2_stig_harden_interfaces.py', device_name, username, commands)
 
 if commands:
     print(f'Interface hardening commands pushed to {device_name}:')
@@ -313,9 +313,9 @@ if not unused_vlan:
 elif not disabled_ports:
     print('\nNo disabled (shutdown) access ports found — nothing to reassign for V-220641.')
 
-print('\nV-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py.')
-print('V-220635 (DAI) is pushed separately by L2_stig_harden_dai.py.')
-print('V-220623a/b (dot1x system-auth-control + AAA method) is pushed separately by L2_stig_harden_aaa.py, '
+print('\nV-220634 (IP Source Guard) is pushed separately by l2_stig_harden_ipsg.py.')
+print('V-220635 (DAI) is pushed separately by l2_stig_harden_dai.py.')
+print('V-220623a/b (dot1x system-auth-control + AAA method) is pushed separately by l2_stig_harden_aaa.py, '
       'after aaa new-model is confirmed active - only the per-port V-220623 commands above are pushed here.')
 
 print('\nRules satisfied as a side effect of the access-port mode/VLAN push above, not by a dedicated command:')

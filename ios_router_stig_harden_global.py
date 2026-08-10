@@ -5,9 +5,9 @@ ICMP redirects/unreachables/mask-reply, proxy ARP, LLDP transmit) need to be
 applied per-interface and are intentionally left out of this pass.
 
 AAA/RADIUS + password complexity (V-215681-686/709) and the vty management
-ACL (V-215667) are pushed by separate scripts (IOS_Router_stig_harden_aaa.py,
-IOS_Router_stig_harden_acl.py) - kept isolated the same way L2S splits
-L2_stig_harden_aaa.py/L2_stig_harden_acl.py out of L2_stig_harden_global.py."""
+ACL (V-215667) are pushed by separate scripts (ios_router_stig_harden_aaa.py,
+ios_router_stig_harden_acl.py) - kept isolated the same way L2S splits
+l2_stig_harden_aaa.py/l2_stig_harden_acl.py out of l2_stig_harden_global.py."""
 
 import argparse
 import netauto
@@ -33,7 +33,7 @@ BASE_FIXES = {
     # Not confirmed to be valid syntax on this lab's IOSv image without a base
     # MPLS feature-set active - included per the check text's literal presence
     # requirement (no "not applicable if MPLS unused" language, unlike the
-    # BGP/OSPF/MPLS-TE-gated rules IOS_Router_audit.py reports NOT APPLICABLE
+    # BGP/OSPF/MPLS-TE-gated rules ios_router_audit.py reports NOT APPLICABLE
     # for). If rejected live, harmless - doesn't touch AAA/access.
     'V-216610 (MPLS TTL propagation)': 'no mpls ip propagate-ttl',
     'V-216993 (drop IP options)': 'ip options drop',
@@ -59,7 +59,7 @@ HTTP_TIMEOUT_FIX = ['ip http timeout-policy idle 300 life 180 requests 1']
 VTY_SESSION_LIMIT_FIX = ['line vty 0 4', 'session-limit 5']
 
 # V-215670b: the second half of V-215670's evidence requirement (checked by
-# IOS_Router_audit.py's _admin_activity_logged as one combined rule with
+# ios_router_audit.py's _admin_activity_logged as one combined rule with
 # 'logging userinfo' above - both must be present together). Same archive
 # block as L2S's ARCHIVE_LOGGING_FIX.
 ARCHIVE_LOGGING_FIX = [
@@ -130,10 +130,10 @@ if not ntp_key_value:
 
 # V-215696/697: FIPS-validated HMAC (SHA) auth + FIPS 140-2 approved (AES)
 # privacy for SNMPv3. Same shared secrets.yaml fields as L2S's identical
-# push (L2_stig_harden_global.py) - config-only, no NMS in this lab actually
+# push (l2_stig_harden_global.py) - config-only, no NMS in this lab actually
 # polls it yet. Skips the view/host lines from V-215696's own Fix Text
 # example (SNMP access scoping + trap destination) since
-# IOS_Router_audit.py's check only verifies `show snmp user` output (auth/
+# ios_router_audit.py's check only verifies `show snmp user` output (auth/
 # privacy protocol), not those - same simplification L2S already made.
 # AES 256 matches V-215697's own Fix Text example specifically (unlike
 # L2S's AES 128 choice) - either satisfies the audit's `'aes' in ...` check.
@@ -187,7 +187,7 @@ commands = (
 # Push the hardening commands and close the session
 output = net_connect.send_config_set(commands)
 net_connect.disconnect()
-netauto.log_push('IOS_Router_stig_harden_global.py', device_name, username, commands)
+netauto.log_push('ios_router_stig_harden_global.py', device_name, username, commands)
 
 print(f'Hardening commands pushed to {device_name}:')
 for command in commands:
@@ -212,5 +212,5 @@ print('\nRules requiring interface targeting (not pushed by this script):')
 for rule in SKIPPED_RULES:
     print('  - ' + rule)
 
-print('\nV-215667 (vty management ACL) is pushed separately by IOS_Router_stig_harden_acl.py.')
-print('V-215681-686/709 (AAA new-model + RADIUS auth + password complexity) is pushed separately by IOS_Router_stig_harden_aaa.py.')
+print('\nV-215667 (vty management ACL) is pushed separately by ios_router_stig_harden_acl.py.')
+print('V-215681-686/709 (AAA new-model + RADIUS auth + password complexity) is pushed separately by ios_router_stig_harden_aaa.py.')

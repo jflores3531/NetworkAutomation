@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-"""Shared STIG audit runner used by IOS_Router_audit.py, L2_stig_audit.py, and
-NXOS_stig_audit.py: loads a DISA .cklb checklist, checks a device's
+"""Shared STIG audit runner used by ios_router_audit.py, l2_stig_audit.py, and
+nxos_stig_audit.py: loads a DISA .cklb checklist, checks a device's
 running-config against it, and prints a PASS/FAIL/NOT AUTOMATED report."""
 
 import json

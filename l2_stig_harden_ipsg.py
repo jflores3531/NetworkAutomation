@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Push 'ip verify source' (V-220634, IP Source Guard) to every host-facing/
-access port on a device, split out of L2_stig_harden_global.py's bulk batch on
+access port on a device, split out of l2_stig_harden_global.py's bulk batch on
 purpose - IP Source Guard only trusts the DHCP snooping binding table, so a
 statically-addressed host (no DHCP lease) has its traffic dropped once this
 is pushed (confirmed live on S3: %SW_DAI-4-DHCP_SNOOPING_DENY-style
@@ -8,7 +8,7 @@ drops - see the static-host-binding gap tracked in project memory). Keeping
 this isolated makes it easy to push/pull independently of the rest of the
 STIG batch while that gap is unresolved.
 
-Run L2_stig_harden_global.py first - this assumes DHCP snooping is already enabled
+Run l2_stig_harden_global.py first - this assumes DHCP snooping is already enabled
 and access ports are already in 'switchport mode access' (both handled
 there), neither of which this script sets up itself."""
 
@@ -71,7 +71,7 @@ for name in access_ports:
 # Push the commands and close the session
 output = net_connect.send_config_set(interface_commands)
 net_connect.disconnect()
-netauto.log_push('L2_stig_harden_ipsg.py', device_name, username, interface_commands)
+netauto.log_push('l2_stig_harden_ipsg.py', device_name, username, interface_commands)
 
 print(f'IP Source Guard commands pushed to {device_name}:')
 for command in interface_commands:

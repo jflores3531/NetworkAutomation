@@ -1,25 +1,25 @@
 #!/usr/bin/env python
 """Push RADIUS authentication (V-220513: two authentication servers) and the
 AAA accounting cluster it enables (V-220475/476/477/478/482/485/494/495/
-506/507/509, all sharing NXOS_stig_audit.py's _aaa_accounting_check - see
+506/507/509, all sharing nxos_stig_audit.py's _aaa_accounting_check - see
 that function's docstring for why one 'aaa accounting default group <name>'
 line covers all eleven CCI categories) plus the 802.1x global prerequisites
 (feature dot1x + aaa authentication dot1x default group - the per-port
-V-220675/679 commands are pushed by NXOS_stig_harden_interfaces.py and stay
+V-220675/679 commands are pushed by nxos_stig_harden_interfaces.py and stay
 inert until this script runs, same split L2S uses) to a device. Kept
-separate from NXOS_stig_harden_global.py's batch on purpose, same reasoning
-as L2_stig_harden_aaa.py: this is the one script in this pass that changes
+separate from nxos_stig_harden_global.py's batch on purpose, same reasoning
+as l2_stig_harden_aaa.py: this is the one script in this pass that changes
 how SSH login itself is authenticated.
 
 The 802.1x globals are skipped entirely (not just left inert) when IP
 Source Guard is active - confirmed live on NXCore1 that Nexus 9000 rejects
 'feature dot1x' outright ("802.1X can't be enabled, IPSG is enabled in
 system") whenever IPSG is configured, a platform-level mutual exclusion per
-Cisco's own documentation. NXOS_stig_audit.py's _dot1x_mab_check reports
+Cisco's own documentation. nxos_stig_audit.py's _dot1x_mab_check reports
 V-220675/679 NOT APPLICABLE under the same condition.
 
 Why this is lower-risk on NX-OS than the L2S incident that motivated
-L2_stig_harden_aaa.py's enable-secret verification: DISA's own V-220513 Fix
+l2_stig_harden_aaa.py's enable-secret verification: DISA's own V-220513 Fix
 Text pushes 'aaa authentication login default group RADIUS_SERVERS' with no
 'local' keyword in the method list at all (unlike IOS's 'group radius
 local') - NX-OS instead has a separate 'fallback error local' mechanism
@@ -33,7 +33,7 @@ the IOS "local account stops being privileged on login" behaviour does not
 apply here.
 
 Safety net for the actual push (step 2 below): same two-connection
-verify+revert pattern NXOS_stig_harden_acl.py/L2_stig_harden_acl.py use for
+verify+revert pattern nxos_stig_harden_acl.py/l2_stig_harden_acl.py use for
 their riskiest moment - push, then open a *second* independent SSH
 connection to prove login still works before going any further. This is a
 more direct test of the real risk here (can the automation host still log
@@ -102,7 +102,7 @@ if net_connect is None:
 radius_commands = []
 for ip in radius_servers:
     radius_commands.append(f'radius-server host {ip} key {radius_key}')
-# Global timeout/retransmit tuning - same motivation as L2_stig_harden_aaa.py's
+# Global timeout/retransmit tuning - same motivation as l2_stig_harden_aaa.py's
 # per-server tuning (IOS/NX-OS defaults can add ~15-30s of login delay per
 # unreachable server before falling back) - confirm 'radius-server timeout ?'
 # / 'radius-server retransmit ?' live on NXCore1 before trusting this exact
@@ -114,7 +114,7 @@ radius_commands += [f'server {ip}' for ip in radius_servers]
 radius_commands.append('exit')
 
 net_connect.send_config_set(radius_commands)
-netauto.log_push('NXOS_stig_harden_aaa.py', device_name, username, radius_commands)
+netauto.log_push('nxos_stig_harden_aaa.py', device_name, username, radius_commands)
 print(f'RADIUS servers + `aaa group server radius {GROUP_NAME}` pushed to {device_name}.')
 
 # Step 2: the actual risky moment - everything before this point was fully
@@ -126,7 +126,7 @@ auth_commands = [
     f'aaa authentication login console group {GROUP_NAME}',
 ]
 net_connect.send_config_set(auth_commands)
-netauto.log_push('NXOS_stig_harden_aaa.py', device_name, username, auth_commands)
+netauto.log_push('nxos_stig_harden_aaa.py', device_name, username, auth_commands)
 print(f'Applied `aaa authentication login default/console group {GROUP_NAME}` on {device_name}.')
 
 # Step 3: verify with a *second*, independent connection - the primary
@@ -144,7 +144,7 @@ if verify_connect is None:
         f'no aaa authentication login console group {GROUP_NAME}',
     ]
     net_connect.send_config_set(revert_commands)
-    netauto.log_push('NXOS_stig_harden_aaa.py', device_name, username, revert_commands)
+    netauto.log_push('nxos_stig_harden_aaa.py', device_name, username, revert_commands)
     net_connect.disconnect()
     print('Reverted. RADIUS servers/group are still defined but not referenced by login - investigate before retrying.')
     raise SystemExit(1)
@@ -161,20 +161,20 @@ followup_commands = [f'aaa accounting default group {GROUP_NAME}']
 # live on NXCore1 that Nexus 9000 rejects 'feature dot1x' outright ("802.1X
 # can't be enabled, IPSG is enabled in system") whenever IPSG is
 # configured, platform-level mutually exclusive per Cisco's own
-# documentation - matches NXOS_stig_audit.py's _dot1x_mab_check, which
+# documentation - matches nxos_stig_audit.py's _dot1x_mab_check, which
 # reports V-220675/679 NOT APPLICABLE under the same condition.
 running_config = str(net_connect.send_command('show running-config'))
 ipsg_active = bool(re.search(r'^\s*ip verify source dhcp-snooping-vlan\s*$', running_config, re.M))
 if ipsg_active:
     print(f'\nSkipping V-220675a/679a (802.1x globals) — IP Source Guard is active on {device_name}, '
-          f'and Nexus 9000 rejects `feature dot1x` while IPSG is enabled. See NXOS_stig_audit.py\'s '
+          f'and Nexus 9000 rejects `feature dot1x` while IPSG is enabled. See nxos_stig_audit.py\'s '
           f'_dot1x_mab_check, which now reports V-220675/679 NOT APPLICABLE for the same reason.')
 else:
     followup_commands += ['feature dot1x', f'aaa authentication dot1x default group {GROUP_NAME}']
 
 output = net_connect.send_config_set(followup_commands)
 net_connect.disconnect()
-netauto.log_push('NXOS_stig_harden_aaa.py', device_name, username, followup_commands)
+netauto.log_push('nxos_stig_harden_aaa.py', device_name, username, followup_commands)
 
 print(f'\nFollow-up commands pushed to {device_name}:')
 for command in followup_commands:
@@ -185,10 +185,10 @@ print(output)
 print('\nRules addressed by this pass:')
 print(f'  - V-220513 (RADIUS as primary auth source, {len(radius_servers)} server(s))')
 print('  - V-220475/476/477/478/482/485/494/495/506/507/509 (AAA accounting, 11 of the 12 harden-side gap rules '
-      'via one `aaa accounting default group` line - V-220510 is pushed separately by NXOS_stig_harden_global.py, '
+      'via one `aaa accounting default group` line - V-220510 is pushed separately by nxos_stig_harden_global.py, '
       'it\'s a plain `logging level authpriv 6` presence check, not part of this accounting-group mechanism)')
 if not ipsg_active:
-    print('  - V-220675a/679a (802.1x AAA method + feature dot1x) - per-port V-220675/679 commands are pushed by NXOS_stig_harden_interfaces.py')
+    print('  - V-220675a/679a (802.1x AAA method + feature dot1x) - per-port V-220675/679 commands are pushed by nxos_stig_harden_interfaces.py')
 else:
     print('  - V-220675/679 (802.1x/MAB) - NOT APPLICABLE, IP Source Guard is active (see skip note above)')
 print(f'\nNot addressed (deliberately): V-220487 (dedicated local last-resort account) - relying on the existing '

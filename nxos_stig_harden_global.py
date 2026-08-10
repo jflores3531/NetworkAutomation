@@ -2,9 +2,9 @@
 """Push the global (non-interface-scoped) hardening fixes from the DISA
 Cisco NX-OS Switch L2S STIG to a device. Interface-scoped fixes (UUFB, IP
 Source Guard, storm control, trunk conversion, native VLAN, trunk VLAN
-pruning) live in the companion script NXOS_stig_harden_interfaces.py -
+pruning) live in the companion script nxos_stig_harden_interfaces.py -
 run this script first, then reload the device (needed for the TCAM regions
-staged below to take effect), then run NXOS_stig_harden_interfaces.py.
+staged below to take effect), then run nxos_stig_harden_interfaces.py.
 V-220681 (BPDU Guard) also pushes 'spanning-tree port type edge default' -
 without it, the global bpduguard-default command has no edge ports to
 activate on and is a functional no-op (same false-pass shape as L2S's
@@ -52,7 +52,7 @@ BASE_FIXES = {
     'V-220489/490/491/492 (password complexity)': 'password strength-check',
     'V-220480 (SSH login attempts)': 'ssh login-attempts 3',
     # Check Text's example is 'logging logfile LOGFILE1 6 size nnnnn' -
-    # 64000 bytes matches the buffer size L2_stig_harden_global.py already
+    # 64000 bytes matches the buffer size l2_stig_harden_global.py already
     # uses for V-220599's 'logging buffered 64000 informational' (same
     # org-defined-size convention, level 6/informational too).
     'V-220496 (logfile size)': 'logging logfile STIG_LOGFILE 6 size 64000',
@@ -69,13 +69,13 @@ BASE_FIXES = {
     # ("% Invalid command"), wccp isn't a supported feature on this
     # platform/image at all (telnet/nxapi both worked fine). Since it can
     # never be enabled here either, _no_unnecessary_features_check in
-    # NXOS_stig_audit.py still passes trivially without this push.
+    # nxos_stig_audit.py still passes trivially without this push.
     'V-220486a (unnecessary services - telnet)': 'no feature telnet',
     'V-220486c (unnecessary services - nxapi)': 'no feature nxapi',
     # V-220510: admin session start/end logging - a plain presence check
     # (_dot1x_mab_check-style shared-evidence pattern doesn't apply here,
     # this is its own separate rule from the aaa-accounting-group cluster
-    # NXOS_stig_harden_aaa.py covers), verbatim from Check Text's example.
+    # nxos_stig_harden_aaa.py covers), verbatim from Check Text's example.
     'V-220510 (admin session logging)': 'logging level authpriv 6',
 }
 
@@ -219,7 +219,7 @@ vtp_password = str(secrets.get('vtp_password') or '').strip()
 vtp_domain = netauto.load_vtp_domain()
 
 # SNMPv3 auth/priv passwords (V-220500/501) come from secrets.yaml - same
-# snmpv3.auth_password/priv_password keys L2_stig_harden_global.py uses.
+# snmpv3.auth_password/priv_password keys l2_stig_harden_global.py uses.
 # Config-only push - no SNMP monitoring station in this lab to actually poll
 # it, same as the L2S side. NX-OS's own syntax needs no separate
 # 'snmp-server group ... v3 priv' step unlike IOS - the Check Text's own
@@ -258,8 +258,8 @@ if native_vlan_id:
 vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=non_user_vlan_exclude)
 
 # V-220695 (native VLAN): created in the VLAN database here so the companion
-# script (NXOS_stig_harden_interfaces.py) can assign it as a trunk's native
-# VLAN. Same native_vlan value L2_stig_harden_global.py uses, currently 999.
+# script (nxos_stig_harden_interfaces.py) can assign it as a trunk's native
+# VLAN. Same native_vlan value l2_stig_harden_global.py uses, currently 999.
 native_vlan_commands = [f'vlan {native_vlan_id}', 'name NATIVE', 'exit'] if native_vlan_id else []
 
 # V-220690: unused_vlan's own database entry - a deliberately different VLAN
@@ -269,7 +269,7 @@ native_vlan_commands = [f'vlan {native_vlan_id}', 'name NATIVE', 'exit'] if nati
 unused_vlan_commands = [f'vlan {unused_vlan}', 'name UNUSED', 'exit'] if unused_vlan else []
 
 # V-220516: syslog server IPs come from inventory.yaml's services section -
-# same syslog_servers list L2_stig_harden_global.py uses (V-220620), already two
+# same syslog_servers list l2_stig_harden_global.py uses (V-220620), already two
 # entries so "at least two central log servers" is satisfied as-is. '6'
 # is the informational severity level, matching the Fix Text's own example.
 syslog_servers = netauto.load_services().get('syslog_servers', [])
@@ -349,7 +349,7 @@ if vtp_password and vtp_domain:
     # transparent mode - it's not a settable option, and pushing it is
     # rejected outright ("% Invalid command", confirmed live on NXCore1).
     # Transparent is already the only state, so the security property
-    # L2_stig_harden_global.py's own 'vtp mode transparent' line achieves on IOS
+    # l2_stig_harden_global.py's own 'vtp mode transparent' line achieves on IOS
     # (switch won't originate/relay VLAN database changes to peers) holds
     # here unconditionally, with nothing to push for it.
     commands += ['feature vtp', f'vtp domain {vtp_domain}', f'vtp password {vtp_password}']
@@ -358,11 +358,11 @@ commands += ntp_commands
 # Push the hardening commands and close the session. read_timeout raised
 # well above Netmiko's default - the multi-line banner push alone is slow
 # enough on this device to trip the default before this script's global
-# batch (no per-port loop here anymore, see NXOS_stig_harden_interfaces.py)
+# batch (no per-port loop here anymore, see nxos_stig_harden_interfaces.py)
 # finishes.
 output = net_connect.send_config_set(commands, read_timeout=180)
 net_connect.disconnect()
-netauto.log_push('NXOS_stig_harden_global.py', device_name, username, commands)
+netauto.log_push('nxos_stig_harden_global.py', device_name, username, commands)
 
 print(f'Hardening commands pushed to {device_name}:')
 for command in commands:
@@ -398,6 +398,6 @@ if not (snmp_auth_password and snmp_priv_password):
     print('\nSkipped V-220500/501 (SNMPv3 auth/priv) — add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
 
 print(
-    '\nNext: reload the device, then run NXOS_stig_harden_interfaces.py to push the interface-scoped '
+    '\nNext: reload the device, then run nxos_stig_harden_interfaces.py to push the interface-scoped '
     'fixes (V-220683/685/687/692/695).'
 )

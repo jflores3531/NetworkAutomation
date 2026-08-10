@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Push aaa new-model + RADIUS auth (V-215709: at least two authentication
 servers used as the primary source for administrative access) to a device,
-kept separate on purpose - port of L2_stig_harden_aaa.py's exact safety
+kept separate on purpose - port of l2_stig_harden_aaa.py's exact safety
 pattern, after L2S/S2 had a live session drop right after 'aaa new-model'
 took effect (recovered via console + 'no aaa new-model'). This project's
 routers (R1/R2) don't have console access from the automation host the way
@@ -24,7 +24,7 @@ V-215681/682-686 (password length + complexity via 'aaa common-criteria
 policy') are NOT pushed here - confirmed live that this IOSv image doesn't
 support the command at all ('common-criteria' isn't listed under 'aaa ?').
 Same category as vios_l2's missing UUFB/mls qos: a permanent lab-image
-ceiling, not something this script can work around. IOS_Router_audit.py's
+ceiling, not something this script can work around. ios_router_audit.py's
 V-215681-686 checks will correctly keep reporting FAIL on this platform.
 
 'local' stays last in the login authentication method lists as a fallback,
@@ -55,7 +55,7 @@ username, password = netauto.get_credentials()
 # RADIUS server IPs come from inventory.yaml's services section, the shared
 # secret and enable secret from secrets.yaml (never hardcoded/prompted via
 # CLI flag). This script requires all three up front and refuses to do
-# anything if they're missing - unlike IOS_Router_stig_harden_global.py's
+# anything if they're missing - unlike ios_router_stig_harden_global.py's
 # "skip and continue" pattern, there's no safe partial version of this push.
 secrets = netauto.load_secrets()
 services = netauto.load_services()
@@ -81,7 +81,7 @@ if net_connect is None:
 # Push the enable secret on its own first (idempotent if already set).
 enable_secret_command = [f'enable secret {enable_secret}']
 net_connect.send_config_set(enable_secret_command)
-netauto.log_push('IOS_Router_stig_harden_aaa.py', device_name, username, enable_secret_command)
+netauto.log_push('ios_router_stig_harden_aaa.py', device_name, username, enable_secret_command)
 
 # Verify it actually works before going anywhere near aaa new-model: drop to
 # user EXEC, then escalate back using the same secret Netmiko already has
@@ -109,7 +109,7 @@ print(f'Enable secret verified working on {device_name} (disable -> enable round
 aaa_commands = ['aaa new-model']
 
 # Modern block-style form, confirmed live as the only one this platform
-# accepts (see module docstring) - matches L2_stig_harden_aaa.py's identical
+# accepts (see module docstring) - matches l2_stig_harden_aaa.py's identical
 # per-server timeout/retransmit sub-commands.
 for i, ip in enumerate(radius_servers, start=1):
     aaa_commands += [
@@ -141,7 +141,7 @@ aaa_commands += [
 
 output = net_connect.send_config_set(aaa_commands)
 net_connect.disconnect()
-netauto.log_push('IOS_Router_stig_harden_aaa.py', device_name, username, aaa_commands)
+netauto.log_push('ios_router_stig_harden_aaa.py', device_name, username, aaa_commands)
 
 print(f'\nAAA/RADIUS commands pushed to {device_name}:')
 for command in aaa_commands:
@@ -153,4 +153,4 @@ print('\nRules addressed by this pass:')
 print('  - V-215709 (RADIUS as primary auth source, local fallback)')
 print('\nV-215681/682-686 (password length + complexity via `aaa common-criteria policy`) NOT pushed - '
       'confirmed live this IOSv image does not support the command at all (permanent lab-image ceiling, '
-      'see module docstring). IOS_Router_audit.py will keep correctly reporting these as FAIL.')
+      'see module docstring). ios_router_audit.py will keep correctly reporting these as FAIL.')
