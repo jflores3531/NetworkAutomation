@@ -75,9 +75,9 @@ netauto.log_push('l2_stig_harden_ipsg.py', device_name, username, interface_comm
 
 print(f'IP Source Guard commands pushed to {device_name}:')
 for command in interface_commands:
-    print('  ' + command)
+    print('  ' + netauto.redact_secrets(command))
 print()
-print(output)
+print(netauto.redact_output(output))
 
 if access_ports:
     print(f'\nV-220634 (IP Source Guard) addressed on {len(access_ports)} access port(s): {", ".join(access_ports)}')

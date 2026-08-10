@@ -40,8 +40,8 @@ netauto.log_push('l2_quiet_console.py', device_name, username, commands)
 
 print(f'Console/terminal logging disabled on {device_name}:')
 for command in commands:
-    print('  ' + command)
+    print('  ' + netauto.redact_secrets(command))
 print()
-print(output)
+print(netauto.redact_output(output))
 print('\nLog messages are still buffered and sent to syslog as normal - use `show logging` on the device to view them on demand.')
 print('To turn live logging back on: `logging console` / `logging monitor` in config mode.')

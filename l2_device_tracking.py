@@ -151,9 +151,9 @@ netauto.log_push('l2_device_tracking.py', device_name, username, commands)
 
 print(f'Device tracking policies pushed to {device_name}:')
 for command in commands:
-    print('  ' + command)
+    print('  ' + netauto.redact_secrets(command))
 print()
-print(output)
+print(netauto.redact_output(output))
 
 if not access_ports:
     print(f'\nNo access/host-facing switchports found — {IPV4_VISIBILITY_POLICY} defined but not attached anywhere.')

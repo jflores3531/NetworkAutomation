@@ -36,5 +36,5 @@ for device_name, device_info in devices_list.items():
     netauto.log_push('push_config.py', device_name, username, commands)
 
     print(f'--- {device_name} ---')
-    print(output)
+    print(netauto.redact_output(output))
     print()

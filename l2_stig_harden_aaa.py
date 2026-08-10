@@ -166,9 +166,9 @@ netauto.log_push('l2_stig_harden_aaa.py', device_name, username, aaa_commands)
 
 print(f'\nAAA/RADIUS commands pushed to {device_name}:')
 for command in aaa_commands:
-    print('  ' + command)
+    print('  ' + netauto.redact_secrets(command))
 print()
-print(output)
+print(netauto.redact_output(output))
 
 print('\nRules addressed by this pass:')
 print('  - V-220587 (single local account with AAA fallback)')

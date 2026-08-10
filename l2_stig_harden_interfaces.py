@@ -286,9 +286,9 @@ netauto.log_push('l2_stig_harden_interfaces.py', device_name, username, commands
 if commands:
     print(f'Interface hardening commands pushed to {device_name}:')
     for command in commands:
-        print('  ' + command)
+        print('  ' + netauto.redact_secrets(command))
     print()
-    print(output)
+    print(netauto.redact_output(output))
 
 print('\nRules addressed by this pass:')
 for rule in applied_fixes:

@@ -145,9 +145,9 @@ netauto.log_push('ios_router_stig_harden_aaa.py', device_name, username, aaa_com
 
 print(f'\nAAA/RADIUS commands pushed to {device_name}:')
 for command in aaa_commands:
-    print('  ' + command)
+    print('  ' + netauto.redact_secrets(command))
 print()
-print(output)
+print(netauto.redact_output(output))
 
 print('\nRules addressed by this pass:')
 print('  - V-215709 (RADIUS as primary auth source, local fallback)')
