@@ -6,9 +6,9 @@ Manually STIG-checking a single switch means walking ~65 rules by hand against t
 
 | Platform | DISA Benchmarks | Rules | Automated checks |
 |---|---|---|---|
-| Cisco IOS Switch | L2S + NDM | 65 | 55 |
-| Cisco NX-OS Switch | L2S + NDM | 64 | 51 |
-| Cisco IOS Router | NDM + RTR | 127 | 49 |
+| Cisco IOS Switch | L2S + NDM | 65 | 61 |
+| Cisco NX-OS Switch | L2S + NDM | 64 | 57 |
+| Cisco IOS Router | NDM + RTR | 127 | 59 |
 
 Rules needing external infrastructure (PKI, org-defined DoS safeguards) or topology/policy judgment are reported **NOT AUTOMATED** rather than guessed at — a false pass on a compliance tool is worse than no answer. Every rule check is coded against the STIG's literal Check Text, and every fix against its Fix Text.
 
