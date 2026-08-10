@@ -51,15 +51,18 @@ Unlike an `access-class`, uRPF filters **per packet** rather than at connection 
 
 A handful of STIG-required commands are confirmed to not exist or function on this project's `vios_l2` lab image:
 
-- UUFB (unknown unicast flood blocking)
-- Storm control
-- `mls qos`
+- UUFB (`switchport block unicast`) — V-220632
+- Storm control — V-220636
+- `mls qos` — V-220625
 - `security passwords min-length`
 - `file privilege 15`
 - 802.1x authenticator role
 - Classic `radius-server host` syntax
 - SISF `device-tracking policy`
+- `no ip dns server`, `no ip identd`, `no service call-home` (V-220586 still passes — the services aren't running to begin with)
 
-The scripts still push these unconditionally, since they're correct for real Cisco hardware. `l2_device_tracking.py` in particular is IOS-XE only and untested against real hardware so far.
+One is a partial rather than a missing command: `ip ssh server algorithm mac hmac-sha2-256` (V-220607) is rejected at the *algorithm*, not the command — the caret lands under `hmac-sha2-256`, so `ip ssh server algorithm mac` itself is supported and this image simply doesn't offer that HMAC. The matching encryption line (V-220608) is accepted, which is why the two rules split.
+
+The scripts still push all of these unconditionally, since they're correct for real Cisco hardware. `l2_device_tracking.py` in particular is IOS-XE only and untested against real hardware so far.
 
 SNMPv3 auth/priv (V-220604/605) is config-only — there's no NMS in this lab to actually poll it.
