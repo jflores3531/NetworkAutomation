@@ -61,7 +61,20 @@ A handful of STIG-required commands are confirmed to not exist or function on th
 - SISF `device-tracking policy`
 - `no ip dns server`, `no ip identd`, `no service call-home` (V-220586 still passes — the services aren't running to begin with)
 
-One is a partial rather than a missing command: `ip ssh server algorithm mac hmac-sha2-256` (V-220607) is rejected at the *algorithm*, not the command — the caret lands under `hmac-sha2-256`, so `ip ssh server algorithm mac` itself is supported and this image simply doesn't offer that HMAC. The matching encryption line (V-220608) is accepted, which is why the two rules split.
+### V-220607 (SSH HMAC) — a permanent finding, not a missing push
+
+This one is a partial rather than a missing command. `ip ssh server algorithm mac hmac-sha2-256` is rejected at the *algorithm*, not the command — the caret lands under `hmac-sha2-256` — and `ip ssh server algorithm mac ?` confirms the image offers only:
+
+```
+hmac-sha1     HMAC-SHA1 (digest length = key length = 160 bits)
+hmac-sha1-96  HMAC-SHA1-96 (digest length = 96 bits, key length = 160 bits)
+```
+
+SHA-1 is deliberately not pushed and not accepted as a PASS. The rule's own Check Content concedes SHA-1 is FIPS-validated ("allowed by NIST SP 800-131A Rev. 2 for some applications") — so a strict reading of the finding sentence would let `hmac-sha1` through — but the same paragraph states DOD systems "should not be configured to use SHA-1 for integrity of remote access sessions." Taking the PASS would mean reporting compliance on the exact configuration DISA calls out.
+
+So no value this image supports can satisfy the rule, and V-220607 is a permanent finding here, in the same category as V-220606's NTP MD5. The audit says so in its FAIL reason rather than reporting a bare "missing" that reads like an unpushed fix. Pushing `hmac-sha1` would also restrict nothing in practice: with no `algorithm mac` line, IOS already permits both SHA-1 variants by default.
+
+The matching encryption line (V-220608) is accepted, which is why the two rules split.
 
 The scripts still push all of these unconditionally, since they're correct for real Cisco hardware. `l2_device_tracking.py` in particular is IOS-XE only and untested against real hardware so far.
 
