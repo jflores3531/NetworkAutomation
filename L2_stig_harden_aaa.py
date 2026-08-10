@@ -19,12 +19,10 @@ not in the bulk pass where that dependency was previously silent/
 unchecked. L2_stig_harden_global.py still pushes the per-port V-220623 commands
 (authentication port-control auto / dot1x pae authenticator / mab).
 
-Before touching aaa new-model at all, this script pushes the enable secret
-on its own and verifies it actually works: drop to user EXEC with 'disable',
-then escalate back with Netmiko's enable() (which uses the same secret), and
-confirm privileged EXEC was reached. If that round-trip fails for any
-reason, it aborts without pushing anything AAA-related - a bad or missing
-enable secret can never again leave a device stuck the way S2/S3 did."""
+The enable secret is pushed on its own first and confirmed working - a
+'disable' then re-escalate round-trip - before any AAA-related command is
+sent. If that round-trip fails the script aborts without pushing AAA
+config, since the password policy commands depend on it."""
 
 import argparse
 import netauto

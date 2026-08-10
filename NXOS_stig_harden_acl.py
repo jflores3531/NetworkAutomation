@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 """Push a management ACL (V-220479: enforce approved authorizations for
 controlling the flow of management information) to a device, kept as its
-own script on purpose - of everything in this repo, a wrongly-scoped vty
-ACL is the single most direct lockout risk (worse than the AAA/RADIUS push
-in NXOS_stig_harden_aaa.py: it blocks new connections outright, no
-fallback-to-local path applies once it's enforced). Direct NX-OS port of
-L2_stig_harden_acl.py - same safety pattern, same inventory.yaml keys
+own script on purpose - a vty access-class that excludes the automation
+host's own source IP blocks every future SSH connection from it, with no
+fallback-to-local path once it's enforced, so this is run and reviewed
+independently of the bulk hardening pass. Direct NX-OS port of
+L2_stig_harden_acl.py - same pattern, same inventory.yaml keys
 (automation_host, not L2S-specific despite the name it was introduced under).
 
 Scoped to just the automation host (inventory.yaml's automation_host), not
@@ -14,15 +14,11 @@ Applied via 'line vty' + 'access-class ... in' - NXOS_stig_audit.py's
 _mgmt_acl_check also accepts an 'interface mgmt0' + 'ip access-group' form,
 but only one push path is needed here.
 
-Safety approach: the ACL is created first, entirely separate from applying
-it - creating an ip access-list on its own has no effect on anything until
-it's referenced. Only once that's committed does this script apply
-'access-class ... in' to line vty, using the already-established primary
-session (unaffected by the ACL - it only governs new connections). It then
-immediately opens a *second*, independent SSH connection to verify the
-automation host can still get in. If that verification connection fails,
-the still-open primary session reverts the access-class immediately - the
-ACL was never given a chance to lock anything out for more than a moment."""
+The ACL is created first, separate from applying it - creating an ip
+access-list on its own has no effect until something references it. Only
+once that is committed does this script apply 'access-class ... in' to line
+vty, then confirm the automation host can still connect, reverting
+automatically if it cannot."""
 
 import argparse
 import netauto

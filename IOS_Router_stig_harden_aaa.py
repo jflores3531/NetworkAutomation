@@ -29,10 +29,9 @@ V-215681-686 checks will correctly keep reporting FAIL on this platform.
 
 'local' stays last in the login authentication method lists as a fallback,
 same account (admin) this script is already connected with - if RADIUS is
-entirely unreachable, SSH login still succeeds via the local account, so the
-real lockout risk here is narrower than it looks: only privilege escalation
-(enable) is actually gated behind the verification round-trip below, same as
-L2S/NX-OS's equivalent scripts."""
+entirely unreachable, SSH login still succeeds via the local account. Only
+privilege escalation (enable) is gated behind the round-trip check below,
+same as L2S/NX-OS's equivalent scripts."""
 
 import argparse
 import netauto
