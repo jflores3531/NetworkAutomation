@@ -54,9 +54,9 @@ netauto.log_push('l2_stig_harden_dai.py', device_name, username, commands)
 if commands:
     print(f'DAI commands pushed to {device_name}:')
     for command in commands:
-        print('  ' + command)
+        print('  ' + netauto.redact_secrets(command))
     print()
-    print(output)
+    print(netauto.redact_output(output))
     print(f'\nV-220635 (DAI) addressed on {device_name}, covering user VLAN(s): {", ".join(vlan_ids)}')
 else:
     print(f'\nNo user VLANs discovered on {device_name} — nothing to push for V-220635.')

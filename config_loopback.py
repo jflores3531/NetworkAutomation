@@ -36,4 +36,4 @@ output = net_connect.send_config_set(commands)
 net_connect.disconnect()
 netauto.log_push('config_loopback.py', device_name, username, commands)
 
-print(output)
+print(netauto.redact_output(output))

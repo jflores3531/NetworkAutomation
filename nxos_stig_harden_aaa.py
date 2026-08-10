@@ -178,9 +178,9 @@ netauto.log_push('nxos_stig_harden_aaa.py', device_name, username, followup_comm
 
 print(f'\nFollow-up commands pushed to {device_name}:')
 for command in followup_commands:
-    print('  ' + command)
+    print('  ' + netauto.redact_secrets(command))
 print()
-print(output)
+print(netauto.redact_output(output))
 
 print('\nRules addressed by this pass:')
 print(f'  - V-220513 (RADIUS as primary auth source, {len(radius_servers)} server(s))')

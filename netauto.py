@@ -232,17 +232,31 @@ _SECRET_PATTERNS = [
     re.compile(r'(?i)\b(md5\s+)(\S+)'),
     re.compile(r'(?i)\b(auth\s+(?:sha|md5)\s+)(\S+)'),
     re.compile(r'(?i)\b(priv\s+(?:aes|3des|des)(?:-\d+)?(?:\s+\d+)?\s+)(\S+)'),
-    re.compile(r'(?i)^(\s*key\s+)(\S+)\s*$'),
+    # The RADIUS shared key is a bare 'key <value>' inside a 'radius server'
+    # block. Anchored to start-of-line, or just past a device prompt, so it
+    # matches in a Netmiko echo ('S1(config-radius-server)#key ...') without
+    # touching 'ntp trusted-key 1' or 'auth-port'/'acct-port'.
+    re.compile(r'(?i)(?:^|(?<=#))(\s*key\s+)(\S+)\s*$'),
+    # IOS confirms a redundant VTP push by repeating the password back.
+    re.compile(r'(?i)^(Password already set to\s+)(\S+)'),
 ]
 
 
 def redact_secrets(command):
-    """Mask credential values in a config command so it can be safely logged.
-    Keeps the command shape intact ('enable secret ****') so the audit trail
-    still shows what was configured, just not the value."""
+    """Mask credential values in a config command so it can be safely logged
+    or printed. Keeps the command shape intact ('enable secret ****') so the
+    record still shows what was configured, just not the value."""
     for pattern in _SECRET_PATTERNS:
         command = pattern.sub(lambda m: m.group(1) + '****', command)
     return command
+
+
+def redact_output(text):
+    """Redact a device session transcript line by line. Netmiko echoes back
+    everything that was sent - including the credentials - plus the device's
+    own confirmations that repeat them, so printing raw output discloses just
+    as much as printing the command list did."""
+    return '\n'.join(redact_secrets(line) for line in str(text).splitlines())
 
 
 def log_push(script_name, device_name, username, commands):
