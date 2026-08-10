@@ -589,8 +589,12 @@ def _vtp_password_check(vtp_password_output):
         return False, 'no VTP password set (`show vtp password` reports none)'
     m = re.search(r'VTP Password:\s*(\S+)', vtp_password_output)
     if m:
-        return True, f'VTP password set (`show vtp password`): `{m.group(1)}`'
-    return False, f'unexpected `show vtp password` output: {vtp_password_output.strip()}'
+        # The value itself is never printed - the rule only asks whether a
+        # password is set, and audit output gets pasted into tickets and
+        # reports. Length is enough to tell a real password from a stray
+        # placeholder without disclosing it.
+        return True, f'VTP password set (`show vtp password`): {len(m.group(1))} characters'
+    return False, 'unexpected `show vtp password` output (withheld - may contain the password)'
 
 
 # V-220576: exactly 3 consecutive invalid attempts, blocked for >= 900s (15 min)
@@ -940,7 +944,8 @@ username, password = netauto.get_credentials()
 # in running-config, see _vtp_password_check), and the live SNMPv3 user info
 # for V-220604/605 (same platform quirk, see _snmpv3_user_live_check). Uses a
 # separate connection since run_stig_audit manages its own for running-config.
-vlan_discovery_connect = netauto.connect(device_name, device_info, username, password)
+vlan_discovery_connect = netauto.connect(device_name, device_info, username, password,
+                                             purpose='live discovery: VTP password, root port, VLANs')
 if vlan_discovery_connect is None:
     raise SystemExit(1)
 non_user_vlan_exclude = list(netauto.load_non_user_vlans(device_name=device_name))

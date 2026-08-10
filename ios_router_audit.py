@@ -954,7 +954,8 @@ username, password = netauto.get_credentials()
 # IOS classic never writes SNMPv3 user config to running-config. Uses a
 # separate connection since run_stig_audit manages its own for running-config,
 # same pattern as l2_stig_audit.py.
-snmp_discovery_connect = netauto.connect(device_name, device_info, username, password)
+snmp_discovery_connect = netauto.connect(device_name, device_info, username, password,
+                                            purpose='live discovery: SNMPv3 user')
 if snmp_discovery_connect is None:
     raise SystemExit(1)
 snmp_user_output = str(snmp_discovery_connect.send_command('show snmp user'))
