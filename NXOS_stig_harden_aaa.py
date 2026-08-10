@@ -25,13 +25,12 @@ Text pushes 'aaa authentication login default group RADIUS_SERVERS' with no
 local') - NX-OS instead has a separate 'fallback error local' mechanism
 that Check Content confirms is ON BY DEFAULT ("should not be seen in the
 configuration" when compliant). This script never pushes the 'no ...
-fallback error local' line that would disable it, so the account you're
-reading this printout with stays a valid escape hatch either way: if RADIUS
-is reachable, login authenticates via RADIUS; if it's not, NX-OS falls back
-to the same local account automatically. NX-OS also doesn't tie a local
-account's role to AAA authentication the way IOS ties privilege 15 to
-'aaa new-model' - so there's no equivalent of the L2S incident's "local
-account stops being privileged on login" failure mode to guard against here.
+fallback error local' line that would disable it: if RADIUS is reachable,
+login authenticates via RADIUS; if it's not, NX-OS falls back to the same
+local account automatically. NX-OS also doesn't tie a local account's role
+to AAA authentication the way IOS ties privilege 15 to 'aaa new-model', so
+the IOS "local account stops being privileged on login" behaviour does not
+apply here.
 
 Safety net for the actual push (step 2 below): same two-connection
 verify+revert pattern NXOS_stig_harden_acl.py/L2_stig_harden_acl.py use for

@@ -6,9 +6,8 @@ applied per-interface and are intentionally left out of this pass.
 
 AAA/RADIUS + password complexity (V-215681-686/709) and the vty management
 ACL (V-215667) are pushed by separate scripts (IOS_Router_stig_harden_aaa.py,
-IOS_Router_stig_harden_acl.py) - both are the highest lockout-risk pushes in
-this project (see their own docstrings), kept isolated the same way L2S
-splits L2_stig_harden_aaa.py/L2_stig_harden_acl.py out of L2_stig_harden_global.py."""
+IOS_Router_stig_harden_acl.py) - kept isolated the same way L2S splits
+L2_stig_harden_aaa.py/L2_stig_harden_acl.py out of L2_stig_harden_global.py."""
 
 import argparse
 import netauto
