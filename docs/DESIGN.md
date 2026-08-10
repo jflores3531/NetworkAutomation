@@ -14,6 +14,16 @@ Why this repo is structured the way it is. The [README](../README.md) covers wha
 
 **Coded against the literal STIG text.** Every rule check maps to the benchmark's Check Text, every fix to its Fix Text. Rules needing external infrastructure or topology judgment report NOT AUTOMATED rather than guessing — a false pass on a compliance tool is worse than no answer.
 
+## Saving is a separate, deliberate step
+
+No harden script writes to startup-config. `save_config.py` does that, and only when you run it.
+
+The reason is that an unsaved config is recoverable. If a push locks the automation host out, reloading the device brings it back on the last saved configuration — no console needed. Saving automatically at the end of every push would trade that away: a lockout would survive the reload, and console access would become the only way back. On a device like a router reachable through one path, that is the difference between a two-minute recovery and a trip to the console.
+
+The failure in the other direction is real but cheap. NXCore1 reloaded once with a session's worth of AAA, management-ACL and Root Guard configuration unsaved, and lost all of it — a 14-rule regression that looked like broken code and wasn't. Re-running the harden scripts restored it in minutes.
+
+So the order is: **push → audit → confirm → save.** On NX-OS this matters twice over, since `nxos_stig_harden_global.py` stages TCAM regions for IPSG/DAI that only take effect after a reload — saving first is what makes them survive it.
+
 ## Run order
 
 `l2_stig_harden_global.py` runs **first**. It establishes DHCP snooping and puts ports into access mode, which the other `l2_stig_harden_*.py` scripts depend on.
