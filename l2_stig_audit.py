@@ -788,23 +788,31 @@ def _ntp_auth_check(cfg):
     )
 
 
-def _ssh_algorithm_fips_check(cfg, algo_type, required_substring, algo_desc):
+def _ssh_algorithm_fips_check(cfg, algo_type, required_substring, algo_desc, unavailable_note=''):
     """V-220607/608: the old regexes (`algorithm mac\\s+\\S*hmac-sha2`,
     `algorithm encryption\\s+\\S*aes`) can't cross a space, so they only
     matched when the required algorithm happened to be listed FIRST in the
     command - IOS accepts algorithms in any order. `ip ssh server algorithm
     mac hmac-sha1 hmac-sha2-256` has a compliant algorithm present and
     negotiable but would false-FAIL under the old regex. Checks for the
-    required substring anywhere in the algorithm list instead."""
+    required substring anywhere in the algorithm list instead.
+
+    unavailable_note is appended to the FAIL reasons where a platform can't
+    offer a compliant algorithm at all, so the report distinguishes "the fix
+    was never pushed" from "no acceptable value exists on this image" - the
+    same distinction V-220606's permanent-finding wording draws."""
     if 'ip ssh version 2' not in cfg:
         return False, 'missing `ip ssh version 2`'
     m = re.search(rf'^ip ssh server algorithm {algo_type}\s+(.+)$', cfg, re.M)
     if not m:
-        return False, f'missing `ip ssh server algorithm {algo_type} ...`'
+        return False, f'missing `ip ssh server algorithm {algo_type} ...`{unavailable_note}'
     algos = m.group(1).strip()
     if required_substring in algos:
         return True, f'`ip ssh version 2` + FIPS-validated {algo_desc}: `ip ssh server algorithm {algo_type} {algos}`'
-    return False, f'`ip ssh server algorithm {algo_type} {algos}` does not include a FIPS-validated ({required_substring}) algorithm'
+    return False, (
+        f'`ip ssh server algorithm {algo_type} {algos}` does not include a FIPS-validated '
+        f'({required_substring}) algorithm{unavailable_note}'
+    )
 
 
 # V-220639: check text's own examples show UDLD can be enabled globally
@@ -905,7 +913,21 @@ CHECKS = {
     'V-220584': _audit_info_protection_check,
     'V-220585': _audit_info_protection_check,
     'V-220644': _no_management_on_default_vlan,
-    'V-220607': lambda cfg: _ssh_algorithm_fips_check(cfg, 'mac', 'hmac-sha2', 'MAC (HMAC integrity)'),
+    # The note fires on classic IOS images that only offer SHA-1 MACs. DISA
+    # concedes in this rule's own Check Content that SHA-1 is FIPS-validated
+    # ("allowed by NIST SP 800-131A Rev. 2 for some applications") but declines
+    # it for this rule anyway, so hmac-sha1 is deliberately not pushed and not
+    # accepted as a PASS - there is no compliant value on such an image.
+    'V-220607': lambda cfg: _ssh_algorithm_fips_check(
+        cfg, 'mac', 'hmac-sha2', 'MAC (HMAC integrity)',
+        unavailable_note=(
+            ' - on classic IOS images offering only hmac-sha1/hmac-sha1-96 (confirmed via '
+            '`ip ssh server algorithm mac ?`) this is a permanent finding, not an unpushed fix: '
+            'DISA Check Content states "SHA-1 is considered a compromised hashing standard ... '
+            'DOD systems should not be configured to use SHA-1 for integrity of remote access '
+            'sessions", so no algorithm this image supports can satisfy the rule'
+        ),
+    ),
     'V-220608': lambda cfg: _ssh_algorithm_fips_check(cfg, 'encryption', 'aes', 'encryption algorithm'),
     # V-220620: matches "logging host x.x.x.x" or the bare legacy "logging x.x.x.x"
     # form. Deliberately excludes non-IP "logging ..." directives (buffered, trap,
