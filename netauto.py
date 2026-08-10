@@ -4,6 +4,7 @@ device-name validation, credential prompting, and Netmiko SSH connection handlin
 
 import json
 import os
+import re
 from datetime import datetime
 from getpass import getpass
 
@@ -151,7 +152,7 @@ def require_devices(all_devices, device_names):
     return {name: all_devices[name] for name in device_names}
 
 
-def connect(device_name, device_info, username, password):
+def connect(device_name, device_info, username, password, purpose=None):
     """Connect to a device from the inventory, escalating to privileged EXEC
     with secrets.yaml's enable_secret if one is set. Needed now that AAA
     governs login on devices with 'aaa new-model' active - a local account's
@@ -160,8 +161,16 @@ def connect(device_name, device_info, username, password):
     the session is already privileged, so this is safe to call unconditionally
     against devices that don't have AAA active yet too. Returns the Netmiko
     connection, or None (after printing why) if the connection or enable
-    escalation failed."""
-    print('Connecting to device: ' + device_name)
+    escalation failed.
+
+    purpose labels the connection in the console output. Several scripts open a
+    second session against the same device on purpose (live discovery, or
+    verifying new logins still work), and without a label the repeated
+    'Connecting to device: X' reads like a failed retry."""
+    if purpose:
+        print(f'Opening a second session to {device_name} ({purpose})')
+    else:
+        print('Connecting to device: ' + device_name)
     enable_secret = str(load_secrets().get('enable_secret') or '').strip()
     ios_device = {
         'device_type': device_info['device_type'],
@@ -211,15 +220,41 @@ def connect(device_name, device_info, username, password):
     return net_connect
 
 
+# Commands pushed by the *_stig_harden*.py scripts embed real credentials -
+# the enable secret, the RADIUS shared key, SNMPv3 auth/priv passwords, the NTP
+# MD5 key, the VTP password. The audit log records what ran, when, and by whom;
+# it has no need for the credential itself, and audit_logs/ is plain text on
+# whichever host ran the script. Each pattern captures the keyword that
+# introduces a secret so only the value after it is masked.
+_SECRET_PATTERNS = [
+    re.compile(r'(?i)\b(enable secret\s+)(\S+)'),
+    re.compile(r'(?i)\b(vtp password\s+)(\S+)'),
+    re.compile(r'(?i)\b(md5\s+)(\S+)'),
+    re.compile(r'(?i)\b(auth\s+(?:sha|md5)\s+)(\S+)'),
+    re.compile(r'(?i)\b(priv\s+(?:aes|3des|des)(?:-\d+)?(?:\s+\d+)?\s+)(\S+)'),
+    re.compile(r'(?i)^(\s*key\s+)(\S+)\s*$'),
+]
+
+
+def redact_secrets(command):
+    """Mask credential values in a config command so it can be safely logged.
+    Keeps the command shape intact ('enable secret ****') so the audit trail
+    still shows what was configured, just not the value."""
+    for pattern in _SECRET_PATTERNS:
+        command = pattern.sub(lambda m: m.group(1) + '****', command)
+    return command
+
+
 def log_push(script_name, device_name, username, commands):
-    """Append a JSON-line audit record for a config push to audit_logs/audit.log."""
+    """Append a JSON-line audit record for a config push to audit_logs/audit.log.
+    Credential values are masked - see redact_secrets()."""
     os.makedirs(os.path.dirname(AUDIT_LOG_PATH), exist_ok=True)
     record = {
         'timestamp': datetime.now().isoformat(timespec='seconds'),
         'script': script_name,
         'device': device_name,
         'username': username,
-        'commands': commands,
+        'commands': [redact_secrets(str(c)) for c in commands],
     }
     with open(AUDIT_LOG_PATH, 'a') as f:
         f.write(json.dumps(record) + '\n')

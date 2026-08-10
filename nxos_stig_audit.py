@@ -916,7 +916,8 @@ username, password = netauto.get_credentials()
 # as an uncovered user VLAN once it exists in the database, the same bug
 # already fixed on the harden side. Uses a separate connection since
 # run_stig_audit manages its own for running-config.
-vlan_discovery_connect = netauto.connect(device_name, device_info, username, password)
+vlan_discovery_connect = netauto.connect(device_name, device_info, username, password,
+                                             purpose='live discovery: VTP password, root port, VLANs')
 if vlan_discovery_connect is None:
     raise SystemExit(1)
 non_user_vlan_exclude = list(netauto.load_non_user_vlans(device_name=device_name))
