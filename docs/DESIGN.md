@@ -1,6 +1,6 @@
 # Design decisions
 
-Why this repo is structured the way it is. The [README](README.md) covers what each script does; this covers why.
+Why this repo is structured the way it is. The [README](../README.md) covers what each script does; this covers why.
 
 ## Core principles
 

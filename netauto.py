@@ -104,7 +104,7 @@ def load_default_access_vlan(path='inventory.yaml'):
 def load_external_interfaces(device_name, path='inventory.yaml'):
     """Load the list of external-facing interface names for a router from the
     YAML inventory's external_interfaces_by_device section — a security-
-    boundary/topology fact (see Topology.png) that can't be derived from a
+    boundary/topology fact (see docs/Topology.png) that can't be derived from a
     device's own config, used by ios_router_audit.py for STIG rules scoped to
     "external" vs "internal" interfaces. Returns an empty list if the device
     has no entry (all its active interfaces are treated as internal)."""
