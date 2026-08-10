@@ -83,7 +83,17 @@ BASE_FIXES = {
 # own example (not 'line console') - kept separate from EXEC_TIMEOUT_FIX's
 # console+vty pair rather than merged into it, since this one's scope is
 # narrower.
-SESSION_LIMIT_FIX = ['line vty', 'session-limit 2']
+#
+# 5, not the Check Text example's 2 - the rule asks for an organization-defined
+# limit and the audit only verifies that some limit is present, so the example
+# value isn't binding. Same change L2S already made in bd210e1, and it matters
+# more here: nxos_stig_harden_acl.py and nxos_stig_harden_aaa.py both hold a
+# primary session open while opening a second one to verify new logins still
+# work. A limit of 2 leaves no headroom for that, and the second session gets
+# torn down right after authenticating - which surfaces as Netmiko's
+# "Pattern not detected: '[>#]'" rather than a connection failure, and reads
+# like a lockout the verification was designed to catch.
+SESSION_LIMIT_FIX = ['line vty', 'session-limit 5']
 
 # V-220488/503 (SSH MACs - both rules share the identical Fix Text example,
 # filed under two different CCI categories). The Fix Text's own example
