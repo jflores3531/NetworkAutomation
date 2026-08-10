@@ -6,10 +6,12 @@ rules that can be checked from config text alone."""
 import argparse
 import ipaddress
 import re
+import os
+
 import netauto
 import stig_common
 
-CHECKLIST_PATH = 'checklists/New IOS Router Checklist.cklb'
+CHECKLIST_PATH = os.path.join(netauto.PROJECT_ROOT, 'checklists', 'New IOS Router Checklist.cklb')
 
 
 def aux_port_disabled(cfg):

@@ -24,7 +24,7 @@ else:
     devices_list = all_devices
 
 # Prep the output folders and a shared run time for this run's backups
-backup_dir = 'backups'
+backup_dir = netauto.BACKUP_DIR
 archive_dir = os.path.join(backup_dir, 'archive')
 os.makedirs(archive_dir, exist_ok=True)
 run_time = datetime.now()
