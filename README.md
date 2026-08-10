@@ -33,6 +33,7 @@ Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX
 ### Backup & compliance
 - **`backup_config.py`** — Back up running-config + VLANs; keeps a "latest" copy per device plus a timestamped archive pruned to 5.
 - **`config_diff.py`** — Compare current running-config/VLANs against the last backup.
+- **`save_config.py`** — Save running-config to startup-config on one device or all. Run it *after* a harden pass and its audit, not as part of one — see [`docs/DESIGN.md`](docs/DESIGN.md).
 - **`stig_common.py`** — Shared audit engine: loads a DISA `.cklb` checklist, checks the device against it, reports PASS/FAIL/NOT AUTOMATED by severity.
 - **`l2_stig_audit.py`** — Audit against the IOS Switch L2S/NDM STIG. Full interface-scoped coverage, live discovery for root ports/VTP/user VLANs.
 - **`nxos_stig_audit.py`** — Audit against the NX-OS Switch L2S/NDM STIG.
@@ -114,6 +115,12 @@ python3 ios_router_stig_harden_global.py R1
 python3 ios_router_stig_harden_urpf.py R1     # external-facing interfaces only
 python3 ios_router_stig_harden_acl.py R1
 python3 ios_router_stig_harden_aaa.py R1
+
+# Persist the result - only after re-auditing and confirming it's what you wanted.
+# Until this runs, a reload reverts the device, which is the escape hatch if a
+# push locked you out.
+python3 save_config.py NXCore1
+python3 save_config.py            # or every device in the inventory
 
 # Optional, non-STIG
 python3 l2_quiet_console.py S1      # quiet the console during interactive config work
