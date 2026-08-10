@@ -12,17 +12,25 @@ from netmiko import ConnectHandler
 from netmiko.exceptions import NetmikoTimeoutException, NetmikoAuthenticationException
 from paramiko.ssh_exception import SSHException
 
-AUDIT_LOG_PATH = os.path.join('audit_logs', 'audit.log')
+# Every path below is anchored to the directory this file lives in, not the
+# caller's working directory, so the scripts behave the same wherever they're
+# run from (cron, an IDE run config, another checkout).
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+INVENTORY_PATH = os.path.join(PROJECT_ROOT, 'inventory.yaml')
+SECRETS_PATH = os.path.join(PROJECT_ROOT, 'secrets.yaml')
+BACKUP_DIR = os.path.join(PROJECT_ROOT, 'backups')
+AUDIT_LOG_PATH = os.path.join(PROJECT_ROOT, 'audit_logs', 'audit.log')
 
 
-def load_inventory(path='inventory.yaml'):
+def load_inventory(path=INVENTORY_PATH):
     """Load the devices section of the YAML inventory (name -> {host, device_type})."""
     with open(path) as f:
         inventory = yaml.safe_load(f)
     return inventory['devices']
 
 
-def load_services(path='inventory.yaml'):
+def load_services(path=INVENTORY_PATH):
     """Load the services section of the YAML inventory (ntp_servers/syslog_servers/
     radius_servers -> list of IPs). Returns an empty dict if the inventory has no
     services section, so callers can .get(...) with a default."""
@@ -31,7 +39,7 @@ def load_services(path='inventory.yaml'):
     return inventory.get('services', {})
 
 
-def load_non_user_vlans(path='inventory.yaml', device_name=None):
+def load_non_user_vlans(path=INVENTORY_PATH, device_name=None):
     """Load the non_user_vlans list from the YAML inventory — VLAN IDs to exclude
     when discovering "user VLANs" for DHCP snooping/DAI pushes (management,
     servers, unused default VLAN, etc). The same VLAN ID doesn't always mean the
@@ -48,7 +56,7 @@ def load_non_user_vlans(path='inventory.yaml', device_name=None):
     return inventory.get('non_user_vlans', [])
 
 
-def load_management_subnet(path='inventory.yaml'):
+def load_management_subnet(path=INVENTORY_PATH):
     """Load the management_subnet string (e.g. '10.10.50.0/24') from the YAML
     inventory, used to verify vty access-class ACLs are actually scoped to the
     management network (V-220575). Returns None if not defined."""
@@ -57,7 +65,7 @@ def load_management_subnet(path='inventory.yaml'):
     return inventory.get('management_subnet')
 
 
-def load_automation_host(path='inventory.yaml'):
+def load_automation_host(path=INVENTORY_PATH):
     """Load the automation_host IP from the YAML inventory - the sole
     permitted source for V-220575's vty ACL (l2_stig_harden_acl.py). Returns
     None if not defined."""
@@ -66,7 +74,7 @@ def load_automation_host(path='inventory.yaml'):
     return inventory.get('automation_host')
 
 
-def load_unused_vlan(path='inventory.yaml'):
+def load_unused_vlan(path=INVENTORY_PATH):
     """Load the unused_vlan ID from the YAML inventory — the VLAN designated for
     disabled/unused ports (V-220641). Returns None if not defined."""
     with open(path) as f:
@@ -74,7 +82,7 @@ def load_unused_vlan(path='inventory.yaml'):
     return inventory.get('unused_vlan')
 
 
-def load_vtp_domain(path='inventory.yaml'):
+def load_vtp_domain(path=INVENTORY_PATH):
     """Load the vtp_domain name from the YAML inventory — required on NX-OS
     before a VTP password can be set (V-220676); 'vtp password' is rejected
     with "Domain not set" without one first, confirmed live on NXCore1.
@@ -84,7 +92,7 @@ def load_vtp_domain(path='inventory.yaml'):
     return inventory.get('vtp_domain')
 
 
-def load_native_vlan(path='inventory.yaml'):
+def load_native_vlan(path=INVENTORY_PATH):
     """Load the native_vlan ID from the YAML inventory — the VLAN to assign as
     native on 802.1q trunk links (V-220646). Returns None if not defined."""
     with open(path) as f:
@@ -92,7 +100,7 @@ def load_native_vlan(path='inventory.yaml'):
     return inventory.get('native_vlan')
 
 
-def load_default_access_vlan(path='inventory.yaml'):
+def load_default_access_vlan(path=INVENTORY_PATH):
     """Load the default_access_vlan ID from the YAML inventory — the VLAN
     assigned to host-facing/access ports that aren't already in trunk mode.
     Returns None if not defined."""
@@ -101,7 +109,7 @@ def load_default_access_vlan(path='inventory.yaml'):
     return inventory.get('default_access_vlan')
 
 
-def load_external_interfaces(device_name, path='inventory.yaml'):
+def load_external_interfaces(device_name, path=INVENTORY_PATH):
     """Load the list of external-facing interface names for a router from the
     YAML inventory's external_interfaces_by_device section — a security-
     boundary/topology fact (see docs/Topology.png) that can't be derived from a
@@ -113,7 +121,7 @@ def load_external_interfaces(device_name, path='inventory.yaml'):
     return inventory.get('external_interfaces_by_device', {}).get(device_name, [])
 
 
-def load_secrets(path='secrets.yaml'):
+def load_secrets(path=SECRETS_PATH):
     """Load plaintext secrets used by the *_stig_harden.py scripts (VTP password,
     NTP auth key, etc.) from secrets.yaml - gitignored, never committed. Returns
     an empty dict if the file doesn't exist (see secrets.yaml.example)."""

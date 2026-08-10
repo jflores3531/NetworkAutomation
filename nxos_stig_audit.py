@@ -6,10 +6,12 @@ can be checked from config text alone."""
 import argparse
 import ipaddress
 import re
+import os
+
 import netauto
 import stig_common
 
-CHECKLIST_PATH = 'checklists/New NXOS Checklist.cklb'
+CHECKLIST_PATH = os.path.join(netauto.PROJECT_ROOT, 'checklists', 'New NXOS Checklist.cklb')
 
 
 # Interface types that take switchport commands on NX-OS - mgmt0, Vlan<n>

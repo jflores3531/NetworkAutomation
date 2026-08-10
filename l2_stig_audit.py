@@ -6,10 +6,12 @@ rules that can be checked from config text alone."""
 import argparse
 import ipaddress
 import re
+import os
+
 import netauto
 import stig_common
 
-CHECKLIST_PATH = 'checklists/New Layer 2 switch Checklist.cklb'
+CHECKLIST_PATH = os.path.join(netauto.PROJECT_ROOT, 'checklists', 'New Layer 2 switch Checklist.cklb')
 
 # Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd

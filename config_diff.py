@@ -19,7 +19,7 @@ device_info = netauto.require_devices(all_devices, [device_name])[device_name]
 ip_address_of_device = device_info['host']
 
 # Find the last backup taken for this device (written by backup_config.py)
-backup_path = os.path.join('backups', f'{device_name}_{ip_address_of_device}.cfg')
+backup_path = os.path.join(netauto.BACKUP_DIR, f'{device_name}_{ip_address_of_device}.cfg')
 if not os.path.exists(backup_path):
     print(f'No existing backup found at {backup_path} - run backup_config.py first.')
     raise SystemExit(1)
