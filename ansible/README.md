@@ -41,8 +41,8 @@ not assumed from documentation.
 - **`ios_config` treats a rejected CLI command as fatal**, unlike Netmiko's
   `send_config_set()` (which just includes the error text in its output and
   keeps sending the rest of the batch). Every command already confirmed
-  rejected on this lab's `vios_l2` (see `../Bugs/README.md` in the project
-  vault) is split into its own `ignore_errors: true` task, separate from
+  rejected on this lab's `vios_l2` is split into its own
+  `ignore_errors: true` task, separate from
   commands that should actually succeed and fail loud if they don't -
   bundling a known-bad command into a bigger batch silently drops every
   command after it in that same task, not just the bad one.
@@ -77,8 +77,8 @@ see below):
 
 ### Confirmed-rejected commands (ignore_errors, kept for real hardware)
 
-Same platform limitations already catalogued in the project vault's
-`Bugs/README.md`: `mls qos`, `file privilege 15`, three of the
+Same platform limitations catalogued in the main README's Notes section:
+`mls qos`, `file privilege 15`, three of the
 unnecessary-services lines (`no ip dns server`/`no ip identd`/`no service
 call-home`), UUFB (`switchport block unicast`), the per-port 802.1x/MAB
 commands, and storm control. All rejected outright on this lab's `vios_l2`,
