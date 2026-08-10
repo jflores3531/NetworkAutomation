@@ -3,17 +3,17 @@
 Cisco IOS Switch L2S STIG to a device. Interface-scoped fixes (UUFB, storm
 control, PortFast/BPDU Guard, 802.1x/MAB, trunk trust/allowed-vlan/native
 VLAN, Root Guard, disabled-port unused-VLAN reassignment) live in the
-companion script L2_stig_harden_interfaces.py - run this script first
+companion script l2_stig_harden_interfaces.py - run this script first
 (it creates the native/unused/default-access VLANs in the database and
-enables DHCP snooping globally), then run L2_stig_harden_interfaces.py.
-V-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py,
-and V-220635 (DAI) separately by L2_stig_harden_dai.py - both split out
+enables DHCP snooping globally), then run l2_stig_harden_interfaces.py.
+V-220634 (IP Source Guard) is pushed separately by l2_stig_harden_ipsg.py,
+and V-220635 (DAI) separately by l2_stig_harden_dai.py - both split out
 because they only trust the DHCP snooping binding table, so a statically-
 addressed host with no DHCP lease gets its traffic dropped once either is
 pushed (see the static-host-binding gap tracked in project memory).
 V-220623 (802.1x/MAB): the global prerequisites ('dot1x system-auth-control',
 'aaa authentication dot1x default group radius') are pushed by
-L2_stig_harden_aaa.py instead, not here - the latter needs aaa new-model
+l2_stig_harden_aaa.py instead, not here - the latter needs aaa new-model
 already active, which this script doesn't push (see that script's own
 docstring for why)."""
 
@@ -148,7 +148,7 @@ vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=netauto.load_non
 
 # V-220641's unused VLAN and V-220646's native VLAN come from inventory.yaml -
 # only their VLAN-database entries are created here, the per-port
-# assignment/trust is pushed by the companion L2_stig_harden_interfaces.py.
+# assignment/trust is pushed by the companion l2_stig_harden_interfaces.py.
 unused_vlan = netauto.load_unused_vlan()
 native_vlan_id = netauto.load_native_vlan()
 
@@ -229,7 +229,7 @@ if ntp_servers:
     key_suffix = f' key {ntp_key_id}' if ntp_key_id else ''
     ntp_commands += [f'ntp server {ip}{key_suffix}' for ip in ntp_servers]
 
-# AAA/RADIUS (V-220587/617) is pushed by the separate L2_stig_harden_aaa.py
+# AAA/RADIUS (V-220587/617) is pushed by the separate l2_stig_harden_aaa.py
 # script, not here - bundling aaa new-model in with this script's ~60-command
 # batch caused a live session to drop on S2 right after aaa new-model took
 # effect, before the rest of the block could send, leaving the device
@@ -280,7 +280,7 @@ if vlan_ids:
 # Order here doesn't functionally matter for vtp password - turned out V-220624
 # was a false FAIL all along (VTP passwords are deliberately excluded from
 # `show running-config` on Cisco IOS, confirmed live via `show vtp password`
-# showing it set correctly regardless of push order - see L2_stig_audit.py's
+# showing it set correctly regardless of push order - see l2_stig_audit.py's
 # _vtp_password_check). Keeping native_vlan_commands first anyway since it's
 # still the more sensible order (mode/VLAN setup before other global config).
 commands += native_vlan_commands
@@ -295,7 +295,7 @@ commands += [f'logging host {ip}' for ip in syslog_servers]
 # Push the hardening commands and close the session
 output = net_connect.send_config_set(commands)
 net_connect.disconnect()
-netauto.log_push('L2_stig_harden_global.py', device_name, username, commands)
+netauto.log_push('l2_stig_harden_global.py', device_name, username, commands)
 
 print(f'Hardening commands pushed to {device_name}:')
 for command in commands:
@@ -325,12 +325,12 @@ if not syslog_servers:
 if not ntp_key_id:
     print('\nSkipped V-220606 (NTP authentication) — add ntp_auth_key to secrets.yaml to include it.')
 
-print('\nV-220634 (IP Source Guard) is pushed separately by L2_stig_harden_ipsg.py.')
-print('V-220635 (DAI) is pushed separately by L2_stig_harden_dai.py.')
-print('V-220587/617 (AAA new-model + RADIUS auth) is pushed separately by L2_stig_harden_aaa.py.')
-print('V-220623a/b (dot1x system-auth-control + AAA method) is pushed separately by L2_stig_harden_aaa.py.')
+print('\nV-220634 (IP Source Guard) is pushed separately by l2_stig_harden_ipsg.py.')
+print('V-220635 (DAI) is pushed separately by l2_stig_harden_dai.py.')
+print('V-220587/617 (AAA new-model + RADIUS auth) is pushed separately by l2_stig_harden_aaa.py.')
+print('V-220623a/b (dot1x system-auth-control + AAA method) is pushed separately by l2_stig_harden_aaa.py.')
 
 print(
-    '\nNext: run L2_stig_harden_interfaces.py to push the interface-scoped fixes '
+    '\nNext: run l2_stig_harden_interfaces.py to push the interface-scoped fixes '
     '(V-220629/630/632/633b/635b/636/640/641a/643/646/623b, plus V-220642/645 as a side effect).'
 )

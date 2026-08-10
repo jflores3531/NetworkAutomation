@@ -14,12 +14,12 @@ CHECKLIST_PATH = 'New NXOS Checklist.cklb'
 
 # Interface types that take switchport commands on NX-OS - mgmt0, Vlan<n>
 # (SVIs), and loopback<n> aren't physical/logical switchports. Same list
-# NXOS_stig_harden_global.py uses.
+# nxos_stig_harden_global.py uses.
 NXOS_SWITCHPORT_PREFIXES = ('Ethernet', 'port-channel')
 
 # 'show interface status' uses abbreviated interface names ('Eth1/5',
 # 'Po10') - running-config uses the full form ('Ethernet1/5',
-# 'port-channel10'). Same mapping NXOS_stig_harden_interfaces.py uses.
+# 'port-channel10'). Same mapping nxos_stig_harden_interfaces.py uses.
 _SHORT_TO_FULL_PREFIX = (('Eth', 'Ethernet'), ('Po', 'port-channel'))
 
 # Every status value 'show interface status' actually prints in the Status
@@ -36,7 +36,7 @@ def parse_interface_status(output):
     'show interface status' output to its Status column value. 'disabled'
     specifically means administratively shutdown - confirmed live on
     NXCore1, distinct from 'suspended'/'notconnect' which don't mean unused.
-    Same parser NXOS_stig_harden_interfaces.py uses to decide what to push -
+    Same parser nxos_stig_harden_interfaces.py uses to decide what to push -
     kept in sync so the audit checks the same "not in use" definition the
     harden side acts on."""
     statuses = {}
@@ -56,13 +56,13 @@ def parse_interface_status(output):
 
 def parse_switchports(cfg):
     """Classify every switchport-capable interface as access or trunk based on
-    explicit evidence in its own config block - NOT NXOS_stig_harden_global.py's
+    explicit evidence in its own config block - NOT nxos_stig_harden_global.py's
     push-time assumption that "lacks an access VLAN, so it should become
     trunk" (that's a policy for what to push, not evidence of what's already
     there). Access: explicit 'switchport access vlan <n>' line - the only
     reliable access signal on NX-OS (confirmed live that 'switchport mode
     access' alone doesn't consistently appear in running-config, same
-    omission NXOS_stig_harden_global.py's own classify_switchports() works around).
+    omission nxos_stig_harden_global.py's own classify_switchports() works around).
     Trunk: explicit 'switchport mode trunk' line. A port with neither (still
     in NX-OS's default negotiated/L3-routed state) falls into neither bucket -
     it's not silently treated as access; V-220694's check below is the one
@@ -115,9 +115,9 @@ def _all_trunk_ports_have(cfg, pattern, what):
     return True, f'{what} present on all {len(trunk)} trunk port(s): {", ".join(sorted(trunk))}'
 
 
-# V-220692: same pruning logic as L2_stig_audit.py's default_vlan_pruned_from_trunks,
+# V-220692: same pruning logic as l2_stig_audit.py's default_vlan_pruned_from_trunks,
 # adapted to NX-OS's identical 'switchport trunk allowed vlan <spec>' syntax
-# (confirmed same command form as IOS, per NXOS_stig_harden_global.py's V-220692 push).
+# (confirmed same command form as IOS, per nxos_stig_harden_global.py's V-220692 push).
 def _default_vlan_pruned_from_trunks(cfg):
     _, trunk = parse_switchports(cfg)
     if not trunk:
@@ -142,12 +142,12 @@ def _default_vlan_pruned_from_trunks(cfg):
 
 
 # V-220694: unlike L2S's access-layer switches (default policy: non-trunk =
-# access), NXOS_stig_harden_global.py's core-switch policy is the inverse (default:
+# access), nxos_stig_harden_global.py's core-switch policy is the inverse (default:
 # non-access = trunk) - so "must be configured as access" can't be checked
 # literally per-port here without topology knowledge this script doesn't
 # have (which ports are host-facing vs. interconnects on a core switch).
 # What IS checkable, and what the rule's underlying intent actually is (see
-# L2_stig_audit.py's V-220645 - same reasoning): no switchport-capable
+# l2_stig_audit.py's V-220645 - same reasoning): no switchport-capable
 # interface should be left without an explicit access-or-trunk
 # classification, i.e. sitting in NX-OS's default negotiated/L3-routed
 # state. That ambiguous state is the real risk DISA is guarding against.
@@ -198,7 +198,7 @@ def _disabled_ports_on_unused_vlan(cfg, unused_vlan, interface_statuses):
     a finding." "Not in use" is verified via 'show interface status''s
     'disabled' status (administratively shutdown) rather than parse_switchports()'s
     access/trunk split - a disabled port pushed to trunk mode by an earlier
-    NXOS_stig_harden_interfaces.py run (before this feature existed) would
+    nxos_stig_harden_interfaces.py run (before this feature existed) would
     otherwise be invisible to this check, which only inspects access-block
     text. Every switchport-capable interface currently reported 'disabled'
     needs an explicit 'switchport access vlan <unused_vlan>' line,
@@ -617,7 +617,7 @@ def _radius_redundancy_check(cfg):
 
 def _acl_source_in_subnet_nxos(source_spec, subnet):
     """NX-OS ACL source syntax is CIDR-based ('10.1.48.0/24', 'host <ip>',
-    'any'), unlike IOS's wildcard-mask form - see L2_stig_audit.py's
+    'any'), unlike IOS's wildcard-mask form - see l2_stig_audit.py's
     _acl_source_in_subnet for the IOS equivalent this mirrors."""
     source_spec = source_spec.strip()
     if source_spec == 'any':
@@ -770,7 +770,7 @@ def _logon_audit_records_check(cfg):
     automated checks, just without V-220496's 'size nnnnn' clause - reuses
     both existing patterns rather than duplicating a third slightly-looser
     logfile regex. No new harden-side push needed; both commands are
-    already pushed by NXOS_stig_harden_global.py."""
+    already pushed by nxos_stig_harden_global.py."""
     has_logfile = re.search(r'^logging logfile \S+ \d+', cfg, re.M)
     has_level = re.search(r'^logging level authpriv? 6', cfg, re.M)
     if has_logfile and has_level:
@@ -787,7 +787,7 @@ CHECKS = {
     # V-220683/685/687/691/692/694/695 (unicast flood blocking, IP source guard,
     # storm control, default VLAN on host ports, default VLAN pruned from trunks,
     # access ports, native VLAN) are per-interface, verified via parse_switchports()
-    # above - same interface-classification approach as L2_stig_audit.py, adapted
+    # above - same interface-classification approach as l2_stig_audit.py, adapted
     # to NX-OS's own reliable signals (see that function's docstring for why).
     # exclude_vlan=unused_vlan on all four - unused_vlan is a module-level
     # global assigned further down (after the device connection), but these
@@ -909,7 +909,7 @@ username, password = netauto.get_credentials()
 # inventory.yaml's non_user_vlans/non_user_vlans_by_device, plus unused_vlan/
 # native_vlan) so V-220684/V-220686 can verify DHCP snooping/DAI actually
 # cover them, not just that some VLAN list exists. Same exclude set
-# NXOS_stig_harden_global.py uses - without also excluding unused_vlan/native_vlan
+# nxos_stig_harden_global.py uses - without also excluding unused_vlan/native_vlan
 # here, VLAN 999 (the designated black-hole/native VLAN) gets misclassified
 # as an uncovered user VLAN once it exists in the database, the same bug
 # already fixed on the harden side. Uses a separate connection since
@@ -935,7 +935,7 @@ vtp_password_output = str(vlan_discovery_connect.send_command('show vtp password
 # (shutdown/no shutdown presence) isn't used here.
 interface_statuses = parse_interface_status(str(vlan_discovery_connect.send_command('show interface status')))
 
-# V-220680: same live STP root-port discovery L2_stig_audit.py uses for
+# V-220680: same live STP root-port discovery l2_stig_audit.py uses for
 # V-220629 - stig_common.discover_root_port_interfaces() parses 'show
 # spanning-tree' generically, no NX-OS-specific handling needed.
 root_ports = stig_common.discover_root_port_interfaces(vlan_discovery_connect)

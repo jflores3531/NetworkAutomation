@@ -1,5 +1,5 @@
 ---
-# Mirrors L2_stig_harden_ipsg.py: push 'ip verify source' (V-220634, IP
+# Mirrors l2_stig_harden_ipsg.py: push 'ip verify source' (V-220634, IP
 # Source Guard) to every host-facing/access port. Kept as its own role,
 # not merged into l2s_stig_harden, for the same reason the Python script
 # is separate - IPSG only trusts the DHCP snooping binding table, so a
@@ -12,7 +12,7 @@
 # runnable/skippable per device on purpose (use --limit), same as the
 # Python script.
 #
-# Assumes l2s_stig_harden (or L2_stig_harden_global.py) has already run - DHCP
+# Assumes l2s_stig_harden (or l2_stig_harden_global.py) has already run - DHCP
 # snooping enabled, access ports already in 'switchport mode access'.
 # Neither is set up by this role itself. Fix Text/Check Text cross-check
 # (2026-07-24) found no discrepancy for V-220634 - single command, no

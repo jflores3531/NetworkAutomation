@@ -44,7 +44,7 @@ def parse_switchports(cfg):
 # directly instead, requiring an explicit 'switchport mode access' or
 # 'switchport mode trunk' line - genuinely catches a port left in IOS's
 # default negotiated/dynamic mode (the actual DTP/VLAN-hopping risk this rule
-# is about), which L2_stig_harden_global.py now avoids by pushing 'switchport mode
+# is about), which l2_stig_harden_global.py now avoids by pushing 'switchport mode
 # access' explicitly to every access port (it didn't always).
 def _all_ports_explicit_mode(cfg):
     bad, total = [], 0
@@ -438,7 +438,7 @@ def _vty_management_acl_check(cfg, subnet_str):
 # with source/interface info instead of vanishing into the implicit deny).
 # Says nothing about general data-plane traffic, and nothing about whether
 # these log entries actually reach the syslog servers (see
-# L2_stig_harden_acl.py - they don't, at `logging trap critical`).
+# l2_stig_harden_acl.py - they don't, at `logging trap critical`).
 def _vty_acl_log_input_check(cfg):
     vty_blocks = _vty_acl_blocks(cfg)
     if not vty_blocks:
@@ -514,7 +514,7 @@ def _cc_policy_check(cfg, pattern, min_value, what):
     doesn't meet it. Requires there be exactly one policy block; more than
     one is treated as ambiguous (can't tell which one is in effect) rather
     than silently picking one. Note: this project's harden script
-    (L2_stig_harden_aaa.py) doesn't currently push a
+    (l2_stig_harden_aaa.py) doesn't currently push a
     `username <name> common-criteria-policy <name>` line linking a specific
     account to a specific policy (per V-220587's own Fix Text, it should) -
     with only one policy block ever created, "exactly one block" is
@@ -824,7 +824,7 @@ def _udld_check(cfg):
 CHECKS = {
     # --- L2S (Layer 2 Switch) ---
     # V-220642/645 were NOT AUTOMATED for a long time (see git history) until
-    # L2_stig_harden_global.py started pushing explicit 'switchport access vlan
+    # l2_stig_harden_global.py started pushing explicit 'switchport access vlan
     # <default_access_vlan>' and 'switchport mode access' to every access
     # port. V-220642: IOS omits "switchport access vlan 1" when it's already
     # the default, so a missing explicit-non-1 line now unambiguously means
@@ -928,10 +928,10 @@ username, password = netauto.get_credentials()
 # inventory.yaml's non_user_vlans/non_user_vlans_by_device, plus unused_vlan/
 # native_vlan) so V-220633/V-220635 can verify DHCP snooping/DAI actually
 # cover them, not just that some VLAN list exists. Same exclude set
-# L2_stig_harden_global.py uses - without also excluding unused_vlan/native_vlan
+# l2_stig_harden_global.py uses - without also excluding unused_vlan/native_vlan
 # here, VLAN 999 (native) and VLAN 1000 (unused, no live hosts) get
 # misclassified as uncovered user VLANs once they exist in the database, the
-# same bug already fixed for NXOS_stig_audit.py's V-220684/686 (confirmed live
+# same bug already fixed for nxos_stig_audit.py's V-220684/686 (confirmed live
 # on S1: V-220635 false-failed over VLAN 1000 not being in the DAI VLAN list).
 # Also discovers the live STP root port(s) for V-220629 (Root Guard must never
 # be checked/pushed there), the live VTP password for V-220624 (never appears

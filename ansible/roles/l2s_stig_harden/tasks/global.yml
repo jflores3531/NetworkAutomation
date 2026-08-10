@@ -1,18 +1,18 @@
 ---
-# Global (non-interface-specific) fixes - mirrors L2_stig_harden_global.py's
+# Global (non-interface-specific) fixes - mirrors l2_stig_harden_global.py's
 # BASE_FIXES/OPTIONAL_FIXES/UNNECESSARY_SERVICES_FIX/SSH_ENCRYPTION_FIX/
 # ARCHIVE_LOGGING_FIX/VTY_SESSION_LIMIT_FIX/CONSOLE_EXEC_TIMEOUT_FIX exactly.
 # ios_config diffs against running-config itself, so this is idempotent
 # without any extra logic - re-running only pushes what's actually missing.
 
 # V-220623a/b (dot1x system-auth-control + AAA method) are deliberately NOT
-# in this batch - see L2_stig_harden_global.py/L2_stig_harden_aaa.py, which this
+# in this batch - see l2_stig_harden_global.py/l2_stig_harden_aaa.py, which this
 # role mirrors. 'aaa authentication dot1x default group radius' needs aaa
 # new-model already active to be valid syntax at all (confirmed live: it
 # was rejected on S2, which doesn't have aaa new-model, but succeeded on
 # S1/S3, which do). This role doesn't push aaa new-model (out of scope,
-# same as L2_stig_harden_global.py) - there's no Ansible equivalent of
-# L2_stig_harden_aaa.py yet to receive these two lines, so they're simply
+# same as l2_stig_harden_global.py) - there's no Ansible equivalent of
+# l2_stig_harden_aaa.py yet to receive these two lines, so they're simply
 # not pushed here rather than attempted-and-ignored.
 - name: "V-220630/631/637/638/639/580/599/612/576/578/570a/595a/600 - global BASE_FIXES"
   cisco.ios.ios_config:

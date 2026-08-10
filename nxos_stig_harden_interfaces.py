@@ -1,21 +1,21 @@
 #!/usr/bin/env python
 """Push the interface-scoped hardening fixes from the DISA Cisco NX-OS
-Switch L2S STIG to a device - split out of NXOS_stig_harden_global.py so global
+Switch L2S STIG to a device - split out of nxos_stig_harden_global.py so global
 fixes and per-port fixes can be run/reviewed independently, same pattern as
-L2_stig_harden_dai.py. Classifies each switchport by whether it has an
+l2_stig_harden_dai.py. Classifies each switchport by whether it has an
 explicit 'switchport access vlan <n>' line - present means access/host-facing
 (gets UUFB/storm control/IPSG), absent means trunk (gets converted to trunk
 with the shared allowed-VLAN list and native VLAN). See classify_switchports()
 for why the VLAN-assignment line is used as the signal instead of 'switchport
 mode access' (unreliable in NX-OS running-config).
 
-Run NXOS_stig_harden_global.py first, then reload the device, before running this:
+Run nxos_stig_harden_global.py first, then reload the device, before running this:
 V-220685 (IP Source Guard) needs the 'ipsg' TCAM region carved and live
-(NXOS_stig_harden_global.py stages the carve but doesn't reload), and V-220684
+(nxos_stig_harden_global.py stages the carve but doesn't reload), and V-220684
 (DHCP snooping) needs to already be enabled for the same VLANs, since IPSG
 silently no-ops without it (confirmed live on NXCore1). VLAN 999
 (unused/native VLAN) also needs to already exist in the VLAN database -
-created by NXOS_stig_harden_global.py, not here.
+created by nxos_stig_harden_global.py, not here.
 
 V-220683 (UUFB) and V-220687 (storm control) are pushed to every
 access-classified port unconditionally. V-220687's threshold is a percentage
@@ -25,21 +25,21 @@ this is a reasonable default, not a mandated one. Only broadcast is pushed -
 Check Text's compliance floor is broadcast alone, same as L2S's V-220636.
 V-220685 (IP Source Guard) uses NX-OS's own syntax ('ip verify source
 dhcp-snooping-vlan', confirmed different from IOS's 'ip verify source'),
-pushed only when vlan_ids is non-empty - same condition NXOS_stig_harden_global.py
+pushed only when vlan_ids is non-empty - same condition nxos_stig_harden_global.py
 gates DHCP snooping on, since IPSG has no prerequisite to depend on
 otherwise.
 V-220695 (native VLAN): unless a switchport already has an explicit
 'switchport access vlan <n>' line, it's pushed to trunk mode with the
-shared native_vlan - the inverse default from L2_stig_harden_global.py's
+shared native_vlan - the inverse default from l2_stig_harden_global.py's
 access-layer switches. Appropriate here since NXCore1/NXCore2 are core
 switches where most ports interconnect other switches, not end hosts.
 V-220692 (trunk VLAN pruning): trunks carry only VLANs that actually exist
 in the switch's VLAN database, minus the default VLAN (1) and the
-designated unused VLAN - same explicit-list pattern L2_stig_harden_global.py uses.
+designated unused VLAN - same explicit-list pattern l2_stig_harden_global.py uses.
 V-220691/694 (default VLAN on host ports / user-facing ports as access)
 aren't pushed by anything here either - they're satisfied by construction
 (access ports are never touched, only ports without an explicit access VLAN
-get converted to trunk). NXOS_stig_audit.py independently verifies both via
+get converted to trunk). nxos_stig_audit.py independently verifies both via
 its own parse_switchports().
 
 V-220690 (disabled ports assigned to unused VLAN): of the non-access ports
@@ -53,13 +53,13 @@ black-hole VLAN. V-220692's trunk pruning already excludes unused_vlan from
 every trunk's allowed-VLAN list, satisfying the Fix Text's Step 2 with no
 extra work. These reclassified ports deliberately don't get
 UUFB/IPSG/storm control (ACCESS_PORT_FIXES) - they're not host-facing, just
-parked, and NXOS_stig_audit.py's _all_access_ports_have() excludes
+parked, and nxos_stig_audit.py's _all_access_ports_have() excludes
 unused_vlan-assigned ports from that requirement for the same reason.
 
 V-220680 (Root Guard): pushed to every trunk-classified port except this
 switch's own live-detected STP root port(s), via the shared
 stig_common.discover_root_port_interfaces() (same function L2S's
-L2_stig_harden_interfaces.py uses) - guarding the root port would force it
+l2_stig_harden_interfaces.py uses) - guarding the root port would force it
 into root-inconsistent (blocking) state, a real outage risk. Reuses the
 connection this script already keeps open rather than opening a second one.
 
@@ -68,11 +68,11 @@ parked on unused_vlan (V-220690's black-hole ports don't need endpoint
 authentication - nothing is plugged in), per Check Content's full documented
 form: 'dot1x pae authenticator' + 'dot1x port-control auto' + 'dot1x
 host-mode single-host'. These commands are valid to configure even before
-NXOS_stig_harden_aaa.py's global prerequisites ('feature dot1x' + 'aaa
+nxos_stig_harden_aaa.py's global prerequisites ('feature dot1x' + 'aaa
 authentication dot1x default group ...') are active - they're just inert
 until that script runs, same as L2S's equivalent split. MAB isn't pushed
 here - its NX-OS command syntax isn't documented in this rule's own Check
-Content/Fix Text at all, only inferred in NXOS_stig_audit.py's own comment,
+Content/Fix Text at all, only inferred in nxos_stig_audit.py's own comment,
 so it needs a live `dot1x mac-auth-bypass ?` confirmation first before this
 script should push it too."""
 
@@ -164,7 +164,7 @@ ACCESS_PORT_FIXES = [
 # V-220685 (IP Source Guard). NX-OS's own IPSG syntax
 # ('ip verify source dhcp-snooping-vlan'), not IOS's 'ip verify source').
 # Depends on DHCP snooping already being active (pushed by
-# NXOS_stig_harden_global.py) - pushed alongside ACCESS_PORT_FIXES only when
+# nxos_stig_harden_global.py) - pushed alongside ACCESS_PORT_FIXES only when
 # vlan_ids is non-empty. Confirmed live on NXCore1: pushing this with DHCP
 # snooping never enabled silently fails to take effect rather than
 # erroring - keeping the two in lockstep means never claiming IPSG was
@@ -173,7 +173,7 @@ IPSG_FIX = 'ip verify source dhcp-snooping-vlan'
 
 # V-220675/679 (802.1x). Per Check Content's own documented example - MAB is
 # deliberately not included, see the module docstring for why. Stays inert
-# until NXOS_stig_harden_aaa.py's global prerequisites ('feature dot1x' +
+# until nxos_stig_harden_aaa.py's global prerequisites ('feature dot1x' +
 # 'aaa authentication dot1x default group ...') are active.
 DOT1X_FIX = [
     'dot1x pae authenticator',
@@ -183,7 +183,7 @@ DOT1X_FIX = [
 
 # Satisfied by construction (access ports are never touched, only
 # non-access ports get converted to trunk) rather than by a dedicated
-# command of their own - independently verified by NXOS_stig_audit.py's
+# command of their own - independently verified by nxos_stig_audit.py's
 # own parse_switchports().
 SKIPPED_RULES = [
     'V-220691 (default VLAN on host ports)',
@@ -212,7 +212,7 @@ if net_connect is None:
 unused_vlan = netauto.load_unused_vlan()
 native_vlan_id = netauto.load_native_vlan()
 
-# Discover the switch's user VLANs - same set NXOS_stig_harden_global.py uses to
+# Discover the switch's user VLANs - same set nxos_stig_harden_global.py uses to
 # decide whether DHCP snooping/DAI get pushed - so IPSG is only pushed
 # where its DHCP-snooping prerequisite actually exists. Passes device_name
 # so a device-specific non_user_vlans_by_device override (inventory.yaml)
@@ -226,7 +226,7 @@ vlan_ids = stig_common.discover_user_vlans(net_connect, exclude=non_user_vlan_ex
 
 # V-220692: trunks should carry only VLANs that actually exist in the switch's
 # VLAN database, minus the default VLAN (1), the designated unused VLAN, and
-# the native VLAN - same explicit-list pattern L2_stig_harden_global.py uses
+# the native VLAN - same explicit-list pattern l2_stig_harden_global.py uses
 # (sidesteps 'except'/'remove' semantics entirely, no risk of clobbering a
 # pre-existing restriction on first run). native_vlan_id is now a genuinely
 # separate exclusion from unused_vlan (see inventory.yaml for why they're
@@ -283,7 +283,7 @@ for chunk in re.split(r'^(?=interface \S+)', running_config, flags=re.M):
 # per Cisco's own documentation, not a per-port conflict. vlan_ids being
 # non-empty means IPSG_FIX is about to be pushed to every access port this
 # run (see below); the running_config check also catches IPSG already
-# configured from a prior run. Matches NXOS_stig_audit.py's
+# configured from a prior run. Matches nxos_stig_audit.py's
 # _dot1x_mab_check, which reports V-220675/679 NOT APPLICABLE under the
 # same condition.
 ipsg_active = bool(vlan_ids) or bool(re.search(r'^\s*ip verify source dhcp-snooping-vlan\s*$', running_config, re.M))
@@ -344,7 +344,7 @@ if access_ports:
         )
     else:
         applied_fixes['V-220685 (IP Source Guard) - SKIPPED'] = (
-            'no user VLANs discovered (vlan_ids empty) - run NXOS_stig_harden_global.py first if DHCP '
+            'no user VLANs discovered (vlan_ids empty) - run nxos_stig_harden_global.py first if DHCP '
             'snooping should already be covering VLANs here; pushing IPSG anyway would silently fail'
         )
     if ipsg_active:
@@ -355,7 +355,7 @@ if access_ports:
     elif dot1x_target_ports:
         applied_fixes['V-220675/679 (802.1x)'] = (
             f'{"; ".join(DOT1X_FIX)} (on {len(dot1x_target_ports)} access port(s): {", ".join(dot1x_target_ports)}) '
-            f'- stays inert until NXOS_stig_harden_aaa.py\'s globals are active'
+            f'- stays inert until nxos_stig_harden_aaa.py\'s globals are active'
         )
 if trunk_target_ports and root_guard_ports:
     applied_fixes['V-220680 (Root Guard)'] = (
@@ -386,7 +386,7 @@ commands = access_interface_commands + interface_commands + disabled_interface_c
 # aborting the script before most of the interface loop had even run.
 output = net_connect.send_config_set(commands, read_timeout=180) if commands else ''
 net_connect.disconnect()
-netauto.log_push('NXOS_stig_harden_interfaces.py', device_name, username, commands)
+netauto.log_push('nxos_stig_harden_interfaces.py', device_name, username, commands)
 
 if commands:
     print(f'Interface hardening commands pushed to {device_name}:')

@@ -2,5 +2,5 @@
 # Non-secret variables for the nxos_switches group. Audit-only group for now -
 # see hosts.yml for why no connection vars are set here.
 
-# Consumed by the stig_audit role - runs NXOS_stig_audit.py against this group.
-audit_script: NXOS_stig_audit.py
+# Consumed by the stig_audit role - runs nxos_stig_audit.py against this group.
+audit_script: nxos_stig_audit.py

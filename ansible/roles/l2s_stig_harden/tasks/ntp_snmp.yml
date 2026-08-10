@@ -1,5 +1,5 @@
 ---
-# Mirrors L2_stig_harden_global.py's ntp_commands/snmpv3_commands blocks.
+# Mirrors l2_stig_harden_global.py's ntp_commands/snmpv3_commands blocks.
 
 - name: "V-220606 - NTP authentication"
   cisco.ios.ios_config:

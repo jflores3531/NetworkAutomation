@@ -59,7 +59,7 @@ def load_management_subnet(path='inventory.yaml'):
 
 def load_automation_host(path='inventory.yaml'):
     """Load the automation_host IP from the YAML inventory - the sole
-    permitted source for V-220575's vty ACL (L2_stig_harden_acl.py). Returns
+    permitted source for V-220575's vty ACL (l2_stig_harden_acl.py). Returns
     None if not defined."""
     with open(path) as f:
         inventory = yaml.safe_load(f)
@@ -105,7 +105,7 @@ def load_external_interfaces(device_name, path='inventory.yaml'):
     """Load the list of external-facing interface names for a router from the
     YAML inventory's external_interfaces_by_device section — a security-
     boundary/topology fact (see Topology.png) that can't be derived from a
-    device's own config, used by IOS_Router_audit.py for STIG rules scoped to
+    device's own config, used by ios_router_audit.py for STIG rules scoped to
     "external" vs "internal" interfaces. Returns an empty list if the device
     has no entry (all its active interfaces are treated as internal)."""
     with open(path) as f:
@@ -165,7 +165,7 @@ def connect(device_name, device_info, username, password):
         # authentication falls through radius -> local *during* the SSH
         # password exchange, not after it) - confirmed live as a ~30s login
         # delay that made valid credentials look like a connection failure.
-        # L2_stig_harden_aaa.py tightens RADIUS timeout/retransmit to keep
+        # l2_stig_harden_aaa.py tightens RADIUS timeout/retransmit to keep
         # that fallback short, but this stays generous as a safety margin.
         'conn_timeout': 60,
         'auth_timeout': 60,

@@ -1,13 +1,10 @@
 #!/usr/bin/env python
-"""Push a vty management ACL (V-220575: enforce approved authorizations for
+"""Push a vty management ACL (V-215667: enforce approved authorizations for
 controlling the flow of management information) to a device, kept as its own
 script on purpose - a vty access-class that excludes the automation host's
 own source IP blocks every future SSH connection from it, so this is run and
 reviewed independently of the bulk hardening pass.
-
-The ACL's trailing deny also carries `log-input` (V-220581, partial - vty
-access attempts only, not general traffic). It matches the implicit deny
-already in effect, so it changes no access decisions, only adds logging.
+Port of l2_stig_harden_acl.py's V-220575 script - identical pattern.
 
 Scoped to just the automation host (inventory.yaml's automation_host), not
 the whole management_subnet - least privilege, and simpler to reason about.
@@ -24,8 +21,8 @@ import netauto
 ACL_NAME = 'VTY_MGMT'
 
 # Parse the target device from the command line
-parser = argparse.ArgumentParser(description='Push a vty management ACL scoped to the automation host (V-220575)')
-parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. S1)')
+parser = argparse.ArgumentParser(description='Push a vty management ACL scoped to the automation host (V-215667)')
+parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. R2)')
 args = parser.parse_args()
 
 device_name = args.device
@@ -56,16 +53,16 @@ acl_commands = [
     'exit',
 ]
 net_connect.send_config_set(acl_commands)
-netauto.log_push('L2_stig_harden_acl.py', device_name, username, acl_commands)
+netauto.log_push('ios_router_stig_harden_acl.py', device_name, username, acl_commands)
 print(f'ACL {ACL_NAME} created on {device_name}, scoped to {automation_host} only.')
-print('Trailing `deny ip any any log-input` added (V-220581) - logs rejected vty access attempts '
-      'with source/interface info. Matches the implicit deny already in effect, so no access change.')
+print('Trailing `deny ip any any log-input` added - logs rejected vty access attempts with '
+      'source/interface info. Matches the implicit deny already in effect, so no access change.')
 
 # Step 2: apply it. This is the actual risky moment - everything before this
 # point was fully reversible with zero exposure window.
 apply_commands = ['line vty 0 4', f'access-class {ACL_NAME} in']
 net_connect.send_config_set(apply_commands)
-netauto.log_push('L2_stig_harden_acl.py', device_name, username, apply_commands)
+netauto.log_push('ios_router_stig_harden_acl.py', device_name, username, apply_commands)
 print(f'Applied `access-class {ACL_NAME} in` to line vty 0 4 on {device_name}.')
 
 # Step 3: verify with a *second*, independent connection - the primary
@@ -79,7 +76,7 @@ if verify_connect is None:
           f'Reverting `access-class {ACL_NAME} in` via the still-open primary session now.')
     revert_commands = ['line vty 0 4', f'no access-class {ACL_NAME} in']
     net_connect.send_config_set(revert_commands)
-    netauto.log_push('L2_stig_harden_acl.py', device_name, username, revert_commands)
+    netauto.log_push('ios_router_stig_harden_acl.py', device_name, username, revert_commands)
     net_connect.disconnect()
     print('Reverted. The ACL itself is still defined but no longer applied to line vty 0 4 - investigate before retrying.')
     raise SystemExit(1)
@@ -89,7 +86,4 @@ verify_connect.disconnect()
 net_connect.disconnect()
 
 print(f'\nRules addressed by this pass:')
-print(f'  - V-220575 (vty management ACL, scoped to {automation_host} only)')
-print(f'  - V-220581 (log-input on the trailing deny, partial - vty access attempts only, not general '
-      f'traffic; also only reaches `show logging` locally, not the syslog servers, since logging trap '
-      f'critical is below the informational severity ACL logging uses)')
+print(f'  - V-215667 (vty management ACL, scoped to {automation_host} only)')
