@@ -9,7 +9,7 @@ import re
 import netauto
 import stig_common
 
-CHECKLIST_PATH = 'New Layer 2 switch Checklist.cklb'
+CHECKLIST_PATH = 'checklists/New Layer 2 switch Checklist.cklb'
 
 # Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd

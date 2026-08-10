@@ -12,7 +12,7 @@ Manually STIG-checking a single switch means walking ~65 rules by hand against t
 
 Rules needing external infrastructure (PKI, org-defined DoS safeguards) or topology/policy judgment are reported **NOT AUTOMATED** rather than guessed at — a false pass on a compliance tool is worse than no answer. Every rule check is coded against the STIG's literal Check Text, and every fix against its Fix Text.
 
-Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX-OS cores). Ansible roles under [`ansible/`](ansible/) replicate the Python hardening for fleet-wide runs. See [`DESIGN.md`](DESIGN.md) for the reasoning behind script isolation, run order, and credential handling.
+Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX-OS cores). Ansible roles under [`ansible/`](ansible/) replicate the Python hardening for fleet-wide runs. See [`docs/DESIGN.md`](docs/DESIGN.md) for the reasoning behind script isolation, run order, and credential handling.
 
 ## What's here
 
@@ -55,7 +55,7 @@ Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX
 - **`ios_router_stig_harden_global.py`** — Global RTR/NDM fixes: disable gratuitous ARP, CDP, AUX port; enable CEF; NTP, syslog, SSH FIPS ciphers, password encryption.
 - **`ios_router_stig_harden_acl.py`** — vty management ACL (V-215667), the router port of `l2_stig_harden_acl.py`.
 - **`ios_router_stig_harden_aaa.py`** — AAA/RADIUS (V-215709) plus password complexity (V-215681-686). `local` stays last in the method list, so SSH login still succeeds if RADIUS is unreachable.
-- **`ios_router_stig_harden_urpf.py`** — Unicast Reverse Path Forwarding (V-216989) on external-facing interfaces. Requires `allow-default` — see [`DESIGN.md`](DESIGN.md).
+- **`ios_router_stig_harden_urpf.py`** — Unicast Reverse Path Forwarding (V-216989) on external-facing interfaces. Requires `allow-default` — see [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Requirements
 
@@ -127,7 +127,7 @@ python3 l2_device_tracking.py S1    # IOS-XE only, host IP visibility
 - STIG rules requiring external infrastructure (org-defined DoS safeguards, PKI, IOS-version tracking) or manual/topology review are reported NOT AUTOMATED rather than guessed at.
 - `l2_stig_harden_ipsg.py` and `l2_stig_harden_dai.py` both only trust the DHCP snooping binding table — a statically-addressed host with no DHCP lease is invisible to either and can have its traffic dropped once they're pushed. Confirmed live. If a statically-addressed host (e.g. the automation host itself) is directly connected to a device, consider skipping one or both scripts for that device until this has a real fix.
 - Scripts that push config append a JSON-line audit record (timestamp, script, device, username, commands) to `audit_logs/audit.log`. Not tracked in git.
-- Several STIG-required commands don't exist or function on this lab's `vios_l2` image — see [`DESIGN.md`](DESIGN.md) for the list and why the scripts still push them.
+- Several STIG-required commands don't exist or function on this lab's `vios_l2` image — see [`docs/DESIGN.md`](docs/DESIGN.md) for the list and why the scripts still push them.
 
 ## Roadmap
 

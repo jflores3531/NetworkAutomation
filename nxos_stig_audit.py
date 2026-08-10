@@ -9,7 +9,7 @@ import re
 import netauto
 import stig_common
 
-CHECKLIST_PATH = 'New NXOS Checklist.cklb'
+CHECKLIST_PATH = 'checklists/New NXOS Checklist.cklb'
 
 
 # Interface types that take switchport commands on NX-OS - mgmt0, Vlan<n>

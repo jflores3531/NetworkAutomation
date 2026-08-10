@@ -9,7 +9,7 @@ import re
 import netauto
 import stig_common
 
-CHECKLIST_PATH = 'New IOS Router Checklist.cklb'
+CHECKLIST_PATH = 'checklists/New IOS Router Checklist.cklb'
 
 
 def aux_port_disabled(cfg):
@@ -738,7 +738,7 @@ def _external_interface_chunks(cfg, external_interfaces):
 # negation ('no ip unreachables' etc.) on a declared external interface.
 # NOT APPLICABLE if the device has no external interfaces declared at all
 # (inventory.yaml's external_interfaces_by_device) - nothing to check, same
-# as R2 in this lab (see Topology.png: R1 is the actual perimeter router).
+# as R2 in this lab (see docs/Topology.png: R1 is the actual perimeter router).
 def _external_interface_absence_check(cfg, external_interfaces, pattern, what):
     if not external_interfaces:
         return None, 'not applicable - no external interfaces declared for this device (inventory.yaml)'
@@ -961,7 +961,7 @@ snmp_discovery_connect.disconnect()
 CHECKS['V-215696'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=False)
 CHECKS['V-215697'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=True)
 
-# External/internal interface roles (see Topology.png + inventory.yaml's
+# External/internal interface roles (see docs/Topology.png + inventory.yaml's
 # external_interfaces_by_device) for the external-scoped rules
 # (V-216565/566/567/584/586/575) and the internal-scoped V-216989.
 external_interfaces = netauto.load_external_interfaces(device_name)
