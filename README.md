@@ -14,7 +14,7 @@ Rules needing external infrastructure (PKI, org-defined DoS safeguards) or topol
 
 ### Design decisions worth calling out
 
-- **Lockout safety.** The riskiest pushes (vty management ACL, AAA/RADIUS cutover) are isolated into their own scripts, each of which proves its escape hatch works before depending on it. `L2_stig_harden_acl.py` applies the ACL, then opens a **second independent SSH session** to prove new logins still work — reverting via the still-open primary session if they don't. This works because `access-class` is an admission-time check: it governs new connections only, leaving the already-established primary session free to revert. The same approach would *not* save you from a per-packet feature like an interface ACL or uRPF, where a bad push drops the very packet carrying the fix. `L2_stig_harden_aaa.py` proves the enable secret works via a `disable`→`enable` round-trip *before* touching `aaa new-model`.
+- **Isolated high-impact changes.** The vty management ACL and the AAA/RADIUS cutover each live in their own script rather than the bulk hardening pass, so they can be run, reviewed, and rolled back independently.
 - **No credentials on disk or in argv.** Username/password prompted at runtime via `getpass`; device-level secrets (VTP, SNMPv3, RADIUS key) load from a gitignored `secrets.yaml`, never CLI flags where they'd land in shell history.
 - **No hardcoded device data.** Every IP, VLAN ID, and server address lives in `inventory.yaml` — the scripts carry STIG logic only.
 - **Live-tested, not just written.** Nearly every commit reflects a real push against lab hardware; behavior that only works in theory is labeled as such.
@@ -96,8 +96,8 @@ python3 IOS_Router_audit.py R1
 python3 L2_stig_harden_global.py S1        # bulk fixes, run first
 python3 L2_stig_harden_ipsg.py S1   # IP Source Guard - can drop a statically-addressed host, see Notes
 python3 L2_stig_harden_dai.py S1    # DAI - same static-host risk as IPSG, see Notes
-python3 L2_stig_harden_acl.py S1    # vty management ACL - verified, still the riskiest push
-python3 L2_stig_harden_aaa.py S1    # AAA/RADIUS + password policy - run last, verified before use
+python3 L2_stig_harden_acl.py S1    # vty management ACL - run isolated
+python3 L2_stig_harden_aaa.py S1    # AAA/RADIUS + password policy - run last
 
 # NX-OS / IOS router hardening
 python3 NXOS_stig_harden_global.py NXCore1
@@ -123,8 +123,8 @@ python3 L2_device_tracking.py S1    # IOS-XE only, host IP visibility
 - [x] Audit logging to file (timestamped record of who ran what and when)
 - [x] Interface-scoped L2S STIG hardening (IP Source Guard, DAI, storm control, UUFB, native/default/access VLAN, 802.1x/MAB) — full access vs. trunk/uplink port classification in `L2_stig_audit.py`/`L2_stig_harden_global.py`
 - [x] NTP portion of the STIGs — audit and hardening, redundant authenticated time sources
-- [x] AAA/RADIUS (V-220587/617) and password complexity policy (V-220589-594) — isolated, verified-before-use in `L2_stig_harden_aaa.py`
-- [x] vty management ACL (V-220575) — isolated, verified-before-use in `L2_stig_harden_acl.py`
+- [x] AAA/RADIUS (V-220587/617) and password complexity policy (V-220589-594) — isolated in `L2_stig_harden_aaa.py`
+- [x] vty management ACL (V-220575) — isolated in `L2_stig_harden_acl.py`
 - [x] SNMPv3 auth/priv (V-220604/605) — config-only, no NMS in this lab to actually poll it
 - [ ] Config push dry-run / diff-before-push mode
 - [ ] Config removal/undo mode — no script currently has a way to revert what it pushed
