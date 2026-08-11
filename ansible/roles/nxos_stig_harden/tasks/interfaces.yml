@@ -77,7 +77,11 @@
   cisco.nxos.nxos_config:
     lines:
       - switchport block unicast                  # V-220683 (UUFB)
-      - storm-control broadcast level 40          # V-220687 (storm control)
+      # 40.00, not 40 - NX-OS renders the level to two decimal places in
+      # running-config, and nxos_config compares literally, so sending "40"
+      # never matches and re-pushes on every run. The Python side sends "40"
+      # via Netmiko, which does not care because it never diffs.
+      - storm-control broadcast level 40.00       # V-220687 (storm control)
       - ip verify source dhcp-snooping-vlan       # V-220685 (IP Source Guard)
     parents: "interface {{ item }}"
   loop: "{{ access_ports }}"

@@ -1,0 +1,4 @@
+# The DoD banner is pushed to devices verbatim and compared literally by
+# cisco.nxos.nxos_banner. A CRLF ending makes the banner differ from what the
+# device stores on every run, so pin it to LF regardless of platform.
+ansible/roles/nxos_stig_harden/files/dod_banner.txt text eol=lf

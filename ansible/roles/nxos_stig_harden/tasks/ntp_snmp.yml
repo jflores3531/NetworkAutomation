@@ -51,11 +51,20 @@
 # V-220498: redundant authoritative time sources. The 'key' suffix is only
 # added when NTP authentication was actually configured above - pointing a
 # server at a key id that does not exist is rejected.
+# 'use-vrf default' is included because NX-OS adds it when rendering the line
+# into running-config ('ntp server 192.168.100.10 use-vrf default key 1'), and
+# nxos_config compares literally - without it the task re-pushes every run.
+#
+# Gated on the key being available, unlike the Python side. Sending a bare
+# 'ntp server <ip>' to a device that already holds a keyed entry rewrites it
+# without authentication, silently undoing V-220502's mitigation. Skipping is
+# the safe failure: fill and encrypt vault.yml to configure NTP through here.
 - name: "V-220498 - NTP servers"
   cisco.nxos.nxos_config:
     lines:
-      - >-
-        ntp server {{ item }}
-        {{- ' key ' ~ ntp_auth_key_id if (ntp_auth_key_value | default('') | length > 0 and ntp_auth_key_value != 'CHANGE_ME') else '' }}
+      - "ntp server {{ item }} use-vrf default key {{ ntp_auth_key_id }}"
   loop: "{{ ntp_servers | default([]) }}"
-  when: ntp_servers | default([]) | length > 0
+  when:
+    - ntp_servers | default([]) | length > 0
+    - ntp_auth_key_value | default('') | length > 0
+    - ntp_auth_key_value != 'CHANGE_ME'
