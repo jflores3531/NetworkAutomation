@@ -7,12 +7,24 @@ collections:
   # this host's Python 3.8). 4.4.0 declares >=2.9.10, comfortably covers it.
   - name: cisco.ios
     version: "4.4.0"
-  # Pinned for the same reason as cisco.ios above - the 4.x line declares
-  # requires_ansible >=2.9.10, which covers ansible-core 2.13.13, while
-  # current releases require >=2.16. Confirm the same way before changing it:
-  #   cat ~/.ansible/collections/ansible_collections/cisco/nxos/meta/runtime.yml
+  # Pinned to the 1.x line because the automation host actually runs
+  # ansible 2.9.6 (the distro package at /usr/bin/ansible), NOT the 2.13.13
+  # this README used to claim. Display.deprecated() only gained its `date`
+  # parameter in ansible-base 2.10, and every cisco.nxos release from 3.x
+  # onward calls it with `date=` from the cliconf path - so 4.4.0 and 3.2.0
+  # both fail identically with:
+  #
+  #   ConnectionError: deprecated() got an unexpected keyword argument 'date'
+  #
+  # That failure comes back from the persistent connection process and looks
+  # like a role bug rather than a version problem, which is what makes it
+  # worth writing down. Verified by `ansible-galaxy collection list` not
+  # existing at all on this host - that subcommand arrived in 2.10.
+  #
+  # Checking meta/runtime.yml is not sufficient here: 4.4.0 declares
+  # requires_ansible >=2.9.10 and still fails. Run the playbook.
   - name: cisco.nxos
-    version: "4.4.0"
+    version: "1.4.0"
   # Not used yet - added here ahead of the Arista switch mentioned in
   # project chat, so `ansible-galaxy install -r requirements.yml` won't
   # need to change when that device is added. NOT yet verified against
