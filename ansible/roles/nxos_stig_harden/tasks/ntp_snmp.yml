@@ -21,17 +21,21 @@
       # Built with an inline Jinja loop rather than a map()/dict_kv chain -
       # dict_kv lives in community.general, which is deliberately not
       # installed here (it does not support ansible-core 2.13.13).
+      # 'informational', not 6. The module validates severity against names
+      # (emergency/alert/critical/error/warning/notification/informational/
+      # debugging) even though the CLI takes the numeric level - severity 6 on
+      # the wire is 'informational' here. Same for logfile and levels below.
       hosts: >-
         [{% for s in syslog_servers %}
-          {'host': '{{ s }}', 'severity': 6}{{ ',' if not loop.last else '' }}
+          {'host': '{{ s }}', 'severity': 'informational'}{{ ',' if not loop.last else '' }}
         {% endfor %}]
       logfile:
         name: STIG_LOGFILE
-        level: 6
+        level: informational
         size: 64000
       levels:
         - facility: authpriv
-          level: 6
+          level: informational
     state: merged
   when: syslog_servers | default([]) | length > 0
 
