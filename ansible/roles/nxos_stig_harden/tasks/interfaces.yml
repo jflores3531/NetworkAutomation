@@ -87,18 +87,27 @@
   loop: "{{ access_ports }}"
   when: access_ports | length > 0
 
-# V-220692/695 - per trunk port. The allowed-VLAN list keeps management and
-# server VLANs (they must cross trunks) but drops VLAN 1 and unused_vlan,
-# which is what satisfies V-220692's default-VLAN pruning.
+# V-220692/695 - per trunk port, via nxos_l2_interfaces rather than raw config
+# lines. The module compares the parsed switchport state as data, so an
+# allowed-VLAN list the device reorders or re-ranges (10,50,100 vs 10,50,100
+# vs 10,50,100-100) still matches - string comparison would not.
+#
+# The allowed-VLAN list keeps management and server VLANs (they must cross
+# trunks) but drops VLAN 1, unused_vlan and native_vlan, which is what
+# satisfies V-220692's default-VLAN pruning.
+#
+# state: merged, not overridden - overridden would strip switchport settings
+# on any interface not listed here, including the access ports configured
+# above and the port-channel members deliberately left alone.
 - name: "V-220692/695 - trunk allowed-VLAN scoping and native VLAN"
-  cisco.nxos.nxos_config:
-    lines:
-      - switchport
-      - switchport mode trunk
-      - "switchport trunk allowed vlan {{ allowed_trunk_vlan_ids | join(',') }}"
-      - "switchport trunk native vlan {{ native_vlan }}"
-    parents: "interface {{ item }}"
-  loop: "{{ trunk_config_targets }}"
+  cisco.nxos.nxos_l2_interfaces:
+    config: >-
+      [{% for i in trunk_config_targets %}
+        {'name': '{{ i }}', 'mode': 'trunk',
+         'trunk': {'native_vlan': {{ native_vlan }},
+                   'allowed_vlans': '{{ allowed_trunk_vlan_ids | join(",") }}'}}{{ ',' if not loop.last else '' }}
+      {% endfor %}]
+    state: merged
   when:
     - trunk_config_targets | length > 0
     - allowed_trunk_vlan_ids | length > 0

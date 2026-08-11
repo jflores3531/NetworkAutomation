@@ -38,10 +38,12 @@
       # (pushed anyway so it is explicit in running-config).
       - password strength-check                           # V-220489/490/491/492
       - ssh login-attempts 3                              # V-220480 (login attempts)
-      - logging logfile STIG_LOGFILE 6 size 64000         # V-220496 (logfile size)
       - no feature telnet                                 # V-220486a (unnecessary services)
       - no feature nxapi                                  # V-220486c (unnecessary services)
-      - logging level authpriv 6                          # V-220510 (admin session logging)
+      # V-220496 (logfile size) and V-220510 (authpriv level) used to sit here
+      # as raw lines. They are logging configuration and now live in
+      # ntp_snmp.yml alongside the syslog servers, handled by
+      # nxos_logging_global.
 
 # V-220493: exec-timeout applies to both console and vty. NX-OS takes bare
 # 'line vty' with no range, unlike IOS's 'line vty 0 4'.
