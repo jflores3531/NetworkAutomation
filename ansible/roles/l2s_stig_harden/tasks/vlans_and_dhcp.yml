@@ -28,17 +28,25 @@
         | list
       }}
 
+# Excludes VLAN 1, unused_vlan AND native_vlan, matching
+# l2_stig_harden_interfaces.py's trunk_vlan_exclude. native_vlan was missing
+# here: it used to share an ID with unused_vlan, so excluding one covered
+# both, and the two were later split (999/1000) without this being updated -
+# leaving 999 swept into the allowed-list once it existed in the database.
+# non_user_vlans is deliberately NOT excluded - management/servers VLANs must
+# still cross trunks.
 - name: >-
-    Discover VLANs for trunk allowed-list (excludes only VLAN 1 and
-    unused_vlan, NOT non_user_vlans - management/servers VLANs must still
-    cross trunks) - for V-220643/641b in interfaces.yml
+    Discover VLANs for trunk allowed-list (excludes VLAN 1, unused_vlan and
+    native_vlan) - for V-220643/641b in interfaces.yml
   set_fact:
     allowed_trunk_vlan_ids: >-
       {{
         vlan_brief_result.stdout[0]
         | regex_findall('(?m)^(\d+)\s+\S+')
         | map('int')
-        | reject('in', [1] + ([unused_vlan | int] if unused_vlan | string | length > 0 else []))
+        | reject('in', [1]
+                       + ([unused_vlan | int] if unused_vlan | string | length > 0 else [])
+                       + ([native_vlan | int] if native_vlan | string | length > 0 else []))
         | reject('in', range(1002, 1006) | list)
         | map('string')
         | list
