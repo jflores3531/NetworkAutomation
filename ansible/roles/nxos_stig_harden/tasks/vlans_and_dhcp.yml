@@ -1,0 +1,90 @@
+---
+# Mirrors stig_common.discover_user_vlans() as nxos_stig_harden_global.py
+# calls it, plus that script's VLAN database creation, VTP and DHCP
+# snooping/DAI push.
+
+- name: Gather show vlan brief
+  cisco.nxos.nxos_command:
+    commands:
+      - show vlan brief
+  register: vlan_brief_result
+
+# The exclude list here is wider than the L2S role's on purpose. NX-OS passes
+# non_user_vlans PLUS unused_vlan PLUS native_vlan to discover_user_vlans()
+# (nxos_stig_harden_global.py builds non_user_vlan_exclude that way), because
+# both of those VLANs exist in the database but carry no user traffic - they
+# would otherwise pick up DHCP snooping and DAI they have no use for.
+- name: >-
+    Discover genuine user VLANs (excludes non_user_vlans, unused_vlan,
+    native_vlan and the reserved 1002-1005 range) - for DHCP snooping
+    (V-220684) and DAI (V-220686)
+  set_fact:
+    user_vlan_ids: >-
+      {{
+        vlan_brief_result.stdout[0]
+        | regex_findall('(?m)^(\d+)\s+\S+')
+        | map('int')
+        | reject('in', non_user_vlans | map('int') | list)
+        | reject('in', ([unused_vlan | int] if unused_vlan | string | length > 0 else []))
+        | reject('in', ([native_vlan | int] if native_vlan | string | length > 0 else []))
+        | reject('in', range(1002, 1006) | list)
+        | map('string')
+        | list
+      }}
+
+- name: >-
+    Discover VLANs for the trunk allowed-list (excludes only VLAN 1 and
+    unused_vlan, NOT non_user_vlans - management and server VLANs must still
+    cross trunks) - for V-220692 in interfaces.yml
+  set_fact:
+    allowed_trunk_vlan_ids: >-
+      {{
+        vlan_brief_result.stdout[0]
+        | regex_findall('(?m)^(\d+)\s+\S+')
+        | map('int')
+        | reject('in', [1] + ([unused_vlan | int] if unused_vlan | string | length > 0 else []))
+        | reject('in', range(1002, 1006) | list)
+        | map('string')
+        | list
+      }}
+
+# V-220695/V-220690: both VLANs created in the database so interfaces.yml can
+# assign native_vlan to trunks and park shutdown ports in unused_vlan.
+# nxos_vlans is the resource module equivalent of the L2S role's ios_vlans
+# use - state the VLANs as data and let the module work out the push.
+# state: merged adds/updates only these two, leaving the rest alone.
+- name: "V-220695/V-220690 - create the native and unused VLANs in the database"
+  cisco.nxos.nxos_vlans:
+    config: >-
+      {{
+        ([{'vlan_id': native_vlan | int, 'name': 'NATIVE'}] if native_vlan | string | length > 0 else [])
+        + ([{'vlan_id': unused_vlan | int, 'name': 'UNUSED'}] if unused_vlan | string | length > 0 else [])
+      }}
+    state: merged
+  when: (native_vlan | string | length > 0) or (unused_vlan | string | length > 0)
+
+# V-220676: 'vtp password' is rejected with "Domain not set" unless a domain
+# is configured first - confirmed live on NXCore1, and the reason vtp_domain
+# exists in inventory.yaml at all. 'feature vtp' has to precede both.
+- name: "V-220676 - VTP domain and authentication"
+  cisco.nxos.nxos_config:
+    lines:
+      - feature vtp
+      - "vtp domain {{ vtp_domain }}"
+      - "vtp password {{ vtp_password }}"
+  no_log: true
+  when:
+    - vtp_domain | default('') | length > 0
+    - vtp_password | default('') | length > 0
+    - vtp_password != 'CHANGE_ME'
+
+# V-220684/686: DHCP snooping and DAI over the same discovered user VLAN set.
+# 'feature dhcp' gates both - DAI is part of the same feature on NX-OS.
+- name: "V-220684/686 - DHCP snooping and DAI for discovered user VLANs"
+  cisco.nxos.nxos_config:
+    lines:
+      - feature dhcp
+      - ip dhcp snooping
+      - "ip dhcp snooping vlan {{ user_vlan_ids | join(',') }}"
+      - "ip arp inspection vlan {{ user_vlan_ids | join(',') }}"
+  when: user_vlan_ids | length > 0

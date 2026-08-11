@@ -1,0 +1,101 @@
+---
+# Mirrors nxos_stig_harden_interfaces.py's access-port and trunk-port passes.
+# An interface counts as trunk only if its block contains 'switchport mode
+# trunk'; everything else switchport-capable is treated as access, the same
+# rule the Python uses.
+#
+# NOT ported here, on purpose - both need live state this role does not
+# gather, and getting either wrong causes a real outage rather than a failed
+# audit:
+#   - V-220680 (Root Guard) needs live STP root-port detection
+#     (stig_common.discover_root_port_interfaces) so this switch's own root
+#     port is excluded. Pushing Root Guard onto the root port puts it in
+#     root-inconsistent/blocking state and severs the uplink. The Python
+#     script excludes port-channel20 on NXCore1 for exactly this reason.
+#   - V-220690 (disabled ports -> unused VLAN) needs per-port admin state
+#     from 'show interface status', which running-config text alone does not
+#     give reliably on NX-OS.
+# Run nxos_stig_harden_interfaces.py for those two.
+
+- name: Gather show running-config for interface classification
+  cisco.nxos.nxos_command:
+    commands:
+      - show running-config
+  register: nxos_running_config
+
+- name: All switchport-capable interface names
+  set_fact:
+    all_switchports: >-
+      {{
+        nxos_running_config.stdout[0]
+        | regex_findall('(?m)^interface ((?:Ethernet|port-channel)\S*)')
+      }}
+
+# Same single-capture-group shape the L2S role uses - the negative lookahead
+# keeps the match inside one interface block, so this returns a flat list of
+# names rather than tuples needing further filtering.
+- name: Trunk-classified interface names (block contains 'switchport mode trunk')
+  set_fact:
+    trunk_ports: >-
+      {{
+        nxos_running_config.stdout[0]
+        | regex_findall('(?ms)^interface ((?:Ethernet|port-channel)\S*)\n(?:(?!^interface \S).)*switchport mode trunk')
+      }}
+
+- name: Access-classified interface names (everything switchport-capable that is not a trunk)
+  set_fact:
+    access_ports: "{{ all_switchports | difference(trunk_ports) }}"
+
+# Port-channel members inherit their switchport configuration from the
+# port-channel interface, and NX-OS rejects re-issuing 'switchport mode
+# trunk'/'switchport trunk ...' directly on a member once it is bundled.
+# nxos_stig_harden_interfaces.py hit this live on NXCore1's Ethernet1/1,
+# 1/2 and 1/9 and now skips members the same way. Detected by the member's
+# own 'channel-group <n>' line.
+- name: Port-channel member interfaces (carry a 'channel-group <n>' line)
+  set_fact:
+    channel_members: >-
+      {{
+        nxos_running_config.stdout[0]
+        | regex_findall('(?ms)^interface ((?:Ethernet|port-channel)\S*)\n(?:(?!^interface \S).)*channel-group \d+')
+      }}
+
+- name: Trunk ports eligible for switchport configuration (port-channels themselves, not their members)
+  set_fact:
+    trunk_config_targets: "{{ trunk_ports | difference(channel_members) }}"
+
+# V-220683/687/685 - per access port. IP Source Guard uses NX-OS's own
+# 'ip verify source dhcp-snooping-vlan' form, confirmed different from IOS's
+# bare 'ip verify source'. Storm control level 40 matches the Python.
+#
+# IPSG only trusts the DHCP snooping binding table, so a statically-addressed
+# host with no DHCP lease has its traffic dropped once this is applied - the
+# same unresolved gap the L2S ipsg/dai roles are split out for. It is included
+# here rather than split because NXCore1's only access ports are server-facing
+# and DHCP-addressed; revisit if that changes.
+- name: "V-220683/687/685 - UUFB, storm control and IP Source Guard on access ports"
+  cisco.nxos.nxos_config:
+    lines:
+      - switchport block unicast                  # V-220683 (UUFB)
+      - storm-control broadcast level 40          # V-220687 (storm control)
+      - ip verify source dhcp-snooping-vlan       # V-220685 (IP Source Guard)
+    parents: "interface {{ item }}"
+  loop: "{{ access_ports }}"
+  when: access_ports | length > 0
+
+# V-220692/695 - per trunk port. The allowed-VLAN list keeps management and
+# server VLANs (they must cross trunks) but drops VLAN 1 and unused_vlan,
+# which is what satisfies V-220692's default-VLAN pruning.
+- name: "V-220692/695 - trunk allowed-VLAN scoping and native VLAN"
+  cisco.nxos.nxos_config:
+    lines:
+      - switchport
+      - switchport mode trunk
+      - "switchport trunk allowed vlan {{ allowed_trunk_vlan_ids | join(',') }}"
+      - "switchport trunk native vlan {{ native_vlan }}"
+    parents: "interface {{ item }}"
+  loop: "{{ trunk_config_targets }}"
+  when:
+    - trunk_config_targets | length > 0
+    - allowed_trunk_vlan_ids | length > 0
+    - native_vlan | string | length > 0

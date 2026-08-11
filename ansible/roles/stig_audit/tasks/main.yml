@@ -12,7 +12,11 @@
 - name: Run {{ audit_script }} for {{ inventory_hostname }}
   command: python3 {{ audit_script }} {{ inventory_hostname }}
   args:
-    chdir: "{{ playbook_dir }}/../.."   # scripts assume repo root (checklist/inventory.yaml/secrets.yaml paths)
+    # The scripts resolve checklists/, inventory.yaml and secrets.yaml against
+    # netauto.PROJECT_ROOT now rather than the working directory, so this is
+    # no longer load-bearing - kept so any relative path the scripts print
+    # still reads against the repo root.
+    chdir: "{{ playbook_dir }}/../.."
   environment:
     SSH_USERNAME: "{{ ssh_username }}"
     SSH_PASSWORD: "{{ ssh_password }}"

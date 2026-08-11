@@ -1,0 +1,106 @@
+---
+# Global (non-interface-specific) fixes - mirrors nxos_stig_harden_global.py's
+# BASE_FIXES/EXEC_TIMEOUT_FIX/SESSION_LIMIT_FIX/SSH_MACS_FIX/SSH_CIPHERS_FIX/
+# UDLD_FIX/TCAM_FIX/BANNER_FIX exactly. nxos_config diffs against
+# running-config itself, so this is idempotent without extra logic.
+#
+# Unlike the L2S role, nothing here needs an ignore_errors escape hatch: every
+# command below was confirmed accepted live on NXCore1. The vios_l2 image the
+# L2S role targets rejects a handful of STIG-required commands outright
+# (mls qos, file privilege 15, UUFB, storm control); this NX-OS image does not.
+
+- name: "V-220681a/b, V-220682, V-220688, V-220489-492, V-220480, V-220496, V-220486a/c, V-220510 - global BASE_FIXES"
+  cisco.nxos.nxos_config:
+    lines:
+      # V-220681 needs both halves: the bpduguard default line only takes
+      # effect on ports that are already edge type, exactly as the L2S
+      # PortFast/BPDU Guard pairing does.
+      - spanning-tree port type edge default              # V-220681a (edge port type)
+      - spanning-tree port type edge bpduguard default    # V-220681b (BPDU Guard)
+      - spanning-tree loopguard default                   # V-220682 (Loop Guard)
+      - ip igmp snooping                                  # V-220688 (IGMP snooping)
+      # NX-OS has no per-character complexity commands like IOS's
+      # aaa common-criteria policy - 'password strength-check' is the single
+      # control covering all four complexity rules, and it is on by default
+      # (pushed anyway so it is explicit in running-config).
+      - password strength-check                           # V-220489/490/491/492
+      - ssh login-attempts 3                              # V-220480 (login attempts)
+      - logging logfile STIG_LOGFILE 6 size 64000         # V-220496 (logfile size)
+      - no feature telnet                                 # V-220486a (unnecessary services)
+      - no feature nxapi                                  # V-220486c (unnecessary services)
+      - logging level authpriv 6                          # V-220510 (admin session logging)
+
+# V-220493: exec-timeout applies to both console and vty. NX-OS takes bare
+# 'line vty' with no range, unlike IOS's 'line vty 0 4'.
+- name: "V-220493 - console and vty exec-timeout"
+  cisco.nxos.nxos_config:
+    lines:
+      - exec-timeout 5
+    parents: "{{ item }}"
+  loop:
+    - line console
+    - line vty
+
+# V-220474: 5 rather than the Check Text example's 2. The rule asks for an
+# organization-defined limit and the audit only verifies one is present, so
+# the example value is not binding. 2 leaves no headroom for the
+# two-connection verification nxos_stig_harden_acl.py/_aaa.py rely on - the
+# second session is torn down right after authenticating, which surfaces as
+# a Netmiko prompt-detection failure and reads like a lockout.
+- name: "V-220474 - vty session limit"
+  cisco.nxos.nxos_config:
+    lines:
+      - session-limit 5
+    parents: line vty
+
+# V-220488/503: 'ssh macs' takes exactly one algorithm per invocation on
+# NX-OS (confirmed live - 'ssh macs hmac-sha2-256 ?' shows only <CR>), unlike
+# the IOS-oriented space-separated list in DISA's own Fix Text example. Both
+# hmac-sha2-256 and hmac-sha2-512 are already in the default allow-list, so
+# the work is disabling everything else rather than enabling those two.
+# Defaults never appear in plain running-config, but these 'no ssh macs'
+# overrides do.
+- name: "V-220488/503 - disable non-FIPS SSH MACs"
+  cisco.nxos.nxos_config:
+    lines:
+      - no ssh macs hmac-sha1
+      - no ssh macs hmac-sha1-etm@openssh.com
+      - no ssh macs hmac-sha2-256-etm@openssh.com
+      - no ssh macs hmac-sha2-512-etm@openssh.com
+
+# V-220504: same one-algorithm-per-invocation shape as the MACs rule above.
+# aes128-ctr/aes256-ctr are already default-permitted; the other three are
+# disabled so the allow-list matches DISA's example exactly.
+- name: "V-220504 - disable non-FIPS SSH ciphers"
+  cisco.nxos.nxos_config:
+    lines:
+      - no ssh ciphers aes256-gcm@openssh.com
+      - no ssh ciphers aes128-gcm@openssh.com
+      - no ssh ciphers chacha20-poly1305@openssh.com
+
+- name: "V-220689 - UDLD"
+  cisco.nxos.nxos_config:
+    lines:
+      - feature udld
+
+# V-220685/686: the TCAM regions IP Source Guard and DAI need carved out.
+# STAGED ONLY - these do not take effect until the device is reloaded, and
+# NX-OS warns that the arp-ether form is deprecated. Both rules keep failing
+# an audit until that reload happens. Save the config first (../../save_config.py
+# or the equivalent) or the reload reverts everything pushed here.
+- name: "V-220685/686 - TCAM regions for IPSG and DAI (staged, needs reload)"
+  cisco.nxos.nxos_config:
+    lines:
+      - hardware access-list tcam region ipsg 256
+      - hardware access-list tcam region arp-ether 256
+
+# V-220481: uses the nxos_banner resource module rather than raw config
+# lines. A multi-line banner delimited by '#' is exactly the case raw
+# 'lines:' handles badly - the module takes the text as data and deals with
+# the delimiters itself. Same reason the L2S role uses ios_vlans for the
+# VLAN database.
+- name: "V-220481 - DoD Notice and Consent Banner"
+  cisco.nxos.nxos_banner:
+    banner: motd
+    text: "{{ lookup('file', role_path + '/files/dod_banner.txt') }}"
+    state: present
