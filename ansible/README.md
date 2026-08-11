@@ -40,14 +40,28 @@ not assumed from documentation.
   to the playbook - anywhere else is silently ignored, which caused every
   vault/group-var-gated task to skip on the first live run with no error at
   all, just silent empty values.
-- **`cisco.ios` is pinned to `4.4.0`** in `requirements.yml`, not left as
-  `>=X`. The latest release (`11.5.0` at time of writing) declares
-  `requires_ansible >=2.16.0`, which doesn't match this project's
-  `ansible-core 2.13.13` (the newest version `pip install ansible` will give
-  you on a Python 3.8 host) and prints a support warning. `4.4.0` declares
-  `>=2.9.10` and is confirmed to work cleanly. Check any collection's own
-  requirement before assuming "latest" is right:
-  `cat ~/.ansible/collections/ansible_collections/cisco/ios/meta/runtime.yml`.
+- **The automation host runs `ansible 2.9.6`**, the distro package at
+  `/usr/bin/ansible` - not a pip-installed `ansible-core`. An earlier version
+  of this README claimed 2.13.13; that was wrong, and it cost a debugging
+  session. Confirm with `ansible --version` before trusting any statement
+  here about collection compatibility. Quick tell: `ansible-galaxy collection
+  list` does not exist on 2.9 (the subcommand arrived in 2.10), so if that
+  errors with "invalid choice: 'list'", you are on 2.9.
+- **Collections are pinned to their 2.9-era lines** in `requirements.yml`:
+  `cisco.ios` to `4.4.0`, `cisco.nxos` to `1.4.0`. Current releases declare
+  `requires_ansible >=2.16.0` and will not work here.
+- **`meta/runtime.yml` is necessary but not sufficient.** `cisco.nxos:4.4.0`
+  declares `requires_ansible >=2.9.10` - which looks compatible - and still
+  fails on this host, because every release from 3.x on calls
+  `Display.deprecated(..., date=...)` from the cliconf path and that keyword
+  only exists from ansible-base 2.10. It surfaces as
+  `ConnectionError: deprecated() got an unexpected keyword argument 'date'`
+  coming back from the persistent connection process, which reads like a role
+  bug rather than a version mismatch. Check the declared requirement, then
+  actually run the playbook.
+- **Note `cisco.ios:4.4.0` declares `>=2.9.10` and this host is 2.9.6** -
+  below its own floor. It works regardless and the L2S role is confirmed
+  live on it, but that is tolerance rather than support.
 - **`ios_config` treats a rejected CLI command as fatal**, unlike Netmiko's
   `send_config_set()` (which just includes the error text in its output and
   keeps sending the rest of the batch). Every command already confirmed
