@@ -9,8 +9,21 @@
 # L2S role targets rejects a handful of STIG-required commands outright
 # (mls qos, file privilege 15, UUFB, storm control); this NX-OS image does not.
 
+# Five of the lines below are NX-OS defaults (ip igmp snooping, password
+# strength-check, ssh login-attempts 3, and the two disabled features), and
+# `show running-config` omits anything at its default value. nxos_config would
+# therefore never find them, report changed on every run, and re-push
+# no-ops forever. Diffing against `show running-config all` - which does
+# include defaults - is what makes this task idempotent.
+- name: Gather show running-config all (includes default-valued lines)
+  cisco.nxos.nxos_command:
+    commands:
+      - show running-config all
+  register: nxos_running_config_all
+
 - name: "V-220681a/b, V-220682, V-220688, V-220489-492, V-220480, V-220496, V-220486a/c, V-220510 - global BASE_FIXES"
   cisco.nxos.nxos_config:
+    running_config: "{{ nxos_running_config_all.stdout[0] }}"
     lines:
       # V-220681 needs both halves: the bpduguard default line only takes
       # effect on ports that are already edge type, exactly as the L2S
@@ -99,8 +112,14 @@
 # 'lines:' handles badly - the module takes the text as data and deals with
 # the delimiters itself. Same reason the L2S role uses ios_vlans for the
 # VLAN database.
+# The replace() strips carriage returns. The banner file is authored on
+# Windows and reaches the automation host with CRLF endings, so the module
+# sends "...only.\r\n\r\nBy using..." while the device stores "...only.\n\n
+# By using...". nxos_banner compares the text literally, so a stray \r makes
+# the banner look different on every run. .gitattributes pins the file to LF
+# in git; this keeps it correct even if it arrives some other way.
 - name: "V-220481 - DoD Notice and Consent Banner"
   cisco.nxos.nxos_banner:
     banner: motd
-    text: "{{ lookup('file', role_path + '/files/dod_banner.txt') }}"
+    text: "{{ lookup('file', role_path + '/files/dod_banner.txt') | replace('\r\n', '\n') | replace('\r', '') }}"
     state: present
