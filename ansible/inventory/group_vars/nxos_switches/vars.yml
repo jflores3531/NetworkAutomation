@@ -1,6 +1,52 @@
 ---
-# Non-secret variables for the nxos_switches group. Audit-only group for now -
-# see hosts.yml for why no connection vars are set here.
+# Non-secret variables for the nxos_switches group. Values mirror
+# ../../../../inventory.yaml exactly (same STIG rules, same network-design
+# facts) so the Ansible and Python implementations stay in sync.
 
 # Consumed by the stig_audit role - runs nxos_stig_audit.py against this group.
 audit_script: nxos_stig_audit.py
+
+# VLAN IDs excluded when discovering "user VLANs" for DHCP snooping/DAI
+# (V-220684/V-220686). This is inventory.yaml's non_user_vlans_by_device
+# entry for NXCore1, not the shared non_user_vlans list: VLAN 100 carries
+# real server traffic on Ethernet1/3-4 here, unlike on the L2S switches
+# where it's pure infrastructure, so it is deliberately NOT excluded and
+# does get DHCP snooping/IPSG/DAI coverage. VLAN 10 stays excluded - still
+# just the management SVI, no access ports on it.
+non_user_vlans:
+  - 1    # default VLAN, unused
+  - 10   # management SVI, no access ports on it
+
+# Designated "unused ports" VLAN for V-220690 - see unused_vlan in
+# inventory.yaml. Also excluded from the user-VLAN discovery below.
+unused_vlan: 1000
+
+# Native VLAN for all 802.1q trunk links, V-220695 - see native_vlan in
+# inventory.yaml. A different VLAN than unused_vlan on purpose: V-220696
+# makes any access port sharing the native VLAN's ID a finding with no
+# carve-out for shutdown ports, so once disabled ports were parked in
+# unused_vlan, sharing an ID with native_vlan became a literal violation.
+native_vlan: 999
+
+# VTP domain, V-220676 - NX-OS rejects 'vtp password' with "Domain not set"
+# unless a domain is configured first, confirmed live on NXCore1.
+vtp_domain: NETAUTO
+
+# NTP servers, V-220498 - see services.ntp_servers in inventory.yaml.
+ntp_servers:
+  - 192.168.100.10
+  - 192.168.100.11
+
+# Syslog servers, V-220516 - see services.syslog_servers in inventory.yaml.
+syslog_servers:
+  - 192.168.100.10
+  - 192.168.100.11
+
+# Bridges the vaulted secrets (vault.yml, encrypted) to plain variable names -
+# standard Ansible vault convention (vault_* holds the raw secret, the
+# plain name is what tasks actually reference).
+vtp_password: "{{ vault_vtp_password }}"
+snmpv3_auth_password: "{{ vault_snmpv3_auth_password }}"
+snmpv3_priv_password: "{{ vault_snmpv3_priv_password }}"
+ntp_auth_key_id: "{{ vault_ntp_auth_key_id }}"
+ntp_auth_key_value: "{{ vault_ntp_auth_key_value }}"

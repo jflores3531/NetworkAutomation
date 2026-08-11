@@ -1,0 +1,19 @@
+---
+# NXCore2 is powered off (GNS3 RAM ceiling), so a whole-group run will fail
+# against it. Target NXCore1 explicitly:
+#
+#   ansible-playbook playbooks/nxos_harden.yml --limit NXCore1 \
+#     --ask-vault-pass -e ansible_user=admin --ask-pass
+#
+# Root Guard (V-220680) and the disabled-port-to-unused-VLAN reassignment
+# (V-220690) are not pushed by this role - run nxos_stig_harden_interfaces.py
+# for those, and see roles/nxos_stig_harden/tasks/interfaces.yml for why.
+#
+# Nothing here writes to startup-config. Run ../../save_config.py once the
+# audit confirms the result, and before any reload - the TCAM regions this
+# role stages for IPSG/DAI need one to take effect.
+- name: Apply NX-OS STIG hardening to Cisco Nexus switches
+  hosts: nxos_switches
+  gather_facts: false
+  roles:
+    - nxos_stig_harden

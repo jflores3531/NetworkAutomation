@@ -7,6 +7,12 @@ collections:
   # this host's Python 3.8). 4.4.0 declares >=2.9.10, comfortably covers it.
   - name: cisco.ios
     version: "4.4.0"
+  # Pinned for the same reason as cisco.ios above - the 4.x line declares
+  # requires_ansible >=2.9.10, which covers ansible-core 2.13.13, while
+  # current releases require >=2.16. Confirm the same way before changing it:
+  #   cat ~/.ansible/collections/ansible_collections/cisco/nxos/meta/runtime.yml
+  - name: cisco.nxos
+    version: "4.4.0"
   # Not used yet - added here ahead of the Arista switch mentioned in
   # project chat, so `ansible-galaxy install -r requirements.yml` won't
   # need to change when that device is added. NOT yet verified against

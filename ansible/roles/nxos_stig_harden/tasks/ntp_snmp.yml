@@ -1,0 +1,61 @@
+---
+# Mirrors nxos_stig_harden_global.py's syslog, SNMPv3 and NTP push. Each is
+# gated on its inputs being present, the same way that script skips with a
+# warning rather than pushing a half-configured service.
+
+# V-220516: two syslog servers. Severity 6 (informational) matches the value
+# nxos_stig_harden_global.py sends.
+- name: "V-220516 - syslog servers"
+  cisco.nxos.nxos_config:
+    lines:
+      - "logging server {{ item }} 6"
+  loop: "{{ syslog_servers | default([]) }}"
+  when: syslog_servers | default([]) | length > 0
+
+# V-220500/501: SNMPv3 with SHA auth and AES-128 privacy. NX-OS takes the
+# whole thing as one 'snmp-server user' line with no separate group command,
+# unlike IOS which needs 'snmp-server group' first. The user is left in the
+# built-in network-operator role by omitting a role argument.
+#
+# no_log because the line carries both passwords. The Python side redacts
+# these in its own output via netauto.redact_secrets(); this is the Ansible
+# equivalent, and it matters more here since Ansible echoes task args on
+# failure by default.
+- name: "V-220500/501 - SNMPv3 auth and privacy"
+  cisco.nxos.nxos_config:
+    lines:
+      - "snmp-server user SNMPV3_USER auth sha {{ snmpv3_auth_password }} priv aes-128 {{ snmpv3_priv_password }}"
+  no_log: true
+  when:
+    - snmpv3_auth_password | default('') | length > 0
+    - snmpv3_priv_password | default('') | length > 0
+    - snmpv3_auth_password != 'CHANGE_ME'
+    - snmpv3_priv_password != 'CHANGE_ME'
+
+# V-220502: NTP authentication. A permanent finding regardless - NX-OS only
+# supports MD5 here, which is not FIPS compliant, and DISA's own Check Text
+# says so. Pushed anyway as the best available mitigation, exactly as the
+# Python does, so the audit's FAIL reflects the platform limit rather than an
+# unconfigured service.
+- name: "V-220502 - NTP authentication key (MD5 - permanent finding, best available)"
+  cisco.nxos.nxos_config:
+    lines:
+      - "ntp authentication-key {{ ntp_auth_key_id }} md5 {{ ntp_auth_key_value }}"
+      - ntp authenticate
+      - "ntp trusted-key {{ ntp_auth_key_id }}"
+  no_log: true
+  when:
+    - ntp_auth_key_value | default('') | length > 0
+    - ntp_auth_key_value != 'CHANGE_ME'
+
+# V-220498: redundant authoritative time sources. The 'key' suffix is only
+# added when NTP authentication was actually configured above - pointing a
+# server at a key id that does not exist is rejected.
+- name: "V-220498 - NTP servers"
+  cisco.nxos.nxos_config:
+    lines:
+      - >-
+        ntp server {{ item }}
+        {{- ' key ' ~ ntp_auth_key_id if (ntp_auth_key_value | default('') | length > 0 and ntp_auth_key_value != 'CHANGE_ME') else '' }}
+  loop: "{{ ntp_servers | default([]) }}"
+  when: ntp_servers | default([]) | length > 0

@@ -1,12 +1,22 @@
-# Ansible replication of l2_stig_harden_global.py
+# Ansible replication of the STIG hardening scripts
 
-An Ansible role/playbook that replicates the bulk L2S STIG hardening pass
-`../l2_stig_harden_global.py` performs against S1/S2/S3, using `cisco.ios` instead
-of Netmiko. Lives alongside the Python scripts on purpose - nothing here
-touches `../netauto.py` or any of the `*_stig_harden.py`/`*_stig_audit.py`
-scripts, and the two can be run independently (built for interview/
-portfolio purposes, not because this project's small lab actually needs a
-second toolchain - see the "Why this exists" section below).
+Ansible roles/playbooks that replicate the bulk STIG hardening passes the
+Python scripts perform, using `cisco.ios` and `cisco.nxos` instead of
+Netmiko:
+
+| Role | Replicates | Target group |
+|---|---|---|
+| `l2s_stig_harden` | `../l2_stig_harden_global.py` + `_interfaces.py` | `l2_switches` |
+| `l2s_stig_harden_ipsg` / `_dai` | `../l2_stig_harden_ipsg.py` / `_dai.py` | `l2_switches` |
+| `nxos_stig_harden` | `../nxos_stig_harden_global.py` + `_interfaces.py` | `nxos_switches` |
+| `stig_audit` | shells out to the `*_stig_audit.py` scripts | both |
+
+Lives alongside the Python scripts on purpose - apart from `stig_audit`,
+which deliberately shells out rather than reimplementing audit logic,
+nothing here touches `../netauto.py` or any of the `*_stig_harden*.py`
+scripts, and the two toolchains can be run independently (built for
+interview/portfolio purposes, not because this project's small lab actually
+needs a second toolchain - see the "Why this exists" section below).
 
 ## Status: confirmed working live
 

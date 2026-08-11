@@ -1,0 +1,8 @@
+---
+# Replicates nxos_stig_harden_global.py's bulk pass plus the parts of
+# nxos_stig_harden_interfaces.py that don't need live STP state. See
+# ../../../README.md for what's covered vs. deliberately left out.
+- import_tasks: global.yml
+- import_tasks: vlans_and_dhcp.yml
+- import_tasks: ntp_snmp.yml
+- import_tasks: interfaces.yml
