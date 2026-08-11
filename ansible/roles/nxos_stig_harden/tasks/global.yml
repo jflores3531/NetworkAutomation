@@ -123,14 +123,18 @@
 # 'lines:' handles badly - the module takes the text as data and deals with
 # the delimiters itself. Same reason the L2S role uses ios_vlans for the
 # VLAN database.
-# The replace() strips carriage returns. The banner file is authored on
-# Windows and reaches the automation host with CRLF endings, so the module
-# sends "...only.\r\n\r\nBy using..." while the device stores "...only.\n\n
-# By using...". nxos_banner compares the text literally, so a stray \r makes
-# the banner look different on every run. .gitattributes pins the file to LF
-# in git; this keeps it correct even if it arrives some other way.
+# Strips carriage returns so a file that arrives CRLF still matches the LF
+# the device stores - nxos_banner compares the text literally.
+#
+# NOTE the SINGLE-quoted YAML scalar. Written double-quoted, YAML processes
+# the \r escape itself before Jinja sees the expression, so replace() ends up
+# with a mangled argument and strips every newline in the banner rather than
+# just the carriage returns - the module then sends the whole banner as one
+# line and it can never match. Single quotes pass \r through to Jinja, which
+# interprets it in its own string literal. .gitattributes also pins the file
+# to LF, so this is belt-and-braces.
 - name: "V-220481 - DoD Notice and Consent Banner"
   cisco.nxos.nxos_banner:
     banner: motd
-    text: "{{ lookup('file', role_path + '/files/dod_banner.txt') | replace('\r\n', '\n') | replace('\r', '') }}"
+    text: '{{ lookup("file", role_path + "/files/dod_banner.txt") | replace("\r", "") }}'
     state: present
