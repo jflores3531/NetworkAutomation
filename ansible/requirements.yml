@@ -7,24 +7,25 @@ collections:
   # this host's Python 3.8). 4.4.0 declares >=2.9.10, comfortably covers it.
   - name: cisco.ios
     version: "4.4.0"
-  # Pinned to the 1.x line because the automation host actually runs
-  # ansible 2.9.6 (the distro package at /usr/bin/ansible), NOT the 2.13.13
-  # this README used to claim. Display.deprecated() only gained its `date`
-  # parameter in ansible-base 2.10, and every cisco.nxos release from 3.x
-  # onward calls it with `date=` from the cliconf path - so 4.4.0 and 3.2.0
-  # both fail identically with:
+  # Same era and same reasoning as the cisco.ios pin above.
+  - name: cisco.nxos
+    version: "4.4.0"
+  # Pinned explicitly even though cisco.ios/cisco.nxos pull it in as a
+  # dependency. Leaving it implicit is how it drifted to a version that broke
+  # every network module on the host: netcommon 2.x+ needs ansible-base >=2.10,
+  # and when the automation host was left running the distro's ansible 2.9.6
+  # (see README), every module failed with
   #
   #   ConnectionError: deprecated() got an unexpected keyword argument 'date'
   #
-  # That failure comes back from the persistent connection process and looks
-  # like a role bug rather than a version problem, which is what makes it
-  # worth writing down. Verified by `ansible-galaxy collection list` not
-  # existing at all on this host - that subcommand arrived in 2.10.
-  #
-  # Checking meta/runtime.yml is not sufficient here: 4.4.0 declares
-  # requires_ansible >=2.9.10 and still fails. Run the playbook.
-  - name: cisco.nxos
-    version: "1.4.0"
+  # because Display.deprecated() only gained `date` in 2.10. That error comes
+  # back from the persistent connection process, so it reads as a role or
+  # platform bug rather than a version problem - three cisco.nxos pins were
+  # burned chasing it before anyone ran `ansible --version`. Pinning it here
+  # means `ansible-galaxy install -r requirements.yml` restores a known-good
+  # set rather than whatever a dependency resolver picks.
+  - name: ansible.netcommon
+    version: "4.1.0"
   # Not used yet - added here ahead of the Arista switch mentioned in
   # project chat, so `ansible-galaxy install -r requirements.yml` won't
   # need to change when that device is added. NOT yet verified against
