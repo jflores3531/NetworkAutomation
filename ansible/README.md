@@ -40,28 +40,42 @@ not assumed from documentation.
   to the playbook - anywhere else is silently ignored, which caused every
   vault/group-var-gated task to skip on the first live run with no error at
   all, just silent empty values.
-- **The automation host runs `ansible 2.9.6`**, the distro package at
-  `/usr/bin/ansible` - not a pip-installed `ansible-core`. An earlier version
-  of this README claimed 2.13.13; that was wrong, and it cost a debugging
-  session. Confirm with `ansible --version` before trusting any statement
-  here about collection compatibility. Quick tell: `ansible-galaxy collection
-  list` does not exist on 2.9 (the subcommand arrived in 2.10), so if that
-  errors with "invalid choice: 'list'", you are on 2.9.
-- **Collections are pinned to their 2.9-era lines** in `requirements.yml`:
-  `cisco.ios` to `4.4.0`, `cisco.nxos` to `1.4.0`. Current releases declare
-  `requires_ansible >=2.16.0` and will not work here.
+- **`ansible-core` must be the pip install, not the distro package.** This
+  project needs `ansible-core 2.13.13` (`pip3 install 'ansible-core==2.13.13'`,
+  the newest a Python 3.8 host takes). Ubuntu also ships `ansible 2.9.6` as an
+  apt package at `/usr/bin/ansible`, and if that ends up first on `PATH`,
+  **every network module fails** with:
+
+  ```
+  ConnectionError: deprecated() got an unexpected keyword argument 'date'
+  ```
+
+  `Display.deprecated()` only gained its `date` parameter in ansible-base
+  2.10, and `ansible.netcommon` 2.x+ calls it. The error surfaces from the
+  persistent connection process, so it reads as a role or collection bug
+  rather than a version mismatch - three `cisco.nxos` versions were pinned and
+  unpinned chasing it before anyone ran `ansible --version`.
+
+  **Check the interpreter before debugging anything else:**
+
+  ```
+  ansible --version    # want: ansible [core 2.13.13], /usr/local/bin/ansible
+  ```
+
+  Two quick tells that you are on the 2.9 package: `ansible-galaxy collection
+  list` errors with `invalid choice: 'list'` (that subcommand arrived in 2.10),
+  and the traceback paths read `/usr/lib/python3/dist-packages/ansible` rather
+  than `/usr/local/lib/python3.8/dist-packages/ansible`.
 - **`meta/runtime.yml` is necessary but not sufficient.** `cisco.nxos:4.4.0`
-  declares `requires_ansible >=2.9.10` - which looks compatible - and still
-  fails on this host, because every release from 3.x on calls
-  `Display.deprecated(..., date=...)` from the cliconf path and that keyword
-  only exists from ansible-base 2.10. It surfaces as
-  `ConnectionError: deprecated() got an unexpected keyword argument 'date'`
-  coming back from the persistent connection process, which reads like a role
-  bug rather than a version mismatch. Check the declared requirement, then
-  actually run the playbook.
-- **Note `cisco.ios:4.4.0` declares `>=2.9.10` and this host is 2.9.6** -
-  below its own floor. It works regardless and the L2S role is confirmed
-  live on it, but that is tolerance rather than support.
+  declares `requires_ansible >=2.9.10`, which looks compatible with 2.9.6 and
+  is not - the real constraint came from netcommon, one layer down. Check the
+  declared requirement, then actually run the playbook against a device.
+- **Pin `ansible.netcommon` explicitly**, even though the platform collections
+  pull it in. Left implicit, it is free to drift to a version incompatible
+  with the installed core, and it takes every platform down with it when it
+  does. There is no version bind that works on 2.9.6: netcommon 2.x+ needs
+  >=2.10, while netcommon 1.x lacks the `plugin_utils` that `cisco.ios:4.4.0`
+  imports.
 - **`ios_config` treats a rejected CLI command as fatal**, unlike Netmiko's
   `send_config_set()` (which just includes the error text in its output and
   keeps sending the rest of the batch). Every command already confirmed
