@@ -66,6 +66,22 @@ not assumed from documentation.
   list` errors with `invalid choice: 'list'` (that subcommand arrived in 2.10),
   and the traceback paths read `/usr/lib/python3/dist-packages/ansible` rather
   than `/usr/local/lib/python3.8/dist-packages/ansible`.
+- **`pip install ansible-core` can leave `packaging` uninstalled.** pip counts
+  setuptools' *vendored* copy (`.../setuptools/_vendor/packaging`) as
+  satisfying the dependency, but that path never lands on `sys.path`, so
+  `ansible-galaxy` fails with:
+
+  ```
+  ERROR! Failed to import packaging, check that a supported version is installed
+  ```
+
+  `pip3 install packaging` reports "already satisfied" and changes nothing.
+  Force it and verify by import, not by pip:
+
+  ```
+  pip3 install --ignore-installed packaging
+  python3 -c "import packaging; print(packaging.__file__)"   # must NOT say setuptools/_vendor
+  ```
 - **`meta/runtime.yml` is necessary but not sufficient.** `cisco.nxos:4.4.0`
   declares `requires_ansible >=2.9.10`, which looks compatible with 2.9.6 and
   is not - the real constraint came from netcommon, one layer down. Check the
