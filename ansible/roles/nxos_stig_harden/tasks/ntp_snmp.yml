@@ -1,30 +1,59 @@
 ---
-# Mirrors nxos_stig_harden_global.py's syslog, SNMPv3 and NTP push. Each is
-# gated on its inputs being present, the same way that script skips with a
-# warning rather than pushing a half-configured service.
+# Logging, SNMPv3 and NTP - all three via resource modules rather than raw
+# nxos_config lines. These compare structured facts instead of literal
+# strings, which is what makes them idempotent against a device that renders
+# config differently to how it was typed: the raw-lines version of the NTP
+# task below re-pushed on every run because NX-OS stores
+# 'ntp server <ip> use-vrf default key 1' and the role sent 'ntp server <ip>'.
+#
+# state: merged throughout, deliberately. 'overridden'/'replaced' would delete
+# any server, host or user not named here - this role hardens a device, it
+# does not own the whole of its NTP/logging/SNMP configuration.
 
-# V-220516: two syslog servers. Severity 6 (informational) matches the value
-# nxos_stig_harden_global.py sends.
-- name: "V-220516 - syslog servers"
-  cisco.nxos.nxos_config:
-    lines:
-      - "logging server {{ item }} 6"
-  loop: "{{ syslog_servers | default([]) }}"
+# V-220516 (syslog servers), V-220496 (logfile size) and V-220510 (authpriv
+# logging level). The latter two moved here out of global.yml's BASE_FIXES -
+# they are logging configuration and belong with the rest of it, and being
+# NX-OS-default-adjacent they were part of what made that task report changed
+# on every run.
+- name: "V-220516/V-220496/V-220510 - syslog servers, logfile and authpriv level"
+  cisco.nxos.nxos_logging_global:
+    config:
+      # Built with an inline Jinja loop rather than a map()/dict_kv chain -
+      # dict_kv lives in community.general, which is deliberately not
+      # installed here (it does not support ansible-core 2.13.13).
+      hosts: >-
+        [{% for s in syslog_servers %}
+          {'host': '{{ s }}', 'severity': 6}{{ ',' if not loop.last else '' }}
+        {% endfor %}]
+      logfile:
+        name: STIG_LOGFILE
+        level: 6
+        size: 64000
+      levels:
+        - facility: authpriv
+          level: 6
+    state: merged
   when: syslog_servers | default([]) | length > 0
 
-# V-220500/501: SNMPv3 with SHA auth and AES-128 privacy. NX-OS takes the
-# whole thing as one 'snmp-server user' line with no separate group command,
-# unlike IOS which needs 'snmp-server group' first. The user is left in the
-# built-in network-operator role by omitting a role argument.
+# V-220500/501: SNMPv3 with SHA authentication and AES-128 privacy. The user
+# is left in the built-in network-operator role.
 #
-# no_log because the line carries both passwords. The Python side redacts
-# these in its own output via netauto.redact_secrets(); this is the Ansible
-# equivalent, and it matters more here since Ansible echoes task args on
-# failure by default.
+# no_log because the config carries both passwords - Ansible echoes task args
+# on failure by default.
 - name: "V-220500/501 - SNMPv3 auth and privacy"
-  cisco.nxos.nxos_config:
-    lines:
-      - "snmp-server user SNMPV3_USER auth sha {{ snmpv3_auth_password }} priv aes-128 {{ snmpv3_priv_password }}"
+  cisco.nxos.nxos_snmp_server:
+    config:
+      users:
+        auth:
+          - user: SNMPV3_USER
+            group: network-operator
+            authentication:
+              algorithm: sha
+              password: "{{ snmpv3_auth_password }}"
+              priv:
+                privacy_password: "{{ snmpv3_priv_password }}"
+                aes_128: true
+    state: merged
   no_log: true
   when:
     - snmpv3_auth_password | default('') | length > 0
@@ -32,38 +61,32 @@
     - snmpv3_auth_password != 'CHANGE_ME'
     - snmpv3_priv_password != 'CHANGE_ME'
 
-# V-220502: NTP authentication. A permanent finding regardless - NX-OS only
-# supports MD5 here, which is not FIPS compliant, and DISA's own Check Text
-# says so. Pushed anyway as the best available mitigation, exactly as the
-# Python does, so the audit's FAIL reflects the platform limit rather than an
-# unconfigured service.
-- name: "V-220502 - NTP authentication key (MD5 - permanent finding, best available)"
-  cisco.nxos.nxos_config:
-    lines:
-      - "ntp authentication-key {{ ntp_auth_key_id }} md5 {{ ntp_auth_key_value }}"
-      - ntp authenticate
-      - "ntp trusted-key {{ ntp_auth_key_id }}"
-  no_log: true
-  when:
-    - ntp_auth_key_value | default('') | length > 0
-    - ntp_auth_key_value != 'CHANGE_ME'
-
-# V-220498: redundant authoritative time sources. The 'key' suffix is only
-# added when NTP authentication was actually configured above - pointing a
-# server at a key id that does not exist is rejected.
-# 'use-vrf default' is included because NX-OS adds it when rendering the line
-# into running-config ('ntp server 192.168.100.10 use-vrf default key 1'), and
-# nxos_config compares literally - without it the task re-pushes every run.
+# V-220498 (redundant time sources) + V-220502 (authentication). V-220502 is a
+# permanent finding regardless - NX-OS only supports MD5 here, which is not
+# FIPS compliant, and DISA's own Check Text says so. Configured anyway as the
+# best available mitigation, so the audit's FAIL reflects the platform limit
+# rather than an unconfigured service.
 #
-# Gated on the key being available, unlike the Python side. Sending a bare
-# 'ntp server <ip>' to a device that already holds a keyed entry rewrites it
-# without authentication, silently undoing V-220502's mitigation. Skipping is
-# the safe failure: fill and encrypt vault.yml to configure NTP through here.
-- name: "V-220498 - NTP servers"
-  cisco.nxos.nxos_config:
-    lines:
-      - "ntp server {{ item }} use-vrf default key {{ ntp_auth_key_id }}"
-  loop: "{{ ntp_servers | default([]) }}"
+# Gated on the key being present. A server entry written without one replaces
+# the keyed entry on the device and silently drops authentication, so the safe
+# failure is to skip: fill and encrypt vault.yml to configure NTP from here.
+- name: "V-220498/V-220502 - NTP servers with MD5 authentication"
+  cisco.nxos.nxos_ntp_global:
+    config:
+      authenticate: true
+      authentication_keys:
+        - id: "{{ ntp_auth_key_id }}"
+          key: "{{ ntp_auth_key_value }}"
+      trusted_keys:
+        - key_id: "{{ ntp_auth_key_id }}"
+      # 'use_vrf: default' matches how NX-OS renders the line; omitting it is
+      # what made the raw-lines version of this task re-push every run.
+      servers: >-
+        [{% for s in ntp_servers %}
+          {'server': '{{ s }}', 'key_id': {{ ntp_auth_key_id }}, 'use_vrf': 'default'}{{ ',' if not loop.last else '' }}
+        {% endfor %}]
+    state: merged
+  no_log: true
   when:
     - ntp_servers | default([]) | length > 0
     - ntp_auth_key_value | default('') | length > 0
