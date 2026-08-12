@@ -18,3 +18,8 @@ secrets.yaml
 .claude/
 .agents/
 skills-lock.json
+
+# Ansible vault files holding the same secrets as secrets.yaml above. Tracked
+# only as .example templates - the real ones are local, never committed. See
+# each vault.yml.example for the expected keys.
+ansible/inventory/group_vars/*/vault.yml
