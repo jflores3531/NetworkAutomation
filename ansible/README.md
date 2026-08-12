@@ -259,24 +259,39 @@ this stayed unported longest:
 
 | | L2S (V-220641a) | NX-OS (V-220690) |
 |---|---|---|
-| Detection | `shutdown` in the running-config block | `disabled` in `show interface status`, **cross-checked** against `shutdown` in config |
+| Detection | `shutdown` in the running-config block | `disabled` in `show interface status`, minus ambiguous rows |
 | Scope | access-classified ports | ports otherwise about to be trunk-converted |
 | Extra round trip | none | yes, the status table |
 
-**Why NX-OS needs the extra step.** IOS renders `shutdown` in the interface
-block and that settles it. NX-OS does not render enough state there to separate
-an administratively shut port from other down states, so its Python equivalent
-reads `show interface status` - where `disabled` specifically means
-administratively shut, as distinct from `suspended` (port-channel member with no
-peer) or `notconnect` (up, no link partner).
+**Why NX-OS needs the extra step, and why running-config cannot substitute.**
+IOS renders `shutdown` in the interface block and that settles it. On NX-OS
+`shutdown` is the **default** state of a physical port, so plain
+`show running-config` omits it entirely and renders only the non-default
+`no shutdown`.
 
-**Why the cross-check.** That status table has a free-text Name column, so an
-interface whose *description* contains the word "disabled" is a false positive -
-and a false positive here parks a live port on a black-hole VLAN, which is an
-outage rather than a failed audit. Requiring both signals (status says
-`disabled` **and** config carries a `shutdown` line) removes that class of
-error. Verified against sample output containing exactly that trap, plus
-`err-disabled` and `suspended` ports that must not match.
+This was found the hard way. The first implementation cross-checked the status
+table against a `shutdown` line in running-config, on the reasoning that two
+signals are safer than one. Confirmed live on NXCore1 (2026-08-12) that the
+cross-check matched **zero** ports on a switch with **59** disabled ones -
+`Ethernet1/5` is administratively down and its config block reads only
+`switchport` / `switchport access vlan 1000`. It silently reduced V-220690 to a
+permanent no-op, and the `--check` run looked completely clean while doing so.
+Same default-value trap as `radius-server retransmit 1` in the AAA role.
+
+**How false positives are handled instead.** The status table's Name column is
+free text, so an interface whose *description* contains "disabled" matches - and
+a false positive here parks a live port on a black-hole VLAN, an outage rather
+than a failed audit. The guard uses the one source that does carry the truth: a
+row misread through its description still shows its *real* status on the same
+line, so any port also matching a non-disabled status (`connected`,
+`suspended`, `notconnect`, `err-disabled`, …) is treated as ambiguous and
+dropped. That fails safe - ambiguous ports are left alone rather than
+blackholed.
+
+Validated against NXCore1's real status output with a false-positive row
+injected: 59 genuinely disabled ports detected, the injected
+`spare disabled bay` / `connected` row correctly excluded, and `suspended` and
+`err-disabled` ports correctly not matched.
 
 **Why the L2S role reorders its own tasks.** `l2_stig_harden_interfaces.py`
 pushes the default access VLAN to every access port and then overrides it for

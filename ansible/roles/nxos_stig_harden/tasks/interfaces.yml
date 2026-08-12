@@ -12,10 +12,12 @@
 #     port is excluded. Pushing Root Guard onto the root port puts it in
 #     root-inconsistent/blocking state and severs the uplink. The Python
 #     script excludes port-channel20 on NXCore1 for exactly this reason.
-#   - V-220690 (disabled ports -> unused VLAN) needs per-port admin state
-#     from 'show interface status', which running-config text alone does not
-#     give reliably on NX-OS.
-# Run nxos_stig_harden_interfaces.py for those two.
+# Run nxos_stig_harden_interfaces.py for Root Guard.
+#
+# V-220690 (disabled ports -> unused VLAN) WAS in that list and is now
+# implemented below. It does need per-port admin state from
+# 'show interface status' - running-config genuinely cannot supply it, because
+# `shutdown` is an NX-OS default and is therefore never rendered.
 
 - name: Gather show running-config for interface classification
   cisco.nxos.nxos_command:
@@ -122,22 +124,36 @@
       }}
   when: unused_vlan | string | length > 0
 
-# Cross-check against running-config rather than trusting the status table
-# alone. `show interface status` has a free-text Name column, so an interface
-# whose DESCRIPTION contains the word "disabled" would otherwise be a false
-# positive - and the consequence of a false positive here is parking a live port
-# on the black-hole VLAN, which is an outage, not a failed audit.
+# The Name column in `show interface status` is free text, so an interface whose
+# DESCRIPTION contains the word "disabled" matches the pattern above and is a
+# false positive - and a false positive here parks a live port on the black-hole
+# VLAN, an outage rather than a failed audit. That needs guarding against.
 #
-# Matching `\n[ \t]*shutdown[ \t]*\n` rather than just 'shutdown' so the `no
-# shutdown` line cannot satisfy it, and [ \t] rather than \s because \s matches
-# newlines too and would let the match wander into the next interface's block.
-- name: Interfaces carrying an explicit shutdown line in running-config
+# A running-config cross-check was tried first and does NOT work on NX-OS:
+# `shutdown` is the DEFAULT state of a physical port, so plain running-config
+# omits it entirely and renders only the non-default `no shutdown`. Confirmed
+# live on NXCore1 2026-08-12 - Ethernet1/5 is administratively down and its
+# config block reads only `switchport` / `switchport access vlan 1000`. A
+# shutdown-line cross-check therefore matched zero ports on a switch with 59
+# disabled ones, silently reducing V-220690 to a permanent no-op. Same
+# default-value trap as `radius-server retransmit 1` in the AAA role.
+#
+# This instead uses the one source that does carry the truth. A row misread via
+# its description still contains its REAL status elsewhere on the line, so any
+# port matching a non-disabled status too is ambiguous and dropped. That fails
+# safe in the direction that matters: an ambiguous port is left alone rather
+# than blackholed.
+- name: Interfaces whose status row also matches a non-disabled state (ambiguous)
   set_fact:
-    shutdown_ports: >-
+    ambiguous_ports: >-
       {{
-        nxos_running_config.stdout[0]
-        | regex_findall('(?ms)^interface ((?:Ethernet|port-channel)\S*)\n(?:(?!^interface \S).)*?\n[ \t]*shutdown[ \t]*\n')
+        nxos_interface_status.stdout[0]
+        | regex_findall('(?m)^(\S+)\s+.*?\s(?:connected|suspended|notconnect|noOperMem|inactive|xcvrAbsent|sfpAbsent|err-disabled)\s')
+        | map('regex_replace', '^Eth(?=\d)', 'Ethernet')
+        | map('regex_replace', '^Po(?=\d)', 'port-channel')
+        | list
       }}
+  when: unused_vlan | string | length > 0
 
 # Scoped to trunk_config_targets, matching the Python, which only reclassifies
 # ports it was otherwise about to trunk. A disabled port already classified as
@@ -145,15 +161,15 @@
 # V-220690 is about not trunking unused ports, not about relocating configured
 # ones.
 #
-# Requires BOTH signals: 'disabled' in the status table AND a shutdown line in
-# config. Either alone is not enough to justify blackholing a port.
+# Disabled, minus anything ambiguous, intersected with what was about to be
+# trunked.
 - name: Disabled ports that would otherwise have been trunk-converted
   set_fact:
     disabled_trunk_targets: >-
       {{
         trunk_config_targets
         | intersect(disabled_ports | default([]))
-        | intersect(shutdown_ports | default([]))
+        | difference(ambiguous_ports | default([]))
       }}
 
 - name: Remove disabled ports from the trunk-conversion population
