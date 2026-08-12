@@ -90,25 +90,59 @@
       - file privilege 15
   ignore_errors: true
 
-# Diffed against `show running-config all` for the same reason as BASE_FIXES:
-# every one of these nine services is off by default, so IOS renders nothing
-# for the `no` form and all nine re-pushed on every run.
-- name: "V-220586 - disable unnecessary/nonsecure services"
+# These five are the V-220586 lines the `show running-config all` diff can
+# actually resolve. `no ip http server` and `no service pad` render because
+# those services are ON by default, so the `no` is a real override; `no ip
+# bootp server`, `no ip finger` and `no service config` were confirmed on S1
+# 2026-08-12 to show up once diffed against `all`.
+- name: "V-220586 - disable unnecessary/nonsecure services (renders in running-config)"
   cisco.ios.ios_config:
     running_config: "{{ ios_running_config_all.stdout[0] }}"
     lines:
-      - no boot network
-      - no ip boot server
       - no ip bootp server
       - no ip finger
       - no ip http server
-      - no ip rcmd rcp-enable
-      - no ip rcmd rsh-enable
       - no service config
-      - no service finger
-      - no service tcp-small-servers
-      - no service udp-small-servers
       - no service pad
+
+# The remaining seven are the awkward ones. They are off by default AND IOS
+# renders nothing for their disabled state - not in `show running-config`, and
+# confirmed on S1 2026-08-12 not in `show running-config all` either, unlike
+# the five above. There is simply no config text for ios_config to match, so
+# they re-pushed every run no matter what they were diffed against.
+#
+# So the question gets inverted: instead of looking for the disabled state,
+# look for each service's ENABLED form. If that isn't present the service is
+# already off and already compliant, and nothing needs pushing. Only a service
+# genuinely turned on produces a line to send.
+#
+# Same shape l2_stig_audit.py uses for `show vtp password` and `show snmp
+# user` - when the state isn't in config text, ask the device a different
+# question rather than diffing harder.
+- name: V-220586 services whose disabled state IOS never renders
+  set_fact:
+    v220586_hidden_when_off:
+      - boot network
+      - ip boot server
+      - ip rcmd rcp-enable
+      - ip rcmd rsh-enable
+      - service finger
+      - service tcp-small-servers
+      - service udp-small-servers
+    running_config_lines: "{{ ios_running_config_all.stdout[0].splitlines() | map('trim') | list }}"
+
+# Matched at line start rather than exactly, so an enabled form carrying
+# arguments (`boot network tftp://...`) still counts. The `no ...` form can
+# never false-match, since the match is anchored to the start of the line.
+- name: Of those, only the ones actually enabled on this device
+  set_fact:
+    v220586_disable_lines: >-
+      [{% for s in v220586_hidden_when_off %}{% if running_config_lines | select('match', s) | list | length > 0 %}'no {{ s }}',{% endif %}{% endfor %}]
+
+- name: "V-220586 - disable the hidden-when-off services that are actually enabled"
+  cisco.ios.ios_config:
+    lines: "{{ v220586_disable_lines }}"
+  when: v220586_disable_lines | length > 0
 
 # Confirmed live (Bugs/README.md) that these three specific services are
 # rejected outright on this lab's vios_l2 - same ignore_errors reasoning
