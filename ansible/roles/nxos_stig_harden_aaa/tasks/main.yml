@@ -86,6 +86,23 @@
   register: nxos_aaa_running_config
   changed_when: false
 
+# Plain running-config omits anything sitting at its default value, so a line
+# that happens to match the default is invisible to nxos_config: it never finds
+# it, reports changed on every run, and re-pushes a no-op forever. `show
+# running-config all` renders defaults too, which is what makes such a task
+# converge. Same fix, and same reason, as the nxos_stig_harden role's global.yml.
+#
+# Confirmed live on NXCore1 2026-08-12: `radius-server retransmit 1` is the
+# NX-OS default and appears nowhere in plain running-config, while
+# `radius-server timeout 2` (non-default) does. The tuning task below was the
+# single `changed` in an otherwise converged run because of exactly this.
+- name: Gather show running-config all (includes default-valued lines)
+  cisco.nxos.nxos_command:
+    commands:
+      - show running-config all
+  register: nxos_aaa_running_config_all
+  changed_when: false
+
 # ---------------------------------------------------------------------------
 # Step 1: RADIUS server definitions and the AAA group (no effect on login yet)
 # ---------------------------------------------------------------------------
@@ -115,10 +132,14 @@
 # Global timeout/retransmit tuning - the classic-syntax global equivalents of the
 # per-server keywords the L2S role sets. Same motivation: platform defaults add
 # ~15-30s of login delay per unreachable server before the fallback completes.
-# No secret in these, so no presence gate needed - both are non-default values
-# and render in running-config, so nxos_config diffs them correctly.
+#
+# No secret in these, so no presence gate is needed - but they DO need diffing
+# against `show running-config all`, because `retransmit 1` is the NX-OS default
+# and is therefore absent from plain running-config even when in effect. See the
+# gather task above.
 - name: "V-220513 - RADIUS timeout and retransmit tuning"
   cisco.nxos.nxos_config:
+    running_config: "{{ nxos_aaa_running_config_all.stdout[0] }}"
     lines:
       - radius-server timeout 2
       - radius-server retransmit 1
