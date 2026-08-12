@@ -18,6 +18,13 @@
 # (2026-07-24) found no discrepancy for V-220634 - single command, no
 # platform exemption, no scoping nuance - so this is a direct port with
 # no fix needed first.
+#
+# This role has no defaults/main.yml, deliberately, unlike every other role
+# here. It consumes no group_vars at all: the interface lists it acts on are
+# derived entirely from the device's own running-config via set_fact, so there
+# is no external variable that could be undefined and nothing for a defaults
+# file to guard. An empty defaults/main.yml would only imply a dependency that
+# does not exist.
 
 - name: Gather show running-config for interface classification
   cisco.ios.ios_command:

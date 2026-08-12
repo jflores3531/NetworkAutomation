@@ -1,0 +1,15 @@
+---
+# Fallback default for the DAI role. group_vars/l2_switches/vars.yml normally
+# supplies the real list; this exists so the role degrades to a safe no-op
+# instead of an undefined-variable traceback if it is ever run against a group
+# that does not set it.
+#
+# VLAN 1 alone is the conservative floor: it is the default VLAN and carries no
+# user traffic, so with only this default in play the role still discovers every
+# other VLAN in the database as a "user VLAN" and applies DAI to it. That is the
+# safe direction to fail - over-inclusive rather than silently skipping VLANs
+# that should have been protected.
+#
+# Matches the same key's default in ../../l2s_stig_harden/defaults/main.yml, so
+# the two roles agree when run back to back.
+non_user_vlans: [1]
