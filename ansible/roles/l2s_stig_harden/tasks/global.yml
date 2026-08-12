@@ -17,7 +17,15 @@
 - name: "V-220630/631/637/638/639/580/599/612/576/578/570a/595a/600 - global BASE_FIXES"
   cisco.ios.ios_config:
     lines:
-      - spanning-tree portfast bpduguard default   # V-220630 (BPDU Guard)
+      # The 'edge' keyword is deliberate. IOS 15.x accepts the command without
+      # it but stores the normalised form, so sending the bare version means
+      # ios_config never finds it and re-pushes on every run - confirmed on S1
+      # 2026-08-12, where this single line was enough to make the whole task
+      # report changed. The device holds 'spanning-tree portfast edge bpduguard
+      # default'; running-config is replayable by design, so its own rendered
+      # form is safe to send back. Same normalisation l2_stig_audit.py already
+      # accepts both spellings of.
+      - spanning-tree portfast edge bpduguard default   # V-220630 (BPDU Guard)
       - spanning-tree loopguard default             # V-220631 (Loop Guard)
       - spanning-tree mode rapid-pvst                # V-220638 (Rapid-PVST)
       - udld enable                                   # V-220639 (UDLD)
