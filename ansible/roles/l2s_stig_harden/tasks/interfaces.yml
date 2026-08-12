@@ -44,7 +44,12 @@
     lines:
       - switchport mode access
       - "switchport access vlan {{ default_access_vlan }}"
-      - spanning-tree portfast
+      # 'edge' for the same reason as the global bpduguard line in global.yml -
+      # IOS 15.x normalises 'spanning-tree portfast' to 'spanning-tree portfast
+      # edge' in running-config, so the bare form never matches and this task
+      # re-pushed on every access port every run. The other two lines here were
+      # already matching; this one line was the whole difference.
+      - spanning-tree portfast edge
   loop: "{{ access_ports }}"
   when: access_ports | length > 0
 
