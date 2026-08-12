@@ -104,12 +104,27 @@
 # The trailing `deny ip any any log-input` is V-220581 (partial). It matches the
 # implicit deny already in effect, so it changes no access decisions - it only
 # adds logging of rejected vty attempts, with source and interface.
+#
+# Note the THREE spaces in the deny line. IOS column-aligns ACL entries when it
+# renders them, storing `deny   ip any any log-input` while `permit ip host ...`
+# keeps a single space. ios_config compares literally, so the single-spaced form
+# never matches what is on the device and the task re-pushes on every run
+# forever - confirmed live on S3 2026-08-12, where it was the only task still
+# reporting changed on a second consecutive run.
+#
+# Matching the device's stored form is the same fix already applied to
+# `storm-control broadcast level 40.00` in the NX-OS role and
+# `spanning-tree portfast edge` in l2s_stig_harden's global pass. The
+# alternative is cisco.ios.ios_acls, a resource module that compares ACLs as
+# structured data and would sidestep the whitespace entirely - worth moving to,
+# but not while introducing an unverified module into the role that can lock the
+# device out.
 - name: "V-220575/V-220581 - create the vty management ACL"
   cisco.ios.ios_config:
     parents: "ip access-list extended {{ acl_name }}"
     lines:
       - "permit ip host {{ automation_host }} any"
-      - deny ip any any log-input
+      - "deny   ip any any log-input"
 
 # ---------------------------------------------------------------------------
 # Step 2: arm the safety net BEFORE the risky change
@@ -118,16 +133,72 @@
 # armed after, there is a window where a lockout is unrecoverable without a
 # console.
 #
-# cisco.ios.ios_command, not ios_config: `reload in` is a privileged EXEC
-# command, not configuration. It prompts for confirmation, hence the
-# prompt/answer pair.
+# cisco.ios.ios_command, not ios_config: `reload in` is privileged EXEC, not
+# configuration.
+#
+# TWO prompts, in this order - confirmed live on S3 2026-08-12 by driving the
+# command manually and capturing each stage:
+#
+#   reload in 5   -> "System configuration has been modified. Save? [yes/no]: "
+#   no            -> "Reload scheduled in 5 minutes by admin on vty0 (...)
+#                     Proceed with reload? [confirm]"
+#   <enter>       -> "*** --- SHUTDOWN in 0:05:00 ---"
+#
+# The save prompt is the dangerous one and it comes FIRST. Answering it "yes"
+# would write the running config - including the ACL about to be applied - to
+# startup, so a subsequent reload would restore the lockout instead of clearing
+# it. The safety net would look armed while protecting nothing. It is answered
+# "no", always.
+#
+# An earlier version handled only the confirmation prompt and hung on the save
+# question until the 60s command timeout, failing with
+# "timeout value 60 seconds reached while trying to send command: b'reload in 5'".
+# That failure was safe - nothing armed, ACL never applied - but it is why this
+# is spelled out rather than assumed from documentation.
+#
+# check_all: true is required to answer both prompts; without it the module
+# stops after the first match. The consequence is that this task expects the
+# save prompt to appear, i.e. running-config to differ from startup. In this
+# role's flow it always does, because the ACL-creation task above has already
+# modified the running config. If a device somehow reaches here with nothing
+# unsaved, the save prompt is skipped, this task times out and the play stops -
+# before the access-class is applied, which is the safe direction to fail.
+#
+# Prompts are matched as regexes, so these deliberately avoid ? and [ ] rather
+# than escaping them.
 - name: "Arm the reload safety net ({{ reload_safety_minutes }} minutes)"
   cisco.ios.ios_command:
     commands:
       - command: "reload in {{ reload_safety_minutes }}"
-        prompt: 'Proceed with reload'
-        answer: "\r"
+        prompt:
+          - 'System configuration has been modified'
+          - 'Proceed with reload'
+        answer:
+          - 'no'
+          - 'y'
+        check_all: true
   changed_when: true
+
+# Trust nothing about the arming either - confirm the timer is actually running
+# before applying the ACL. An unarmed net that is believed to be armed is worse
+# than no net at all, because the apply below proceeds as if covered.
+- name: Confirm the reload really is scheduled before touching the vty
+  cisco.ios.ios_command:
+    commands:
+      - show reload
+  register: reload_armed
+  changed_when: false
+
+- name: Assert the safety net is genuinely armed
+  assert:
+    that:
+      - reload_armed.stdout[0] is search('Reload scheduled')
+    fail_msg: >-
+      `reload in {{ reload_safety_minutes }}` reported success but `show reload`
+      does not show a scheduled reload on {{ inventory_hostname }}. Refusing to
+      apply the access-class without a working safety net - a lockout would then
+      need console recovery.
+    quiet: true
 
 - name: Safety net armed
   debug:
@@ -204,17 +275,52 @@
 # ---------------------------------------------------------------------------
 # Step 4: only reached once a fresh connection has succeeded
 # ---------------------------------------------------------------------------
+# ignore_errors, deliberately, and the assert below is what actually guarantees
+# correctness.
+#
+# `reload cancel` responds with an asynchronous "*** --- SHUTDOWN ABORTED ---"
+# banner rather than a clean prompt, and ios_command intermittently fails
+# waiting for one: observed live on S3 as
+# "timeout value 60 seconds reached while trying to send command: b'reload cancel'"
+# on one run and a clean pass on the next, with the reload genuinely cancelled
+# both times (the module even reported changed: true while erroring).
+#
+# Letting that abort the play would be exactly wrong. The command has already
+# taken effect, so failing here would report a lockout risk that does not exist
+# while leaving the operator to guess. The authoritative question is not "did
+# the command return cleanly" but "is a reload still scheduled" - which the
+# tasks below answer directly, on a fresh connection, and fail loudly if the
+# answer is yes.
 - name: Cancel the reload safety net
   cisco.ios.ios_command:
     commands:
       - command: reload cancel
   changed_when: true
+  ignore_errors: true
+  register: reload_cancel
 
-# `reload cancel` on IOS emits an asynchronous "SHUTDOWN ABORTED" notice rather
-# than confirming synchronously, so this re-reads scheduled reload state instead
-# of trusting the cancel's own output. A device left with a live reload timer
-# after a successful run would reboot for no reason - worse than the failure the
-# net exists to prevent.
+# `reload cancel` emits an asynchronous "*** --- SHUTDOWN ABORTED ---" banner
+# rather than confirming synchronously. That banner is unsolicited output landing
+# mid-session, and it breaks prompt detection for whatever command runs next: the
+# first version of this task failed with "command timeout triggered, timeout
+# value is 60 secs" on S3, having sent `show reload` into a session whose
+# expected prompt had already scrolled past the banner.
+#
+# Dropping the connection is what makes the check reliable - a fresh session has
+# a clean buffer and never sees the banner at all. The pause gives the banner
+# time to finish emitting before the reconnect, since a reconnect racing it just
+# moves the problem.
+#
+# The check itself is not optional: a device left with a live reload timer after
+# a SUCCESSFUL run would reboot for no reason, which is a worse outcome than the
+# lockout the net exists to prevent.
+- name: Let the SHUTDOWN ABORTED banner finish emitting
+  pause:
+    seconds: 5
+
+- name: Drop the polluted session before verifying the cancel
+  meta: reset_connection
+
 - name: Confirm no reload remains scheduled
   cisco.ios.ios_command:
     commands:
@@ -227,10 +333,21 @@
     that:
       - reload_state.stdout[0] is not search('Reload scheduled')
     fail_msg: >-
-      {{ inventory_hostname }} still has a reload scheduled after `reload cancel`.
-      Cancel it manually before leaving the device - it will otherwise reboot and
-      drop this ACL along with anything else unsaved.
+      {{ inventory_hostname }} STILL HAS A RELOAD SCHEDULED after `reload cancel`
+      {{ '(and the cancel command itself errored)' if reload_cancel is failed else '' }}.
+      Cancel it manually - `reload cancel` from an enable prompt - before leaving
+      the device, or it will reboot and drop this ACL along with anything else
+      unsaved.
     quiet: true
+
+- name: Note that the cancel errored but took effect
+  debug:
+    msg: >-
+      `reload cancel` returned an error ({{ reload_cancel.msg | default('prompt timeout') }})
+      but `show reload` confirms no reload is scheduled, so it took effect. This
+      is the known SHUTDOWN ABORTED banner behaviour, not a problem with the
+      device.
+  when: reload_cancel is failed
 
 - name: Summary of rules addressed
   debug:
