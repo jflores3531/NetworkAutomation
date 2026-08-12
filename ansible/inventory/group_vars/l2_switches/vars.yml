@@ -14,11 +14,26 @@ non_user_vlans:
   - 100  # servers VLAN
 
 # Designated "unused ports" VLAN for V-220641 - see unused_vlan in inventory.yaml.
-unused_vlan: 999
+#
+# Deliberately a DIFFERENT VLAN than native_vlan below. The two were both 999
+# originally - a dedicated black-hole VLAN doing double duty as the native VLAN
+# prevents double-tagging/VLAN-hopping via untagged native-VLAN traffic, which
+# seemed reasonable - but once disabled access ports started being parked here,
+# sharing native_vlan's ID made every one of them an access port sitting on the
+# native VLAN, a literal V-220696 violation. Split so the two rules' fixes
+# cannot collide.
+#
+# This file lagged that split until 2026-08-12: inventory.yaml and the
+# nxos_switches group_vars moved to 1000, this one stayed at 999, and the
+# header's claim that it mirrors inventory.yaml quietly stopped being true.
+# Live effect on S1 - VLAN 1000 was allowed across trunks instead of pruned,
+# because the exclude list resolved to [1, 999, 999]. Commit 64951ec, which
+# added native_vlan to that exclude expression in both roles, was a no-op here
+# for exactly this reason: the code fix landed without its data.
+unused_vlan: 1000
 
 # Native VLAN for all 802.1q trunk links, V-220646 - see native_vlan in
-# inventory.yaml. Same ID as unused_vlan on purpose (dedicated black-hole
-# VLAN as native prevents double-tagging/VLAN-hopping).
+# inventory.yaml. Stays 999; see the split described above.
 native_vlan: 999
 
 # Default VLAN for host-facing/access ports not already in trunk mode,
