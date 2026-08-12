@@ -297,6 +297,40 @@ would mean introducing an unverified mechanism into the single riskiest role in
 the repo - the same trap the `nxos_logging_global` history warns about. Until
 there is a device to prove it against, V-220479 stays Python-only.
 
+### Status: confirmed live on S3 (2026-08-12)
+
+Three consecutive runs, `ok=16 changed=2 failed=0` each. The full safety cycle
+was exercised on a real device: armed, verified armed, ACL applied, fresh
+connection verified, cancelled, verified disarmed - with an independent
+`show reload` check after each run confirming nothing was left scheduled.
+
+`changed=2` on every run is the arm and the cancel, which are actions rather
+than configuration, so this role never reports `changed=0`. The tasks that
+*should* converge - the ACL and the access-class - do.
+
+Three bugs were found by running it, none of which offline validation would
+have caught:
+
+- **The save prompt comes first.** `reload in 5` asks
+  `System configuration has been modified. Save? [yes/no]` *before*
+  `Proceed with reload? [confirm]`. The first version handled only the
+  confirmation and hung until the command timeout. Worse than the hang: an
+  implementation that answered the first prompt with "yes" would have written
+  the ACL to startup-config, so a later reload would have *restored* the lockout
+  rather than cleared it - a safety net that looks armed while protecting
+  nothing. It is answered `no`, always, and `check_all: true` is what allows
+  both prompts to be answered.
+- **The ACL line never matched.** IOS column-aligns ACL entries, storing
+  `deny   ip any any log-input` with three spaces. The single-spaced form meant
+  `ios_config` re-pushed on every run forever. Same class of bug as
+  `storm-control broadcast level 40.00` and `spanning-tree portfast edge`.
+- **`reload cancel` answers asynchronously.** Its
+  `*** --- SHUTDOWN ABORTED ---` banner is unsolicited output that breaks prompt
+  detection - intermittently for the cancel itself, and reliably for whatever
+  ran next. The cancel now tolerates the error and the following check runs on a
+  fresh connection, because the authoritative question is not "did the command
+  return cleanly" but "is a reload still scheduled".
+
 ### Never run this role with --check
 
 The role asserts against it. `ios_command` executes its commands even under
