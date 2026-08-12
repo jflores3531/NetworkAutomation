@@ -64,6 +64,112 @@
   set_fact:
     trunk_config_targets: "{{ trunk_ports | difference(channel_members) }}"
 
+# V-220690: administratively-shutdown ports are pulled OUT of the trunk-
+# conversion population and parked on the unused VLAN instead. Trunking a port
+# nobody is using defeats the point of designating it unused - it would carry
+# every allowed VLAN on a dead link.
+#
+# 'disabled' specifically is what NX-OS calls an administratively shutdown port
+# in `show interface status`. Deliberately NOT 'suspended' (a port-channel
+# member with no active peer) or 'notconnect' (up, but no link partner) -
+# neither of those means unused. Same three-way distinction
+# nxos_stig_harden_interfaces.py's parse_interface_status() draws, confirmed
+# live on NXCore1.
+#
+# This needs its own round trip: running-config alone cannot tell an
+# administratively disabled port from one shut for any other reason, which is
+# why the Python reads `show interface status` too rather than parsing config
+# text. It is the reason this rule stayed unported when the rest of the
+# interface pass was written.
+#
+# Gated on unused_vlan: with nowhere to park them, disabled ports are simply
+# left as trunk targets, exactly as before this existed.
+- name: Gather show interface status (for V-220690 disabled-port detection)
+  cisco.nxos.nxos_command:
+    commands:
+      - show interface status
+  register: nxos_interface_status
+  changed_when: false
+  when: unused_vlan | string | length > 0
+
+# `show interface status` prints short names (Eth1/5, Po20); running-config and
+# every other fact here uses the long form, so they have to be reconciled before
+# any set operation between them means anything.
+#
+# Expanded with two anchored substitutions rather than a '^(.*)$' -> '\1'
+# backreference: Jinja processes escapes inside its own string literals, so a
+# backslash-digit backreference reaches regex_replace as a control character.
+# That bug was found and fixed in nxos_stig_harden_aaa; this avoids it by
+# construction. The (?=\d) lookahead is what stops an already-long 'Ethernet1/1'
+# becoming 'Etherneternet1/1'.
+#
+# Note `\sdisabled\s` and NOT `\bdisabled\b`, for the same escaping reason: \b
+# is a REAL Python escape (backspace, 0x08), so a word-boundary written inside a
+# Jinja literal silently becomes a control character and the pattern matches
+# nothing at all. Caught by rendering this against sample output before running
+# it - it would otherwise have looked like "no disabled ports found" forever.
+# Requiring whitespace before it also excludes 'err-disabled', which is a
+# different NX-OS status and does not mean administratively shut.
+- name: Administratively-disabled interface names (V-220690)
+  set_fact:
+    disabled_ports: >-
+      {{
+        nxos_interface_status.stdout[0]
+        | regex_findall('(?m)^(\S+)\s+.*?\sdisabled\s')
+        | map('regex_replace', '^Eth(?=\d)', 'Ethernet')
+        | map('regex_replace', '^Po(?=\d)', 'port-channel')
+        | list
+      }}
+  when: unused_vlan | string | length > 0
+
+# Cross-check against running-config rather than trusting the status table
+# alone. `show interface status` has a free-text Name column, so an interface
+# whose DESCRIPTION contains the word "disabled" would otherwise be a false
+# positive - and the consequence of a false positive here is parking a live port
+# on the black-hole VLAN, which is an outage, not a failed audit.
+#
+# Matching `\n[ \t]*shutdown[ \t]*\n` rather than just 'shutdown' so the `no
+# shutdown` line cannot satisfy it, and [ \t] rather than \s because \s matches
+# newlines too and would let the match wander into the next interface's block.
+- name: Interfaces carrying an explicit shutdown line in running-config
+  set_fact:
+    shutdown_ports: >-
+      {{
+        nxos_running_config.stdout[0]
+        | regex_findall('(?ms)^interface ((?:Ethernet|port-channel)\S*)\n(?:(?!^interface \S).)*?\n[ \t]*shutdown[ \t]*\n')
+      }}
+
+# Scoped to trunk_config_targets, matching the Python, which only reclassifies
+# ports it was otherwise about to trunk. A disabled port already classified as
+# access is left alone - it has an explicit access VLAN someone chose, and
+# V-220690 is about not trunking unused ports, not about relocating configured
+# ones.
+#
+# Requires BOTH signals: 'disabled' in the status table AND a shutdown line in
+# config. Either alone is not enough to justify blackholing a port.
+- name: Disabled ports that would otherwise have been trunk-converted
+  set_fact:
+    disabled_trunk_targets: >-
+      {{
+        trunk_config_targets
+        | intersect(disabled_ports | default([]))
+        | intersect(shutdown_ports | default([]))
+      }}
+
+- name: Remove disabled ports from the trunk-conversion population
+  set_fact:
+    trunk_config_targets: "{{ trunk_config_targets | difference(disabled_trunk_targets) }}"
+
+- name: "V-220690 - park administratively-disabled ports on the unused VLAN"
+  cisco.nxos.nxos_config:
+    parents: "interface {{ item }}"
+    lines:
+      - switchport
+      - switchport mode access
+      - "switchport access vlan {{ unused_vlan }}"
+  loop: "{{ disabled_trunk_targets }}"
+  when: disabled_trunk_targets | length > 0
+
 # V-220683/687/685 - per access port. IP Source Guard uses NX-OS's own
 # 'ip verify source dhcp-snooping-vlan' form, confirmed different from IOS's
 # bare 'ip verify source'. Storm control level 40 matches the Python.
