@@ -1,0 +1,240 @@
+---
+# Replicates l2_stig_harden_acl.py: a vty management ACL scoped to the
+# automation host (V-220575), whose trailing deny carries log-input (V-220581,
+# partial - vty access attempts only).
+#
+# Its own role and its own playbook, never part of the bulk pass, for the
+# reason the Python says: an access-class that excludes the automation host's
+# own source IP blocks every future SSH connection from it.
+#
+# ---------------------------------------------------------------------------
+# Why this role can exist at all, when the NX-OS one cannot
+# ---------------------------------------------------------------------------
+# The Python's safety net is a second connection to verify, reverting through
+# the still-open PRIMARY session if it fails. Ansible cannot reproduce that:
+# `meta: reset_connection` destroys the pre-change session in order to test a
+# genuinely fresh login, so a rescue block would have to reconnect through the
+# very ACL that just locked it out. For AAA that weakness was tolerable -
+# NX-OS's `fallback error local` is on by default, and the L2S AAA role
+# verifies BEFORE its risky change. A vty ACL has neither escape: the lockout
+# is immediate, total, and nothing falls back.
+#
+# `reload in <n>` is the mechanism Ansible CAN offer, and it is arguably
+# stronger than the Python's, because it needs no connectivity to fire. It is
+# armed before the ACL is applied and cancelled only after a fresh connection
+# proves the automation host still has access. If anything goes wrong in
+# between - lockout, aborted play, dead controller, someone closing the laptop -
+# the device reloads on its own and comes back on its last saved configuration,
+# which does not contain this ACL.
+#
+# That last clause is load-bearing and depends on a project-wide convention:
+# ../../../../docs/DESIGN.md deliberately never saves config during a push, for
+# exactly this reason. If someone has saved the running config with the ACL
+# applied, a reload restores it too and this net is worthless. Do not add a
+# `save_when` to this role, and do not run ../../../../save_config.py against a
+# device between applying and verifying.
+#
+# NX-OS has no `reload in` equivalent, which is why nxos_stig_harden_acl.py has
+# no Ansible counterpart - see ../../README.md.
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+# An empty automation_host is the dangerous case, not merely an incomplete one:
+# it renders `permit ip host  any`, which IOS rejects, leaving an ACL whose only
+# surviving line is the trailing deny. Applying that locks out everything.
+- name: Preflight - automation_host is set and looks like an address
+  assert:
+    that:
+      - automation_host | default('') | length > 0
+      - automation_host != 'CHANGE_ME'
+      - automation_host is match('^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
+    fail_msg: >-
+      Refusing to run. automation_host must be set to the automation host's IP
+      in inventory/group_vars/l2_switches/vars.yml, and must be a bare IPv4
+      address. It is the ACL's only permit line - an empty or malformed value
+      produces a deny-only ACL that locks every management source out of the
+      device.
+    quiet: true
+
+- name: Preflight - confirm the reload safety net is a sane interval
+  assert:
+    that:
+      - reload_safety_minutes | int >= 2
+      - reload_safety_minutes | int <= 60
+    fail_msg: >-
+      reload_safety_minutes must be between 2 and 60. Below 2 the reload can
+      fire mid-verification; above 60 a real lockout stays broken far longer
+      than necessary.
+    quiet: true
+
+# Refusing check mode is a safety measure, not pedantry, for two independent
+# reasons.
+#
+# First, ios_command runs its commands even under --check, because the module is
+# declared read-only and Ansible takes that at face value. `reload in` is not
+# read-only. A check-mode run would therefore arm a real reload on a real device
+# while every ios_config task around it did nothing - including the task that
+# cancels it, which sits behind a verification that cannot meaningfully pass.
+# That is precisely backwards from what --check is for.
+#
+# Second, even setting that aside, --check cannot tell you anything useful here:
+# the access-class is never applied, so "verify a fresh connection still works"
+# succeeds against a device that was never at risk. The NX-OS AAA role has the
+# same property and it is documented there too - a clean --check on a role whose
+# risk is the push itself is false assurance.
+- name: Preflight - refuse to run in check mode
+  assert:
+    that:
+      - not ansible_check_mode
+    fail_msg: >-
+      This role must not be run with --check. ios_command executes even in check
+      mode, so `reload in` would arm a real reload while the tasks that apply and
+      then cancel it did nothing. Run it for real, against one device at a time
+      (--limit), with console access available.
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# Step 1: create the ACL (no effect until something references it)
+# ---------------------------------------------------------------------------
+# Completely safe on its own - an ip access-list changes no access decisions
+# until an access-class points at it. Same split the Python makes, and the
+# reason the risky moment is a single, separate task below.
+#
+# The trailing `deny ip any any log-input` is V-220581 (partial). It matches the
+# implicit deny already in effect, so it changes no access decisions - it only
+# adds logging of rejected vty attempts, with source and interface.
+- name: "V-220575/V-220581 - create the vty management ACL"
+  cisco.ios.ios_config:
+    parents: "ip access-list extended {{ acl_name }}"
+    lines:
+      - "permit ip host {{ automation_host }} any"
+      - deny ip any any log-input
+
+# ---------------------------------------------------------------------------
+# Step 2: arm the safety net BEFORE the risky change
+# ---------------------------------------------------------------------------
+# Ordering is the entire point. Armed first, the net covers the apply itself;
+# armed after, there is a window where a lockout is unrecoverable without a
+# console.
+#
+# cisco.ios.ios_command, not ios_config: `reload in` is a privileged EXEC
+# command, not configuration. It prompts for confirmation, hence the
+# prompt/answer pair.
+- name: "Arm the reload safety net ({{ reload_safety_minutes }} minutes)"
+  cisco.ios.ios_command:
+    commands:
+      - command: "reload in {{ reload_safety_minutes }}"
+        prompt: 'Proceed with reload'
+        answer: "\r"
+  changed_when: true
+
+- name: Safety net armed
+  debug:
+    msg: >-
+      {{ inventory_hostname }} will reload in {{ reload_safety_minutes }} minute(s)
+      unless the verification below cancels it. On reload it returns to its last
+      saved configuration, which does not contain {{ acl_name }}.
+
+# ---------------------------------------------------------------------------
+# Step 3: the risky moment
+# ---------------------------------------------------------------------------
+- name: Apply the ACL, then prove the automation host still has access
+  block:
+    - name: "V-220575 - apply access-class to line vty 0 4"
+      cisco.ios.ios_config:
+        parents: line vty 0 4
+        lines:
+          - "access-class {{ acl_name }} in"
+
+    # The pre-change session was established before the ACL took effect and so
+    # proves nothing about new connections. Only a genuinely fresh login does.
+    - name: Force a fresh connection to test access under the new ACL
+      meta: reset_connection
+
+    - name: Verify a brand-new connection from the automation host succeeds
+      cisco.ios.ios_command:
+        commands:
+          - show access-lists {{ acl_name }}
+      register: acl_verify
+      changed_when: false
+
+    # Plain substring test rather than a regex: the value is an IPv4 address, so
+    # its dots would be regex wildcards and 10.10.50.10 would happily match
+    # 10x10x50x10. Escaping would fix that, but there is nothing here a regex is
+    # needed for.
+    - name: Confirm the ACL is present and permits the automation host
+      assert:
+        that:
+          - automation_host in acl_verify.stdout[0]
+        fail_msg: >-
+          Reconnected, but {{ acl_name }} does not list {{ automation_host }}.
+        quiet: true
+
+  rescue:
+    # Best-effort only. If the automation host is genuinely locked out this
+    # cannot connect either - which is precisely why the reload net exists and
+    # is deliberately NOT cancelled on this path.
+    - name: Attempt to remove the access-class
+      cisco.ios.ios_config:
+        parents: line vty 0 4
+        lines:
+          - "no access-class {{ acl_name }} in"
+      ignore_errors: true
+      register: acl_revert
+
+    - name: Report and stop, leaving the reload armed
+      fail:
+        msg: >-
+          ABORT: could not reach {{ inventory_hostname }} after applying
+          {{ acl_name }}.
+          {% if acl_revert is failed %}
+          The automatic revert also failed to connect, so the automation host is
+          most likely locked out. The reload safety net has NOT been cancelled -
+          {{ inventory_hostname }} will reload within
+          {{ reload_safety_minutes }} minute(s) and come back on its last saved
+          configuration, without this ACL. Wait for it rather than intervening,
+          unless someone has saved the running config in the meantime.
+          {% else %}
+          The access-class was removed successfully, so access is restored. The
+          reload is still armed and should be cancelled manually with
+          `reload cancel` once you have confirmed the device is healthy.
+          {% endif %}
+
+# ---------------------------------------------------------------------------
+# Step 4: only reached once a fresh connection has succeeded
+# ---------------------------------------------------------------------------
+- name: Cancel the reload safety net
+  cisco.ios.ios_command:
+    commands:
+      - command: reload cancel
+  changed_when: true
+
+# `reload cancel` on IOS emits an asynchronous "SHUTDOWN ABORTED" notice rather
+# than confirming synchronously, so this re-reads scheduled reload state instead
+# of trusting the cancel's own output. A device left with a live reload timer
+# after a successful run would reboot for no reason - worse than the failure the
+# net exists to prevent.
+- name: Confirm no reload remains scheduled
+  cisco.ios.ios_command:
+    commands:
+      - show reload
+  register: reload_state
+  changed_when: false
+
+- name: Assert the safety net is disarmed
+  assert:
+    that:
+      - reload_state.stdout[0] is not search('Reload scheduled')
+    fail_msg: >-
+      {{ inventory_hostname }} still has a reload scheduled after `reload cancel`.
+      Cancel it manually before leaving the device - it will otherwise reboot and
+      drop this ACL along with anything else unsaved.
+    quiet: true
+
+- name: Summary of rules addressed
+  debug:
+    msg:
+      - "V-220575 - vty management ACL, scoped to {{ automation_host }} only"
+      - "V-220581 - log-input on the trailing deny (partial: vty access attempts only)"
+      - "Reload safety net armed before the apply and cancelled after verification."

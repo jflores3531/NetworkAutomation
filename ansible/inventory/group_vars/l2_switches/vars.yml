@@ -50,6 +50,15 @@ syslog_servers:
   - 192.168.100.10
   - 192.168.100.11
 
+# The automation host's own IP, V-220575 - see automation_host in
+# inventory.yaml. The sole permitted source in the vty management ACL pushed by
+# the l2s_stig_harden_acl role: least privilege, and simpler to reason about
+# than permitting the whole management_subnet.
+#
+# Getting this wrong locks every management source out of the device, so the
+# role asserts it is a bare IPv4 address rather than trusting it.
+automation_host: 10.10.50.10
+
 # RADIUS servers, V-220587/617 - see services.radius_servers in inventory.yaml.
 # Consumed by the l2s_stig_harden_aaa role, which ABORTS rather than skipping if
 # this is empty (unlike the ntp/syslog lists above, which the bulk role skips

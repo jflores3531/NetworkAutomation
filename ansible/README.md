@@ -8,6 +8,7 @@ Netmiko:
 |---|---|---|
 | `l2s_stig_harden` | `../l2_stig_harden_global.py` + `_interfaces.py` | `l2_switches` |
 | `l2s_stig_harden_aaa` | `../l2_stig_harden_aaa.py` | `l2_switches` |
+| `l2s_stig_harden_acl` | `../l2_stig_harden_acl.py` | `l2_switches` |
 | `l2s_stig_harden_ipsg` / `_dai` | `../l2_stig_harden_ipsg.py` / `_dai.py` | `l2_switches` |
 | `nxos_stig_harden` | `../nxos_stig_harden_global.py` + `_interfaces.py` | `nxos_switches` |
 | `nxos_stig_harden_aaa` | `../nxos_stig_harden_aaa.py` | `nxos_switches` |
@@ -250,6 +251,65 @@ correct commands for real hardware.
   prerequisite is guaranteed active. The per-port V-220623 commands
   (`authentication port-control auto`/`dot1x pae authenticator`/`mab`) stay in
   `l2s_stig_harden`, matching `l2_stig_harden_global.py`'s scope exactly.
+
+## The vty management ACL (V-220575/V-220581) - and why NX-OS has no role
+
+`l2s_stig_harden_acl` pushes the vty management ACL scoped to the automation
+host, with `log-input` on the trailing deny. Its own playbook, never part of the
+bulk pass:
+
+```
+ansible-playbook playbooks/l2s_harden_acl.yml -e ansible_user=admin --ask-pass --limit S1
+```
+
+**`nxos_stig_harden_acl.py` (V-220479) has no Ansible counterpart, deliberately.**
+Not an oversight and not "not done yet" - the mechanism that makes the L2S role
+safe does not exist on NX-OS.
+
+### The rollback problem, and what actually solves it
+
+Both Python ACL scripts apply the access-class, verify with a *second*
+connection, and revert through the still-open *primary* session if that fails.
+Ansible cannot do this: `meta: reset_connection` destroys the pre-change session
+in order to test a genuinely fresh login, so a `rescue` block would have to
+reconnect through the very ACL that just locked it out.
+
+For the AAA roles that weakness was tolerable - NX-OS's `fallback error local`
+is on by default, and the L2S AAA role verifies *before* its risky change. **A
+vty ACL has neither escape.** If the automation host's IP is not permitted, the
+lockout is immediate and total, and nothing falls back.
+
+`reload in <n>` is the mechanism Ansible *can* offer, and it is arguably
+stronger than the Python's, because **it needs no connectivity to fire**. The
+role arms it before applying the ACL and cancels it only after a fresh
+connection proves access still works. If anything goes wrong in between -
+lockout, aborted play, dead controller - the device reloads on its own and comes
+back on its last saved configuration, without the ACL.
+
+That last clause is load-bearing, and it works because of a convention this
+project already holds: `../docs/DESIGN.md` deliberately never saves config
+during a push, precisely so a reload is a recovery path. **Do not save the
+running config on a target between applying and verifying** - the reload would
+then restore the lockout rather than clear it.
+
+NX-OS has no `reload in`. `feature scheduler` could approximate it, but that
+would mean introducing an unverified mechanism into the single riskiest role in
+the repo - the same trap the `nxos_logging_global` history warns about. Until
+there is a device to prove it against, V-220479 stays Python-only.
+
+### Never run this role with --check
+
+The role asserts against it. `ios_command` executes its commands even under
+`--check`, because the module is declared read-only and Ansible believes it -
+but `reload in` is not read-only. A check-mode run would arm a real reload on a
+real device while every `ios_config` around it did nothing, including the task
+that cancels it.
+
+And even ignoring that, `--check` proves nothing here: the access-class is never
+applied, so "verify a fresh connection works" succeeds against a device that was
+never at risk. Same false-assurance property documented for the NX-OS AAA role,
+and the same lesson the V-220690 bug taught - a clean `--check` on a role whose
+risk *is* the push tells you nothing.
 
 ## Disabled ports (V-220641a / V-220690)
 
