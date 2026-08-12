@@ -56,8 +56,24 @@ lines it did evaluate:
 What it does **not** prove: the push path on an unconverged switch. Nothing was
 actually sent, so the ordering guarantees (RADIUS servers before the method
 lists, `aaa new-model` atomic with them) have not been exercised live by the
-role - only by the Python script they were ported from. S2 is the useful test
-there if it still lacks `aaa new-model`.
+role - only by the Python script they were ported from.
+
+**S2 is the device to prove it on, and its state is confirmed (2026-08-12):**
+`no aaa new-model`, no enable secret, no RADIUS servers, no dot1x, no password
+policy. It is reachable and healthy - it simply never had this config, having
+had `aaa new-model` reverted after the lockout incident that shaped this whole
+role. S3 was checked at the same time and is converged, identical to S1, so it
+would only repeat S1's result.
+
+That makes S2 the only L2 switch that can exercise the push path, and the run
+would be a real one: pushing the enable secret, proving it via
+`meta: reset_connection`, defining both RADIUS blocks, and sending
+`aaa new-model` plus the method lists atomically. Deliberately not yet done.
+
+If/when it is: the L2S role is the safer of the two to do it with, because it
+verifies **before** the risky change, so a failed verification aborts with
+nothing to roll back and the device holding only a new enable secret. Have the
+S2 console open anyway - that is how the original incident was recovered.
 
 `nxos_stig_harden_aaa` was confirmed live on **NXCore1** (2026-08-12):
 `ok=12 changed=0 failed=0 skipped=3`, twice consecutively, with no task
