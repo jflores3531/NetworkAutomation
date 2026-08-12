@@ -227,8 +227,22 @@ def connect(device_name, device_info, username, password, purpose=None):
 # whichever host ran the script. Each pattern captures the keyword that
 # introduces a secret so only the value after it is masked.
 _SECRET_PATTERNS = [
-    re.compile(r'(?i)\b(enable secret\s+)(\S+)'),
+    # The optional '<n>' is the encryption type, and skipping past it matters
+    # for reading config back rather than pushing it. A push sends
+    # 'enable secret <plaintext>', but running-config renders
+    # 'enable secret 5 $1$abc$...' - so without this the pattern masked the
+    # harmless type digit and printed the hash. Type 5 is MD5-crypt and
+    # crackable offline; type 8/9 are stronger but still not for publishing.
+    re.compile(r'(?i)\b(enable secret\s+(?:\d+\s+)?)(\S+)'),
     re.compile(r'(?i)\b(vtp password\s+)(\S+)'),
+    # Local account credentials, which only show up when reading config back -
+    # no script here pushes a username line. 'show running-config' renders
+    # 'username admin privilege 15 secret 5 $1$...', and that hash is the
+    # password for the very account these scripts authenticate with, so it is
+    # the last thing that should land in a transcript. Covers both 'secret' and
+    # 'password', with or without an encryption-type digit, and tolerates the
+    # optional 'privilege <n>' that sits between the name and the keyword.
+    re.compile(r'(?i)\b(username\s+\S+(?:\s+privilege\s+\d+)?\s+(?:secret|password)\s+(?:\d+\s+)?)(\S+)'),
     re.compile(r'(?i)\b(md5\s+)(\S+)'),
     re.compile(r'(?i)\b(auth\s+(?:sha|md5)\s+)(\S+)'),
     re.compile(r'(?i)\b(priv\s+(?:aes|3des|des)(?:-\d+)?(?:\s+\d+)?\s+)(\S+)'),
@@ -237,6 +251,23 @@ _SECRET_PATTERNS = [
     # matches in a Netmiko echo ('S1(config-radius-server)#key ...') without
     # touching 'ntp trusted-key 1' or 'auth-port'/'acct-port'.
     re.compile(r'(?i)(?:^|(?<=#))(\s*key\s+)(\S+)\s*$'),
+    # The same secret in NX-OS's classic single-line form, which the anchored
+    # pattern above cannot see: the key sits mid-line with more text after it,
+    # so it is neither at start-of-line nor at end-of-line.
+    #
+    #   radius-server host 192.168.100.10 key 7 "<secret>" authentication accounting
+    #
+    # This gap disclosed the real RADIUS key in a session transcript on
+    # 2026-08-12, via a `show running-config | include radius` through
+    # show_command.py. Note that `key 7` does NOT mean the value is safe to
+    # print - NX-OS rendered the key in readable form regardless.
+    #
+    # Deliberately scoped to radius-server lines rather than matching any
+    # 'key <value>': a general pattern also mangles 'crypto key generate rsa'
+    # and similar, and over-redacting a general-purpose show command makes its
+    # output untrustworthy in a different way. Optional '<n>' covers the
+    # encryption-type digit; the value itself may be quoted, which \S+ keeps.
+    re.compile(r'(?i)(radius-server\s+(?:host\s+\S+\s+)?key\s+(?:\d+\s+)?)(\S+)'),
     # IOS confirms a redundant VTP push by repeating the password back.
     re.compile(r'(?i)^(Password already set to\s+)(\S+)'),
 ]

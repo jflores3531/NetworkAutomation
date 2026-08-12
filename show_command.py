@@ -1,5 +1,19 @@
 #!/usr/bin/env python
-"""Run a show command against one or more devices from inventory.yaml."""
+"""Run a show command against one or more devices from inventory.yaml.
+
+Output is passed through netauto.redact_output() before printing, the same way
+the *_stig_harden*.py scripts treat their push transcripts. This script reads
+config as readily as they write it - `show running-config` returns the RADIUS
+key, the SNMPv3 passwords and the NTP authentication key just as surely as
+pushing them does - so printing raw output discloses exactly what those scripts
+take care not to.
+
+That was not theoretical: an unredacted run of this script through
+`show running-config | include radius` put the real RADIUS shared secret into a
+session transcript on 2026-08-12. Redacting here was only half the fix - the
+pattern list in netauto.py did not recognise NX-OS's single-line
+`radius-server host <ip> key <n> <secret>` form at all, because it only looked
+for the key at the start or end of a line. See _SECRET_PATTERNS."""
 
 import argparse
 import netauto
@@ -28,5 +42,5 @@ for device_name, device_info in devices_list.items():
     net_connect.disconnect()
 
     print(f'--- {device_name} ---')
-    print(output)
+    print(netauto.redact_output(output))
     print()
