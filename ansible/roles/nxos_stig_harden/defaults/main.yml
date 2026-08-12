@@ -1,0 +1,50 @@
+---
+# Fallback defaults for the NX-OS bulk hardening role. group_vars/nxos_switches/
+# {vars,vault}.yml normally supplies real values - these exist so a missing
+# group_var degrades to the role's own "skip this feature" path rather than an
+# undefined-variable traceback partway through a push that has already sent
+# other commands.
+#
+# This role went without a defaults file entirely until 2026-08-12, unlike its
+# L2S counterpart, and hard-depended on group_vars being present. Every task
+# below is already guarded by a `when:` that treats an empty value as "skip with
+# nothing pushed", so supplying empties here is what makes those guards
+# reachable instead of erroring before they are evaluated.
+#
+# Mirrors ../../l2s_stig_harden/defaults/main.yml, with two deliberate
+# differences:
+#   - no default_access_vlan: NX-OS access ports are never touched by this role
+#     (nxos_stig_harden_interfaces.py's inverse default - only ports WITHOUT an
+#     explicit access VLAN get converted to trunk), so the key has no meaning here
+#   - vtp_domain is present and L2S has no equivalent: NX-OS rejects
+#     `vtp password` with "Domain not set" unless a domain is configured first,
+#     confirmed live on NXCore1
+#
+# Nothing AAA-related belongs here - RADIUS lives in nxos_stig_harden_aaa, which
+# carries its own defaults and asserts rather than skipping, because there is no
+# safe partial version of an AAA push.
+
+# VLAN discovery. The NX-OS role passes unused_vlan and native_vlan into the
+# user-VLAN exclusion alongside non_user_vlans (both exist in the database but
+# carry no user traffic), so all three feed DHCP snooping and DAI scoping.
+non_user_vlans: [1]
+unused_vlan: ""
+native_vlan: ""
+
+# Services. Empty means the matching task is skipped: NTP (V-220498/502),
+# syslog (V-220516/496/510), SNMPv3 (V-220500/501).
+ntp_servers: []
+syslog_servers: []
+
+# VTP (V-220676). Both are required together - the domain must be set before
+# the password is accepted.
+vtp_domain: ""
+vtp_password: ""
+
+# Vault-backed secrets. Empty, and the tasks additionally reject the literal
+# CHANGE_ME placeholder, so an unfilled vault cannot push a placeholder to a
+# device as though it were a real credential.
+snmpv3_auth_password: ""
+snmpv3_priv_password: ""
+ntp_auth_key_id: ""
+ntp_auth_key_value: ""
