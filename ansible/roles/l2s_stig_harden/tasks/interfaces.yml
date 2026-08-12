@@ -7,8 +7,12 @@
 #     (stig_common.discover_root_port_interfaces) to safely exclude this
 #     switch's own root port; pushing Root Guard there blindly can force a
 #     real outage (root-inconsistent/blocking state).
-#   - V-220641a (disabled ports -> unused VLAN) - needs per-port shutdown-
-#     state detection this role doesn't gather.
+#
+# V-220641a (disabled ports -> unused VLAN) WAS in that list and is now
+# implemented below - the per-port shutdown state it needs turned out to be
+# readable from the running-config this role already gathers, no extra round
+# trip required. Ported from l2_stig_harden_interfaces.py's
+# shutdown_access_ports().
 
 - name: Gather show running-config for interface classification
   cisco.ios.ios_command:
@@ -36,6 +40,37 @@
   set_fact:
     access_ports: "{{ all_switchports | difference(trunk_ports) }}"
 
+# V-220641a: access ports that are already administratively shut get parked on
+# the designated unused VLAN instead of the normal default access VLAN.
+#
+# Detection is pure running-config here, unlike the NX-OS role's V-220690, which
+# needs a `show interface status` round trip on top. That is not an oversight in
+# either direction - it is the platforms differing. IOS renders `shutdown` in the
+# interface block and that is sufficient; NX-OS does not render enough state
+# there to distinguish an administratively shut port from other down states,
+# which is why its equivalent reads the status table and cross-checks.
+# `shutdown_access_ports()` in l2_stig_harden_interfaces.py uses exactly this
+# running-config test.
+#
+# Matching `\n[ \t]*shutdown[ \t]*\n` rather than bare 'shutdown' so a `no
+# shutdown` line cannot satisfy it, and [ \t] rather than \s because \s matches
+# newlines and would let the match wander into the following interface's block.
+- name: Administratively-shut access ports (V-220641a)
+  set_fact:
+    disabled_ports: >-
+      {{
+        running_config_result.stdout[0]
+        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*?\n[ \t]*shutdown[ \t]*\n')
+        | intersect(access_ports)
+      }}
+  when: unused_vlan | string | length > 0
+
+# Disabled ports are excluded from this loop and handled by their own task
+# below. The Python pushes the default access VLAN to every access port and then
+# overrides it for the disabled subset, which is harmless there because Netmiko
+# never diffs - but in Ansible those two tasks would fight, each reporting
+# changed forever and genuinely re-writing the VLAN twice on every run. Removing
+# them here reaches the same end state without the churn.
 - name: >-
     Common access-port fixes: default mode/VLAN (V-220642/645 side effect),
     PortFast (V-220630b, required for BPDU Guard to activate)
@@ -50,8 +85,22 @@
       # re-pushed on every access port every run. The other two lines here were
       # already matching; this one line was the whole difference.
       - spanning-tree portfast edge
-  loop: "{{ access_ports }}"
-  when: access_ports | length > 0
+  loop: "{{ access_ports | difference(disabled_ports | default([])) }}"
+  when: access_ports | difference(disabled_ports | default([])) | length > 0
+
+# Same three lines as the task above, but landing on unused_vlan rather than
+# default_access_vlan. Kept as a separate task rather than a conditional inside
+# the loop above because ios_config takes one `lines:` list per task - the
+# duplication is the cost of not re-writing the VLAN twice per run.
+- name: "V-220641a - park administratively-shut access ports on the unused VLAN"
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - switchport mode access
+      - "switchport access vlan {{ unused_vlan }}"
+      - spanning-tree portfast edge
+  loop: "{{ disabled_ports | default([]) }}"
+  when: disabled_ports | default([]) | length > 0
 
 # V-220632/623: confirmed live (see the project vault's Bugs/README.md) that UUFB and
 # 802.1x/MAB are both rejected/nonfunctional on this lab's vios_l2 image

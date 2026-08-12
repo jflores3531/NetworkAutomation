@@ -226,10 +226,9 @@ correct commands for real hardware.
   theoretical risk. Doing that safely in Ansible needs either a custom
   filter/module to parse `show spanning-tree` structurally, or accepting a
   less precise heuristic. Left out rather than guessing.
-- **V-220641a (disabled ports -> unused VLAN)** - needs per-port shutdown-
-  state detection this role doesn't gather. Straightforward to add later
-  (same running-config text is already being fetched in `interfaces.yml`),
-  just not done yet.
+- ~~**V-220641a (disabled ports -> unused VLAN)**~~ - **now implemented**, on
+  both platforms (V-220641a on L2S, V-220690 on NX-OS). See "Disabled ports"
+  below.
 - **V-220675/679 per-port 802.1x on NX-OS** - `nxos_stig_harden_interfaces.py`
   pushes `dot1x port-control auto`/`dot1x host-mode single-host` per access
   port (gated on IPSG being inactive, since Nexus 9000 refuses `feature dot1x`
@@ -251,6 +250,46 @@ correct commands for real hardware.
   prerequisite is guaranteed active. The per-port V-220623 commands
   (`authentication port-control auto`/`dot1x pae authenticator`/`mab`) stay in
   `l2s_stig_harden`, matching `l2_stig_harden_global.py`'s scope exactly.
+
+## Disabled ports (V-220641a / V-220690)
+
+Both bulk roles now park administratively-shut ports on the designated unused
+VLAN. The two platforms need genuinely different implementations, which is why
+this stayed unported longest:
+
+| | L2S (V-220641a) | NX-OS (V-220690) |
+|---|---|---|
+| Detection | `shutdown` in the running-config block | `disabled` in `show interface status`, **cross-checked** against `shutdown` in config |
+| Scope | access-classified ports | ports otherwise about to be trunk-converted |
+| Extra round trip | none | yes, the status table |
+
+**Why NX-OS needs the extra step.** IOS renders `shutdown` in the interface
+block and that settles it. NX-OS does not render enough state there to separate
+an administratively shut port from other down states, so its Python equivalent
+reads `show interface status` - where `disabled` specifically means
+administratively shut, as distinct from `suspended` (port-channel member with no
+peer) or `notconnect` (up, no link partner).
+
+**Why the cross-check.** That status table has a free-text Name column, so an
+interface whose *description* contains the word "disabled" is a false positive -
+and a false positive here parks a live port on a black-hole VLAN, which is an
+outage rather than a failed audit. Requiring both signals (status says
+`disabled` **and** config carries a `shutdown` line) removes that class of
+error. Verified against sample output containing exactly that trap, plus
+`err-disabled` and `suspended` ports that must not match.
+
+**Why the L2S role reorders its own tasks.** `l2_stig_harden_interfaces.py`
+pushes the default access VLAN to every access port and then overrides it for
+the disabled subset. That is harmless with Netmiko, which never diffs, but two
+Ansible tasks written that way fight each other - both report `changed` forever
+and genuinely rewrite the VLAN twice per run. The role excludes disabled ports
+from the default-VLAN loop instead and gives them their own task, reaching the
+same end state without the churn.
+
+**Not yet run live.** The logic was rendered and checked offline against sample
+`show interface status` and running-config, including the false-positive cases
+above, but neither platform's version has been applied to a device. On NXCore1
+this would be a real push if any trunk-target port is shut.
 
 ## The AAA roles
 
