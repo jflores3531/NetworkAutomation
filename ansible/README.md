@@ -34,15 +34,34 @@ Every fix here (like every fix on the Python side this session) was found
 by running it live against a real device and reading the actual response,
 not assumed from documentation.
 
-**Two exceptions, both new and both unproven live:** `l2s_stig_harden_aaa`
-and `nxos_stig_harden_aaa`. They are ports of scripts that *have* been proven
-live, and their YAML and Jinja expressions were rendered and checked offline
-(including the presence gates and the `RADIUS1` vs `RADIUS10` anchoring case),
-but neither role has been run against a device. Given they are the two roles
-that change how login is authenticated, treat the first run on each switch as
-a live test: `--limit` one device, console within reach. See "How the safety
-net compares to the Python" below for what each role does and does not protect
-against.
+`l2s_stig_harden_aaa` was confirmed live on **S1** (2026-08-12):
+`ok=8 changed=0 failed=0 skipped=3`, both in `--check` and for real, and
+`changed=0` on a repeat run. S1 was already fully converged from prior
+`l2_stig_harden_aaa.py` runs, so what this proves is the *detection* half -
+every presence gate correctly skipped, and `ios_config` found no diff on the
+lines it did evaluate:
+
+- the `enable secret` task skipped (S1 already has one), confirming the
+  hash-versus-cleartext gate works rather than re-pushing forever
+- the `meta: reset_connection` verification **passed against a real device** -
+  a full fresh SSH login plus re-escalation with `ansible_become_pass`, which
+  is the mechanism the whole role's safety argument rests on
+- both `radius server RADIUS<n>` blocks skipped, confirming the same gate on
+  the `key 7 <encrypted>` problem
+- `aaa new-model`, both method lists, the dot1x globals and the
+  `aaa common-criteria policy` block all reported no change - including
+  `aaa common-criteria policy`, which is a permanent ceiling on this lab's IOS
+  *Router* image but is accepted on `vios_l2`
+
+What it does **not** prove: the push path on an unconverged switch. Nothing was
+actually sent, so the ordering guarantees (RADIUS servers before the method
+lists, `aaa new-model` atomic with them) have not been exercised live by the
+role - only by the Python script they were ported from. S2 is the useful test
+there if it still lacks `aaa new-model`.
+
+**`nxos_stig_harden_aaa` remains unproven live.** It is the weaker of the two
+safety nets (see below), so treat its first run as a live test: `--limit
+NXCore1`, console within reach.
 
 The `nxos_stig_harden` role's live status is also not recorded here, despite
 the commit history showing a series of idempotency fixes that could only have
