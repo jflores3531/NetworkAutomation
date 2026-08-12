@@ -12,3 +12,12 @@ vault_snmpv3_auth_password: CHANGE_ME
 vault_snmpv3_priv_password: CHANGE_ME
 vault_ntp_auth_key_id: 1
 vault_ntp_auth_key_value: CHANGE_ME
+
+# RADIUS shared secret, V-220513 - paired with radius_servers in vars.yml.
+# Used by the nxos_stig_harden_aaa role, which refuses to run if it is missing
+# or still CHANGE_ME. Mirrors radius_key in ../../../../secrets.yaml.example -
+# the same shared secret as the l2_switches group, not a separate one.
+#
+# No vault_enable_secret here, unlike the l2_switches group: NX-OS has no
+# enable/privileged mode to escalate into.
+vault_radius_key: CHANGE_ME

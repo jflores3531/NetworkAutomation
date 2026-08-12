@@ -26,9 +26,13 @@
 # new-model already active to be valid syntax at all (confirmed live: it
 # was rejected on S2, which doesn't have aaa new-model, but succeeded on
 # S1/S3, which do). This role doesn't push aaa new-model (out of scope,
-# same as l2_stig_harden_global.py) - there's no Ansible equivalent of
-# l2_stig_harden_aaa.py yet to receive these two lines, so they're simply
-# not pushed here rather than attempted-and-ignored.
+# same as l2_stig_harden_global.py).
+#
+# They ARE now pushed, by the l2s_stig_harden_aaa role - right after
+# aaa new-model, in the same atomic ios_config task, so the prerequisite is
+# guaranteed active. Run playbooks/l2s_harden_aaa.yml to apply them. (Until
+# that role existed there was nowhere for these two lines to live, and they
+# had no Ansible path at all.)
 - name: "V-220630/631/637/638/639/580/599/612/576/578/570a/595a/600 - global BASE_FIXES"
   cisco.ios.ios_config:
     running_config: "{{ ios_running_config_all.stdout[0] }}"

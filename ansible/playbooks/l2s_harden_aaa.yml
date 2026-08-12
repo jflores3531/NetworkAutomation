@@ -1,0 +1,18 @@
+---
+# Separate playbook from l2s_harden.yml on purpose - this is the one pass that
+# changes how SSH login itself is authenticated, and it should be a deliberate,
+# separately-invoked act rather than something that rides along with the bulk
+# hardening run. Same reason l2_stig_harden_aaa.py is its own script.
+#
+#   ansible-playbook playbooks/l2s_harden_aaa.yml --ask-vault-pass \
+#       -e ansible_user=admin --ask-pass --limit S1
+#
+# Strongly recommended: run with --limit against ONE switch at a time, and
+# confirm you can still open a fresh SSH session to it before moving to the
+# next. Console access is the backstop if a push goes wrong - the original S2
+# lockout that shaped this whole role was recovered that way.
+- name: Apply AAA/RADIUS authentication and password policy to Cisco IOS L2 switches
+  hosts: l2_switches
+  gather_facts: false
+  roles:
+    - l2s_stig_harden_aaa

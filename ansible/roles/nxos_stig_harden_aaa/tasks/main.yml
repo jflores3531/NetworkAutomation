@@ -1,0 +1,269 @@
+---
+# Replicates nxos_stig_harden_aaa.py: RADIUS authentication (V-220513), the AAA
+# accounting cluster it enables (V-220475/476/477/478/482/485/494/495/506/507/509
+# - all eleven share nxos_stig_audit.py's _aaa_accounting_check, one
+# `aaa accounting default group <name>` line covers the lot) and the 802.1x
+# global prerequisites (V-220675a/679a).
+#
+# Its own role, not folded into nxos_stig_harden, for the same reason the Python
+# keeps it in its own script: this is the one pass that changes how SSH login
+# itself is authenticated.
+#
+# ---------------------------------------------------------------------------
+# Why this is lower-risk than the L2S equivalent
+# ---------------------------------------------------------------------------
+# DISA's own V-220513 Fix Text pushes `aaa authentication login default group
+# RADIUS_SERVERS` with no `local` keyword in the method list at all, unlike IOS's
+# `group radius local`. NX-OS instead has a separate `fallback error local`
+# mechanism that Check Content confirms is ON BY DEFAULT ("should not be seen in
+# the configuration" when compliant). This role never pushes the
+# `no ... fallback error local` line that would disable it, so: RADIUS reachable
+# -> login via RADIUS; RADIUS unreachable -> NX-OS falls back to the same local
+# account automatically.
+#
+# NX-OS also does not tie a local account's role to AAA authentication the way
+# IOS ties privilege 15 to `aaa new-model`, so the IOS "local account stops being
+# privileged on login" behaviour - the thing that actually caused the S2 lockout -
+# has no analogue here.
+#
+# ---------------------------------------------------------------------------
+# The safety net, and where it is weaker than the Python
+# ---------------------------------------------------------------------------
+# nxos_stig_harden_aaa.py uses a verify-then-revert pattern: push the auth
+# change, open a SECOND independent Netmiko connection to prove new logins still
+# work, and if that fails, revert through the still-open PRIMARY session. The
+# primary session is the guarantee - it was established before the change and
+# survives it.
+#
+# Ansible cannot reproduce that guarantee. `meta: reset_connection` is a genuine
+# second-connection test (full fresh SSH login), but it destroys the pre-change
+# session in the process, so there is no held-open channel left to revert
+# through. The rescue block below still attempts the revert, and it will succeed
+# for a transient or partial failure - but if the automation host is genuinely
+# locked out, the revert cannot connect either, and recovery is via console.
+#
+# That is a real reduction in safety versus the Python and is the reason to
+# prefer nxos_stig_harden_aaa.py for a first application to any device whose
+# console you cannot reach quickly. This role is the better choice for
+# re-running against already-converged devices, where the auth change is a
+# no-op and the exposure window never opens.
+#
+# Note also which direction the verification runs. The L2S role verifies BEFORE
+# its risky change (it can - the enable secret is a prerequisite, not the
+# change itself), so it aborts with nothing to undo. Here the change IS the
+# thing being verified, so verification necessarily comes after it. Same
+# ordering as the Python; only the rollback channel is weaker.
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+- name: Preflight - required AAA variables are present and not placeholders
+  assert:
+    that:
+      - radius_key | default('') | length > 0
+      - radius_key != 'CHANGE_ME'
+      - radius_servers | default([]) | length > 0
+    fail_msg: >-
+      Refusing to run. This role needs vault_radius_key
+      (inventory/group_vars/nxos_switches/vault.yml, encrypted) and
+      radius_servers (that group's vars.yml). There is no safe partial version
+      of an AAA push.
+    quiet: true
+
+# V-220513 wants two or more authentication servers. Warn and continue, matching
+# the Python - one server is a findable-but-working config, not a lockout risk.
+- name: Preflight - warn if fewer than two RADIUS servers (V-220513 wants 2+)
+  debug:
+    msg: >-
+      WARNING: only {{ radius_servers | length }} RADIUS server(s) configured.
+      V-220513 expects two or more. Continuing anyway.
+  when: radius_servers | length < 2
+
+- name: Gather running-config for presence gating and IPSG detection
+  cisco.nxos.nxos_command:
+    commands:
+      - show running-config
+  register: nxos_aaa_running_config
+  changed_when: false
+
+# ---------------------------------------------------------------------------
+# Step 1: RADIUS server definitions and the AAA group (no effect on login yet)
+# ---------------------------------------------------------------------------
+# Zero risk - nothing here changes how login is authenticated. Fully reversible
+# with no exposure window, which is why the Python pushes it as its own step
+# before the risky one, and why this role does the same.
+#
+# Classic `radius-server host <ip> key <key>` syntax, per V-220513's own Fix Text
+# example. Note this is the OPPOSITE of the L2S role, whose vios_l2 image rejects
+# the classic form and needs the modern `radius server <name>` block instead.
+#
+# Gated on the host line being absent: `key 7 <encrypted>` is how NX-OS stores
+# it, so an unconditional push reports changed on every run forever. See
+# radius_force_update in defaults/main.yml for the rotation path.
+- name: "V-220513 - RADIUS server definitions"
+  cisco.nxos.nxos_config:
+    lines:
+      - "radius-server host {{ server_ip }} key {{ radius_key }}"
+  no_log: true
+  loop: "{{ radius_servers }}"
+  loop_control:
+    loop_var: server_ip
+  when: >-
+    radius_force_update | bool
+    or nxos_aaa_running_config.stdout[0] is not search('(?m)^radius-server host ' ~ server_ip ~ ' key')
+
+# Global timeout/retransmit tuning - the classic-syntax global equivalents of the
+# per-server keywords the L2S role sets. Same motivation: platform defaults add
+# ~15-30s of login delay per unreachable server before the fallback completes.
+# No secret in these, so no presence gate needed - both are non-default values
+# and render in running-config, so nxos_config diffs them correctly.
+- name: "V-220513 - RADIUS timeout and retransmit tuning"
+  cisco.nxos.nxos_config:
+    lines:
+      - radius-server timeout 2
+      - radius-server retransmit 1
+
+# The member list is built by anchoring a replacement at the start of each
+# address rather than with a '^(.*)$' -> 'server \1' backreference. Jinja parses
+# its own string literals with escape processing, so a backslash-digit
+# backreference written here arrives at regex_replace as a control character
+# (\1 -> 0x01) and every member line renders as "server \x01". Substituting at
+# '^' needs no capture group and no backslash at all, so it cannot hit that.
+- name: "V-220513 - AAA server group {{ radius_group_name }}"
+  cisco.nxos.nxos_config:
+    parents: "aaa group server radius {{ radius_group_name }}"
+    lines: "{{ radius_servers | map('regex_replace', '^', 'server ') | list }}"
+
+# ---------------------------------------------------------------------------
+# Step 2: the risky moment - flip login authentication to RADIUS
+# ---------------------------------------------------------------------------
+# 'console' is physically separate from this SSH session and cannot lock out the
+# connection in use, so it is safe to send in the same push as 'default' - same
+# reasoning as the Python.
+- name: Change login authentication, then prove new logins still work
+  block:
+    - name: "V-220513 - aaa authentication login default/console"
+      cisco.nxos.nxos_config:
+        lines:
+          - "aaa authentication login default group {{ radius_group_name }}"
+          - "aaa authentication login console group {{ radius_group_name }}"
+
+    # The pre-change session cannot prove anything about new logins - it was
+    # established before the change took effect. Tearing it down forces a full
+    # fresh SSH login on the next task, which is the actual thing at risk.
+    - name: Force a fresh connection to test login under the new AAA config
+      meta: reset_connection
+
+    # Covers both live states and either is a pass: RADIUS reachable proves
+    # login via RADIUS works; RADIUS unreachable proves NX-OS's default-on
+    # `fallback error local` path works instead.
+    - name: Verify a brand-new login succeeds
+      cisco.nxos.nxos_command:
+        commands:
+          - show running-config | include '^aaa authentication login'
+      register: nxos_auth_verify
+      changed_when: false
+
+    - name: Login verified after the AAA change
+      debug:
+        msg: >-
+          Verification connection succeeded on {{ inventory_hostname }} - login
+          still works after the AAA change.
+
+  rescue:
+    # Best-effort, NOT the guaranteed rollback the Python has (see the header).
+    # This reconnects to revert, so it only helps if the failure was transient
+    # or partial. A genuine lockout fails here too - recover via console with
+    # `no aaa authentication login default group <name>`.
+    - name: Attempt to revert the login authentication change
+      cisco.nxos.nxos_config:
+        lines:
+          - "no aaa authentication login default group {{ radius_group_name }}"
+          - "no aaa authentication login console group {{ radius_group_name }}"
+      ignore_errors: true
+      register: nxos_auth_revert
+
+    - name: Report the outcome and stop
+      fail:
+        msg: >-
+          ABORT: could not log in to {{ inventory_hostname }} after changing AAA
+          authentication.
+          {% if nxos_auth_revert is failed %}
+          The automatic revert ALSO failed to connect, which means the
+          automation host is most likely locked out. Recover via console:
+          `no aaa authentication login default group {{ radius_group_name }}`
+          and `no aaa authentication login console group {{ radius_group_name }}`.
+          {% else %}
+          The revert succeeded, so login authentication is back to its previous
+          state. The RADIUS servers and group are still defined but no longer
+          referenced by any login method list - safe, but investigate why the
+          verification failed before retrying.
+          {% endif %}
+
+# ---------------------------------------------------------------------------
+# Step 3: only reached after verification succeeds
+# ---------------------------------------------------------------------------
+# Reuses the same group already proven to have live servers. Does not touch
+# admin CLI login, so it is safe regardless of RADIUS reachability.
+#
+# V-220510 is deliberately not here - it is a plain `logging level authpriv 6`
+# presence check pushed by the nxos_stig_harden role, not part of this
+# accounting-group mechanism, despite sharing the audit's rule cluster.
+- name: "V-220475/476/477/478/482/485/494/495/506/507/509 - AAA accounting"
+  cisco.nxos.nxos_config:
+    lines:
+      - "aaa accounting default group {{ radius_group_name }}"
+
+# 802.1x globals are SKIPPED ENTIRELY (not merely left inert) when IP Source
+# Guard is active: confirmed live on NXCore1 that Nexus 9000 rejects
+# `feature dot1x` outright ("802.1X can't be enabled, IPSG is enabled in
+# system") whenever IPSG is configured - a platform-level mutual exclusion per
+# Cisco's own documentation. nxos_stig_audit.py's _dot1x_mab_check reports
+# V-220675/679 NOT APPLICABLE under the same condition.
+#
+# Same regex the Python uses against the same command output.
+- name: Detect whether IP Source Guard is active
+  set_fact:
+    nxos_ipsg_active: >-
+      {{ nxos_aaa_running_config.stdout[0]
+         is search('(?m)^\s*ip verify source dhcp-snooping-vlan\s*$') }}
+
+- name: "V-220675/679 - NOT APPLICABLE, IP Source Guard is active"
+  debug:
+    msg: >-
+      Skipping the 802.1x globals on {{ inventory_hostname }} - IP Source Guard
+      is active, and Nexus 9000 rejects `feature dot1x` while it is. This
+      matches nxos_stig_audit.py's _dot1x_mab_check, which reports V-220675/679
+      NOT APPLICABLE for the same reason.
+  when: nxos_ipsg_active | bool
+
+# 'feature dot1x' is not mentioned in V-220675/679's Check Content or Fix Text -
+# it is inferred from NX-OS's feature-gate model (same pattern as
+# 'feature dhcp'/'feature udld'/'feature vtp' elsewhere in this project).
+# Confirm the exact feature name live (`feature ?`) before trusting it - the
+# same class of undocumented-prerequisite gap already found and fixed for
+# V-220681's edge port type.
+- name: "V-220675a/679a - 802.1x globals"
+  cisco.nxos.nxos_config:
+    lines:
+      - feature dot1x
+      - "aaa authentication dot1x default group {{ radius_group_name }}"
+  when: not (nxos_ipsg_active | bool)
+
+- name: Summary of rules addressed
+  debug:
+    msg: >-
+      {{
+        [
+          'V-220513  - RADIUS as primary auth source (' ~ (radius_servers | length) ~ ' server(s))',
+          'V-220475/476/477/478/482/485/494/495/506/507/509 - AAA accounting, 11 rules via one `aaa accounting default group` line',
+        ]
+        + (
+          ['V-220675/679 - NOT APPLICABLE, IP Source Guard is active']
+          if nxos_ipsg_active | bool
+          else ['V-220675a/679a - 802.1x AAA method + feature dot1x (per-port commands are NOT yet pushed by any role - gap)']
+        )
+        + [
+          'NOT pushed, deliberately: V-220487 (dedicated local last-resort account) - relying on the existing admin account plus NX-OS default `fallback error local`. Still NOT AUTOMATED on the audit side.',
+        ]
+      }}

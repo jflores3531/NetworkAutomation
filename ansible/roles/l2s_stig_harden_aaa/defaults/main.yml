@@ -1,0 +1,42 @@
+---
+# Fallback defaults for the L2S AAA role. group_vars/l2_switches/{vars,vault}.yml
+# supplies the real values - these exist so a missing group_var surfaces as the
+# role's own assert with an actionable message, rather than an undefined-variable
+# traceback halfway through a push that has already touched aaa new-model.
+#
+# Note the difference from l2s_stig_harden/defaults/main.yml: that role's
+# convention is "empty value -> skip the feature and carry on", mirroring the
+# Python bulk pass. This role deliberately does NOT do that. There is no safe
+# partial version of an AAA push (l2_stig_harden_aaa.py's docstring says the
+# same), so every one of these is asserted non-empty in main.yml and the role
+# refuses to run rather than half-configuring authentication.
+radius_servers: []
+radius_key: ""
+enable_secret: ""
+
+# V-220589/590-594's policy block name. Matches PASSWORD_POLICY_NAME in
+# l2_stig_harden_aaa.py.
+password_policy_name: STIG_PASSWORD_POLICY
+
+# Escape hatches for rotating a secret.
+#
+# Both the `enable secret` and the RADIUS `key` are stored by IOS in a form that
+# never matches what we sent - `enable secret` as a type-5/8/9 hash, and the
+# RADIUS key as `key 7 <encrypted>` once `service password-encryption` is active
+# (which l2s_stig_harden's global pass turns on, so this is the normal state on
+# every device this role targets). ios_config compares literal strings, so a task
+# that pushes either one unconditionally reports `changed` on every single run
+# and re-sends a no-op forever - exactly the churn the resource-module
+# convention elsewhere in this project exists to avoid.
+#
+# Both tasks are therefore gated on the config line being ABSENT. That buys
+# idempotency at the cost of never updating a value that has changed, so these
+# two flags force the push through when you actually mean to rotate:
+#
+#   ansible-playbook playbooks/l2s_harden_aaa.yml -e radius_force_update=true
+#
+# Rotating the enable secret additionally requires vault_enable_secret to be
+# updated first - group_vars binds ansible_become_pass to the same variable, so
+# the two cannot drift, and the verification step below would catch it if they did.
+radius_force_update: false
+enable_secret_force_update: false

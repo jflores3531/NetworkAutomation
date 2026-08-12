@@ -12,3 +12,18 @@ vault_snmpv3_auth_password: CHANGE_ME
 vault_snmpv3_priv_password: CHANGE_ME
 vault_ntp_auth_key_id: 1
 vault_ntp_auth_key_value: CHANGE_ME
+
+# RADIUS shared secret, V-220587/617 - paired with radius_servers in vars.yml.
+# Used by the l2s_stig_harden_aaa role, which refuses to run if it is missing or
+# still CHANGE_ME. Mirrors radius_key in ../../../../secrets.yaml.example.
+vault_radius_key: CHANGE_ME
+
+# Privileged EXEC (enable) secret, mirrors enable_secret in
+# ../../../../secrets.yaml.example.
+#
+# vars.yml binds BOTH enable_secret and ansible_become_pass to this one value,
+# so what the role pushes and what Ansible escalates with cannot drift apart.
+# This is the only way back into privileged EXEC once aaa new-model is active -
+# the l2s_stig_harden_aaa role pushes it, then forces a full reconnect to prove
+# it works, and refuses to touch aaa new-model if that fails.
+vault_enable_secret: CHANGE_ME

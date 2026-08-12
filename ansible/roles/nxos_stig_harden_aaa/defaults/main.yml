@@ -1,0 +1,29 @@
+---
+# Fallback defaults for the NX-OS AAA role. group_vars/nxos_switches/{vars,vault}.yml
+# supplies the real values - these exist so a missing group_var surfaces as this
+# role's own assert with an actionable message, rather than an undefined-variable
+# traceback partway through a push that has already touched login authentication.
+#
+# (The nxos_stig_harden role has no defaults/main.yml at all and hard-depends on
+# group_vars being present - a separate gap, not fixed here.)
+#
+# No enable_secret here, unlike the L2S role: NX-OS has no enable/privileged mode
+# to escalate into. Authorisation is role-based (RBAC) on the account itself,
+# which is also why nxos_switches carries no ansible_become in hosts.yml.
+radius_servers: []
+radius_key: ""
+
+# The AAA server group name every method list below references. Matches
+# GROUP_NAME in nxos_stig_harden_aaa.py.
+radius_group_name: RADIUS_SERVERS
+
+# Escape hatch for rotating the RADIUS shared secret. NX-OS stores the key as
+# `radius-server host <ip> key 7 <encrypted>`, which never string-matches the
+# cleartext we send, so the definition task is gated on the host line being
+# ABSENT to keep it idempotent. That means a changed key is not picked up until
+# you force it:
+#
+#   ansible-playbook playbooks/nxos_harden_aaa.yml -e radius_force_update=true
+#
+# Same trade-off and same flag name as the L2S role.
+radius_force_update: false

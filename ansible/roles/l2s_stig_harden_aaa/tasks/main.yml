@@ -1,0 +1,264 @@
+---
+# Replicates l2_stig_harden_aaa.py: aaa new-model + RADIUS authentication
+# (V-220587, V-220617), the password length/complexity policy (V-220589,
+# V-220590-594) and the 802.1x global prerequisites (V-220623a/b).
+#
+# Kept as its own role, not folded into l2s_stig_harden, for the same reason
+# the Python keeps it in its own script: this is the one pass that changes how
+# SSH login itself is authenticated. Bundling it with the ~60-command bulk pass
+# is what dropped a live session on S2 mid-push, leaving the device
+# half-configured and SSH-inaccessible (recovered via console + 'no aaa
+# new-model').
+#
+# ---------------------------------------------------------------------------
+# How the safety net differs from the Python, and where it is weaker
+# ---------------------------------------------------------------------------
+# l2_stig_harden_aaa.py pushes `enable secret`, then proves it works with a
+# disable -> enable round-trip on the SAME Netmiko session before it goes
+# anywhere near aaa new-model. Ansible's persistent connection has no
+# equivalent of exit_enable_mode()/check_enable_mode() to drive that round-trip.
+#
+# `meta: reset_connection` is the closer analogue, and is arguably a stronger
+# test: it tears the persistent connection down entirely, so the next task has
+# to complete a full fresh SSH login AND re-escalate with ansible_become_pass.
+# A wrong or unset enable secret fails there. Critically, that happens BEFORE
+# any AAA task runs, so the abort ordering matches the Python exactly - the
+# device is never left half-configured by a failed verification.
+#
+# Where Ansible IS weaker: it cannot hold the original session open as a
+# rollback channel the way the Python does. Once reset_connection fires, the
+# pre-change session is gone. That matters for the NX-OS role (see
+# ../../nxos_stig_harden_aaa/tasks/main.yml, which pushes-then-verifies and can
+# only attempt a best-effort revert). It does NOT matter here, because this
+# role verifies BEFORE the risky change rather than after it - there is nothing
+# to roll back at the point verification runs.
+#
+# The real residual risk on IOS is unchanged from the Python: if the RADIUS
+# method list is wrong, the exposure window is between `aaa new-model` taking
+# effect and the method lists landing. Both are sent in ONE ios_config task
+# (one config session, one round trip) for exactly that reason - see the
+# comment on that task. Console access remains the backstop, as it was during
+# the original S2 incident.
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+# Mirrors the Python's up-front abort checks. Deliberately NOT the "skip the
+# feature with a warning" pattern l2s_stig_harden uses - a half-applied AAA
+# config is the failure mode this whole role is shaped around avoiding.
+- name: Preflight - required AAA variables are present and not placeholders
+  assert:
+    that:
+      - enable_secret | default('') | length > 0
+      - enable_secret != 'CHANGE_ME'
+      - radius_key | default('') | length > 0
+      - radius_key != 'CHANGE_ME'
+      - radius_servers | default([]) | length > 0
+    fail_msg: >-
+      Refusing to run. This role needs vault_enable_secret and vault_radius_key
+      (inventory/group_vars/l2_switches/vault.yml, encrypted) and radius_servers
+      (that group's vars.yml). The enable secret is the only way back into
+      privileged EXEC once aaa new-model is active, and this role verifies it
+      works before relying on it - so there is no version of this push that is
+      safe to run without it.
+    quiet: true
+
+# V-220617 wants two or more authentication servers. The Python warns and
+# continues rather than aborting; same behaviour here - one server is a
+# findable-but-working config, not a lockout risk.
+- name: Preflight - warn if fewer than two RADIUS servers (V-220617 wants 2+)
+  debug:
+    msg: >-
+      WARNING: only {{ radius_servers | length }} RADIUS server(s) configured.
+      V-220617 expects two or more. Continuing anyway.
+  when: radius_servers | length < 2
+
+# ---------------------------------------------------------------------------
+# Step 1: enable secret, and proof that it works
+# ---------------------------------------------------------------------------
+# Gathered once and reused by every presence gate below. `show running-config`
+# needs privileged EXEC, so a failure here means become/enable is already
+# broken - better to find that out now, before anything has been pushed.
+- name: Gather running-config for presence gating
+  cisco.ios.ios_command:
+    commands:
+      - show running-config
+  register: l2s_aaa_running_config
+  changed_when: false
+
+# Gated on absence, not pushed unconditionally - IOS stores this as a hash, so
+# an unconditional push reports changed on every run forever. See
+# enable_secret_force_update in defaults/main.yml for the rotation path.
+- name: "V-220587 prerequisite - enable secret (only if not already set)"
+  cisco.ios.ios_config:
+    lines:
+      - "enable secret {{ enable_secret }}"
+  no_log: true
+  when: >-
+    enable_secret_force_update | bool
+    or l2s_aaa_running_config.stdout[0] is not search('(?m)^enable secret ')
+
+# Force a completely new SSH login + enable escalation. This is the whole
+# safety net: everything after it has proven that the automation host can still
+# get to privileged EXEC using the credentials Ansible actually holds.
+#
+# No `when:` on purpose. meta tasks have historically been unreliable with
+# conditionals, and an unconditional reset costs one reconnect - cheap, versus a
+# safety check that silently no-ops.
+- name: Force a fresh connection so the enable secret is exercised for real
+  meta: reset_connection
+
+- name: Verify privileged EXEC is still reachable on a brand-new connection
+  block:
+    - name: Re-authenticate and confirm enable mode
+      cisco.ios.ios_command:
+        commands:
+          - show running-config | include ^enable secret
+      register: l2s_enable_verify
+      changed_when: false
+
+    # ios_command succeeding is already strong evidence (the command needs
+    # privilege 15), but assert on the content too - it also confirms the line
+    # we just pushed is actually in the config, not silently rejected.
+    - name: Confirm the enable secret is present in running-config
+      assert:
+        that:
+          - l2s_enable_verify.stdout[0] is search('enable secret')
+        fail_msg: >-
+          Reconnected, but 'enable secret' is not in running-config. Not
+          touching aaa new-model.
+        quiet: true
+
+  rescue:
+    - name: Abort before touching AAA
+      fail:
+        msg: >-
+          ABORT: could not re-establish a privileged session on
+          {{ inventory_hostname }} after setting the enable secret. Nothing
+          AAA-related has been pushed, so the device is exactly as it was - the
+          only change is the enable secret itself.
+          Check that ansible_become_pass matches vault_enable_secret (group_vars
+          binds both to the same variable, so they should not be able to drift),
+          then investigate via console before retrying.
+
+- name: Enable secret verified on a fresh connection
+  debug:
+    msg: >-
+      Enable secret verified on {{ inventory_hostname }} - full reconnect and
+      re-escalation succeeded. Safe to proceed to AAA.
+
+# ---------------------------------------------------------------------------
+# Step 2: RADIUS server definitions (no effect on login yet)
+# ---------------------------------------------------------------------------
+# Deliberately ordered BEFORE aaa new-model, which is the one place this role
+# does not follow l2_stig_harden_aaa.py's command order. The Python sends
+# `aaa new-model` and the dot1x globals first and the radius blocks after, all
+# inside a single send_config_set - safe there because it is one config session.
+# Splitting it across Ansible tasks means separate sessions, so the servers are
+# defined first and `group radius` is never referenced by a method list before
+# it has members.
+#
+# Modern block-style 'radius server <name>' / 'address ipv4 ...' / 'key ...',
+# NOT the classic single-line 'radius-server host <ip> key <string>' - confirmed
+# live that this lab's vios_l2 image rejects the classic form ("% Invalid input"
+# at 'host'). Note this is the opposite of NX-OS, where the classic form is the
+# correct one - see the nxos role.
+#
+# Gated on the block being absent for the same reason as the enable secret:
+# `service password-encryption` (pushed by l2s_stig_harden's global pass) means
+# IOS stores this as `key 7 <encrypted>`, which never string-matches the
+# cleartext we send.
+- name: "V-220587/617 - RADIUS server definitions"
+  cisco.ios.ios_config:
+    parents: "radius server RADIUS{{ idx0 + 1 }}"
+    lines:
+      - "address ipv4 {{ server_ip }} auth-port 1812 acct-port 1813"
+      - "key {{ radius_key }}"
+      # IOS defaults (timeout 5 x retransmit 3 = 15s per server) make an
+      # unreachable RADIUS server delay the fallback to local by 15s per server
+      # before a login completes - measured live as a ~30s SSH login delay with
+      # two servers configured. Tightened so a login never waits more than ~2s
+      # per unreachable server.
+      - timeout 2
+      - retransmit 1
+  no_log: true
+  loop: "{{ radius_servers }}"
+  loop_control:
+    index_var: idx0
+    loop_var: server_ip
+  # Anchored on both ends: an unanchored match for 'RADIUS1' would also match
+  # 'radius server RADIUS10' and wrongly skip the tenth server. The trailing
+  # \s*$ rather than a bare $ absorbs a stray carriage return if the device's
+  # output ever arrives CRLF-terminated.
+  when: >-
+    radius_force_update | bool
+    or l2s_aaa_running_config.stdout[0] is not search('(?m)^radius server RADIUS' ~ (idx0 + 1) ~ '\s*$')
+
+# ---------------------------------------------------------------------------
+# Step 3: the risky moment - aaa new-model and the method lists, atomically
+# ---------------------------------------------------------------------------
+# ONE task, one ios_config call, one config session. This is not cosmetic: the
+# S2 lockout happened because the session dropped after `aaa new-model` took
+# effect but before the method lists landed, and the device was left
+# authenticating against a RADIUS group with no fallback configured. Keeping
+# these lines in a single task preserves the same atomicity Netmiko's
+# send_config_set() gives the Python. Do not split this task.
+#
+# 'local' stays last in both method lists as the fallback, matching the account
+# this role is connected with.
+#
+# V-220623a/b (dot1x system-auth-control + the dot1x AAA method list) are here
+# rather than in l2s_stig_harden because 'aaa authentication dot1x default group
+# radius' is not valid syntax until aaa new-model is active - confirmed live
+# (rejected on S2, which lacked it; accepted on S1/S3, which had it from prior
+# runs). This closes the gap the l2s_stig_harden README documents: those two
+# rules previously had no Ansible path at all. The per-port V-220623 commands
+# (authentication port-control auto / dot1x pae authenticator / mab) stay in
+# l2s_stig_harden's interfaces.yml and are inert until this role runs.
+- name: "V-220587/617/623a/b - aaa new-model, method lists and dot1x globals (atomic)"
+  cisco.ios.ios_config:
+    lines:
+      - aaa new-model                                          # V-220587
+      - aaa authentication login default group radius local    # V-220617
+      - aaa authorization exec default group radius local      # V-220617
+      - dot1x system-auth-control                              # V-220623a
+      - aaa authentication dot1x default group radius          # V-220623b
+
+# ---------------------------------------------------------------------------
+# Step 4: password length and complexity policy
+# ---------------------------------------------------------------------------
+# All five complexity rules plus the length rule live as sub-commands of one
+# `aaa common-criteria policy` block, which needs aaa new-model already active -
+# hence its position after step 3.
+#
+# This matches V-220589's own Fix Text (`min-length 15` inside the policy), NOT
+# the standalone `security passwords min-length` command, which is an unrelated
+# Cisco feature with a confusingly similar name that does not satisfy the rule
+# as DISA specifies it (and which this lab's vios_l2 does not recognise at all).
+#
+# Left to fail loud rather than ignore_errors. The role's convention (inherited
+# from l2s_stig_harden) is that ignore_errors is reserved for commands CONFIRMED
+# rejected on this lab's image, and this one is not - the Python pushes it to
+# these same switches. Worth knowing though: `aaa common-criteria policy` is a
+# confirmed permanent ceiling on the IOS *Router* image in this lab, so if a
+# future device fails here, that is the likely reason rather than a role bug.
+- name: "V-220589/590-594 - password length and complexity policy"
+  cisco.ios.ios_config:
+    parents: "aaa common-criteria policy {{ password_policy_name }}"
+    lines:
+      - min-length 15      # V-220589
+      - upper-case 1       # V-220590
+      - lower-case 1       # V-220591
+      - numeric-count 1    # V-220592
+      - special-case 1     # V-220593
+      - char-changes 8     # V-220594
+
+- name: Summary of rules addressed
+  debug:
+    msg:
+      - "V-220587  - single local account with AAA fallback"
+      - "V-220617  - RADIUS as primary auth source ({{ radius_servers | length }} server(s))"
+      - "V-220589  - minimum 15-character password length"
+      - "V-220590/591/592/593/594 - password complexity policy"
+      - "V-220623a/b - dot1x system-auth-control + AAA method list"
+      - "Per-port V-220623 commands are pushed by the l2s_stig_harden role."
