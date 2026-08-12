@@ -1,5 +1,11 @@
 ---
 # Mirrors l2_stig_harden_global.py's ntp_commands/snmpv3_commands blocks.
+#
+# Every task here interpolates a secret into a pushed line, so all three carry
+# no_log: true and a CHANGE_ME guard - the same pair the nxos_stig_harden role
+# has had since it was written. Without them, confirmed live on S1 2026-08-12:
+# an unfilled vault doesn't skip these tasks, it pushes the literal string
+# CHANGE_ME as the real VTP/NTP/SNMPv3 credential, and prints it in the clear.
 
 - name: "V-220606 - NTP authentication"
   cisco.ios.ios_config:
@@ -7,22 +13,44 @@
       - "ntp authentication-key {{ ntp_auth_key_id }} md5 {{ ntp_auth_key_value }}"
       - ntp authenticate
       - "ntp trusted-key {{ ntp_auth_key_id }}"
-  when: ntp_auth_key_id | string | length > 0 and ntp_auth_key_value | length > 0
+  no_log: true
+  when:
+    - ntp_auth_key_id | string | length > 0
+    - ntp_auth_key_value | default('') | length > 0
+    - ntp_auth_key_value != 'CHANGE_ME'
 
+# Gated on the same key check as the authentication task above, not just on
+# ntp_servers being non-empty. The two have to move together: IOS treats
+# `ntp server <ip>` as replacing an existing `ntp server <ip> key <n>` entry,
+# so pushing bare servers while the key task skips would strip authentication
+# off a correctly-configured device and silently undo V-220606's mitigation.
+# Skipping both leaves existing NTP config untouched, which is the safe
+# failure - fill and encrypt vault.yml to configure NTP from here.
+#
+# Because the task now only runs when the key is valid, the ` key <n>` suffix
+# is unconditional rather than an inline if/else.
 - name: "V-220601 - NTP time sync (redundant authoritative time sources)"
   cisco.ios.ios_config:
     lines: >-
       {{
         ntp_servers
-        | map('regex_replace', '^(.*)$',
-              'ntp server \1' ~ (' key ' ~ ntp_auth_key_id if (ntp_auth_key_id | string | length > 0 and ntp_auth_key_value | length > 0) else ''))
+        | map('regex_replace', '^(.*)$', 'ntp server \1 key ' ~ ntp_auth_key_id)
         | list
       }}
-  when: ntp_servers | length > 0
+  when:
+    - ntp_servers | default([]) | length > 0
+    - ntp_auth_key_id | string | length > 0
+    - ntp_auth_key_value | default('') | length > 0
+    - ntp_auth_key_value != 'CHANGE_ME'
 
 - name: "V-220604/605 - SNMPv3 auth/priv (SHA auth, AES-128 priv - FIPS-approved algorithms)"
   cisco.ios.ios_config:
     lines:
       - snmp-server group SNMPV3_GROUP v3 priv
       - "snmp-server user SNMPV3_USER SNMPV3_GROUP v3 auth sha {{ snmpv3_auth_password }} priv aes 128 {{ snmpv3_priv_password }}"
-  when: snmpv3_auth_password | length > 0 and snmpv3_priv_password | length > 0
+  no_log: true
+  when:
+    - snmpv3_auth_password | default('') | length > 0
+    - snmpv3_priv_password | default('') | length > 0
+    - snmpv3_auth_password != 'CHANGE_ME'
+    - snmpv3_priv_password != 'CHANGE_ME'

@@ -109,11 +109,23 @@
       - exec-timeout 5 0
     parents: line con 0
 
+# no_log because the password is interpolated straight into a pushed line -
+# without it Ansible echoes the rendered command, so the secret lands in
+# console output and any tee'd log file. Confirmed 2026-08-12: a check run
+# printed `vtp password CHANGE_ME` in the clear.
+#
+# The CHANGE_ME guard matters as much as the length check. Gated on length
+# alone, an unfilled vault doesn't skip the task - it pushes the literal
+# string CHANGE_ME as the device's real VTP password. Skipping is the safe
+# failure: fill and encrypt vault.yml to configure VTP from here.
 - name: "V-220624 - VTP authentication"
   cisco.ios.ios_config:
     lines:
       - "vtp password {{ vtp_password }}"
-  when: vtp_password | length > 0
+  no_log: true
+  when:
+    - vtp_password | default('') | length > 0
+    - vtp_password != 'CHANGE_ME'
 
 - name: Build syslog server lines
   set_fact:
