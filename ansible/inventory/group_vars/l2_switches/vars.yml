@@ -50,6 +50,14 @@ syslog_servers:
   - 192.168.100.10
   - 192.168.100.11
 
+# RADIUS servers, V-220587/617 - see services.radius_servers in inventory.yaml.
+# Consumed by the l2s_stig_harden_aaa role, which ABORTS rather than skipping if
+# this is empty (unlike the ntp/syslog lists above, which the bulk role skips
+# with a warning) - there is no safe partial version of an AAA push.
+radius_servers:
+  - 192.168.100.10
+  - 192.168.100.11
+
 # Bridges the vaulted secrets (vault.yml, encrypted) to plain variable names -
 # standard Ansible vault convention (vault_* holds the raw secret, the
 # plain name is what tasks actually reference).
@@ -58,3 +66,30 @@ snmpv3_auth_password: "{{ vault_snmpv3_auth_password }}"
 snmpv3_priv_password: "{{ vault_snmpv3_priv_password }}"
 ntp_auth_key_id: "{{ vault_ntp_auth_key_id }}"
 ntp_auth_key_value: "{{ vault_ntp_auth_key_value }}"
+# default('') throughout the AAA vars below, unlike the vault bindings above.
+# These were added after the vault files were already in use, so an existing
+# vault.yml predating them has no vault_radius_key/vault_enable_secret. Bound
+# bare, an absent key is an undefined-variable error, and ansible_become_pass
+# is evaluated on EVERY connection to this group - so a stale vault would break
+# the bulk l2s_harden.yml run too, not just the AAA playbook. Defaulting to ''
+# keeps the previous behaviour exactly (become with no enable password) and
+# lets the AAA role's own assert produce an actionable message instead.
+radius_key: "{{ vault_radius_key | default('') }}"
+
+# The privileged EXEC secret, used in two places that MUST agree:
+#
+#   enable_secret       - what the l2s_stig_harden_aaa role pushes to the device
+#   ansible_become_pass - what Ansible uses to escalate on every connection
+#
+# Both are bound to the same vault variable deliberately, so they cannot drift.
+# That coupling is what makes the role's safety check meaningful: it pushes the
+# secret, tears the connection down (meta: reset_connection), and requires a
+# full fresh login plus re-escalation to succeed before it will touch
+# aaa new-model. If these two were separate variables and disagreed, that check
+# would fail - which is the correct outcome, but a confusing way to discover a
+# typo. Binding them here means the check is testing the device, not the
+# inventory.
+#
+# Mirrors secrets.yaml's enable_secret on the Python side.
+enable_secret: "{{ vault_enable_secret | default('') }}"
+ansible_become_pass: "{{ vault_enable_secret | default('') }}"

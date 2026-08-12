@@ -1,0 +1,23 @@
+---
+# Separate playbook from nxos_harden.yml on purpose - this is the one pass that
+# changes how SSH login itself is authenticated. Same reason
+# nxos_stig_harden_aaa.py is its own script.
+#
+#   ansible-playbook playbooks/nxos_harden_aaa.yml --ask-vault-pass \
+#       -e ansible_user=admin --ask-pass --limit NXCore1
+#
+# --limit NXCore1 is effectively mandatory: NXCore2 is powered off (the GNS3 lab
+# does not have the RAM for both), so any play targeting the whole group fails
+# against it.
+#
+# Read the "where it is weaker than the Python" section in the role's
+# tasks/main.yml before the first run against a device. Unlike the L2S role,
+# this one verifies AFTER the risky change, and Ansible cannot hold the
+# pre-change session open as a guaranteed rollback channel the way
+# nxos_stig_harden_aaa.py does. For a first application to a device whose
+# console you cannot reach quickly, prefer the Python script.
+- name: Apply AAA/RADIUS authentication and accounting to Cisco NX-OS switches
+  hosts: nxos_switches
+  gather_facts: false
+  roles:
+    - nxos_stig_harden_aaa

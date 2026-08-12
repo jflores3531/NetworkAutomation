@@ -7,8 +7,10 @@ Netmiko:
 | Role | Replicates | Target group |
 |---|---|---|
 | `l2s_stig_harden` | `../l2_stig_harden_global.py` + `_interfaces.py` | `l2_switches` |
+| `l2s_stig_harden_aaa` | `../l2_stig_harden_aaa.py` | `l2_switches` |
 | `l2s_stig_harden_ipsg` / `_dai` | `../l2_stig_harden_ipsg.py` / `_dai.py` | `l2_switches` |
 | `nxos_stig_harden` | `../nxos_stig_harden_global.py` + `_interfaces.py` | `nxos_switches` |
+| `nxos_stig_harden_aaa` | `../nxos_stig_harden_aaa.py` | `nxos_switches` |
 | `stig_audit` | shells out to the `*_stig_audit.py` scripts | both |
 
 Lives alongside the Python scripts on purpose - apart from `stig_audit`,
@@ -31,6 +33,20 @@ scope entirely.
 Every fix here (like every fix on the Python side this session) was found
 by running it live against a real device and reading the actual response,
 not assumed from documentation.
+
+**Two exceptions, both new and both unproven live:** `l2s_stig_harden_aaa`
+and `nxos_stig_harden_aaa`. They are ports of scripts that *have* been proven
+live, and their YAML and Jinja expressions were rendered and checked offline
+(including the presence gates and the `RADIUS1` vs `RADIUS10` anchoring case),
+but neither role has been run against a device. Given they are the two roles
+that change how login is authenticated, treat the first run on each switch as
+a live test: `--limit` one device, console within reach. See "How the safety
+net compares to the Python" below for what each role does and does not protect
+against.
+
+The `nxos_stig_harden` role's live status is also not recorded here, despite
+the commit history showing a series of idempotency fixes that could only have
+come from real runs against NXCore1.
 
 ## Setup notes (things that weren't obvious the first time)
 
@@ -151,18 +167,127 @@ correct commands for real hardware.
   state detection this role doesn't gather. Straightforward to add later
   (same running-config text is already being fetched in `interfaces.yml`),
   just not done yet.
+- **V-220675/679 per-port 802.1x on NX-OS** - `nxos_stig_harden_interfaces.py`
+  pushes `dot1x port-control auto`/`dot1x host-mode single-host` per access
+  port (gated on IPSG being inactive, since Nexus 9000 refuses `feature dot1x`
+  while IPSG is enabled). The `nxos_stig_harden` role never ported that pass.
+  The *globals* now have an Ansible path via `nxos_stig_harden_aaa`, but the
+  per-port half still does not - run the Python script for those. This is an
+  asymmetry with the L2S role, which does push its per-port V-220623
+  equivalents.
+
+### Previously not covered, now closed
+
 - **V-220623a/b (dot1x system-auth-control + AAA method list)** - these two
   global commands need `aaa new-model` already active to be valid syntax at
   all (confirmed live: rejected on S2, which doesn't have it, succeeded on
-  S1/S3, which do from prior `l2_stig_harden_aaa.py` runs). On the Python
-  side these were moved into `l2_stig_harden_aaa.py`, right after
-  `aaa new-model`, so they're never attempted until the prerequisite is
-  confirmed active. There's no Ansible equivalent of `l2_stig_harden_aaa.py`
-  yet (AAA/RADIUS push, with its own enable-secret verification step) to
-  receive them, so they're simply not pushed here at all - only the
-  per-port V-220623 commands (`authentication port-control auto`/
-  `dot1x pae authenticator`/`mab`) remain in this role, matching
-  `l2_stig_harden_global.py`'s current scope exactly.
+  S1/S3, which do from prior `l2_stig_harden_aaa.py` runs). They had no
+  Ansible path at all while there was no equivalent of
+  `l2_stig_harden_aaa.py` to receive them. The `l2s_stig_harden_aaa` role now
+  pushes them in the same atomic task as `aaa new-model` itself, so the
+  prerequisite is guaranteed active. The per-port V-220623 commands
+  (`authentication port-control auto`/`dot1x pae authenticator`/`mab`) stay in
+  `l2s_stig_harden`, matching `l2_stig_harden_global.py`'s scope exactly.
+
+## The AAA roles
+
+`l2s_stig_harden_aaa` and `nxos_stig_harden_aaa` are separate roles with
+separate playbooks, not part of the bulk hardening run. Same reason the Python
+keeps `*_stig_harden_aaa.py` out of `*_stig_harden_global.py`: this is the one
+pass that changes how SSH login itself is authenticated. Bundling it with the
+~60-command bulk pass is what dropped a live session on S2 mid-push and left
+the switch half-configured and SSH-inaccessible (recovered via console +
+`no aaa new-model`).
+
+```
+ansible-playbook playbooks/l2s_harden_aaa.yml  --ask-vault-pass -e ansible_user=admin --ask-pass --limit S1
+ansible-playbook playbooks/nxos_harden_aaa.yml --ask-vault-pass -e ansible_user=admin --ask-pass --limit NXCore1
+```
+
+Run one device at a time and confirm you can open a fresh SSH session to it
+before moving on. Console access is the backstop.
+
+### How the safety net compares to the Python
+
+Neither role can fully reproduce its script's protection, and they fall short
+in different places - worth understanding before a first run.
+
+**L2S - equivalent, arguably stronger.** `l2_stig_harden_aaa.py` pushes
+`enable secret` and proves it works with a `disable` -> `enable` round-trip on
+the same Netmiko session before touching `aaa new-model`. Ansible has no way to
+drive that round-trip, so the role uses `meta: reset_connection` instead: the
+persistent connection is destroyed and the next task must complete a full fresh
+SSH login *and* re-escalate with `ansible_become_pass`. That is a broader test
+than the Python's, and it happens **before** any AAA task runs, so the abort
+ordering is identical - a failed verification leaves the device with nothing
+but the new enable secret.
+
+For that check to mean anything, what gets pushed and what Ansible escalates
+with have to be the same value, so `group_vars` binds both `enable_secret` and
+`ansible_become_pass` to a single `vault_enable_secret`. They cannot drift.
+
+**NX-OS - genuinely weaker.** `nxos_stig_harden_aaa.py` pushes the auth change,
+opens a *second* Netmiko connection to prove new logins still work, and reverts
+through the still-open *primary* session if it doesn't. That primary session is
+the guarantee: it predates the change and survives it.
+
+Ansible has no equivalent. `meta: reset_connection` is a real second-connection
+test, but it destroys the pre-change session to perform it, so nothing is left
+to revert through. The role's `rescue` block still attempts a revert and will
+succeed for a transient or partial failure - but a genuine lockout fails there
+too, and recovery is via console.
+
+The risk is smaller than it sounds, for the reason the Python's own docstring
+gives: DISA's V-220513 Fix Text pushes no `local` keyword in the method list,
+because NX-OS has a separate `fallback error local` mechanism that Check
+Content confirms is **on by default**. Neither the script nor this role ever
+disables it. Still - for a first application to a device whose console you
+can't reach quickly, prefer `nxos_stig_harden_aaa.py`. The role is the better
+choice for re-runs against already-converged devices, where the auth change is
+a no-op and the exposure window never opens.
+
+### Idempotency: why the secret-bearing tasks are presence-gated
+
+Both platforms store these credentials in a form that never matches what was
+sent - `enable secret` as a type-5/8/9 hash, and the RADIUS key as `key 7
+<encrypted>` once `service password-encryption` is active (which the L2S bulk
+role turns on, so it is the normal state on every device targeted here).
+`ios_config`/`nxos_config` compare literal strings, so pushing either
+unconditionally reports `changed` on every run and re-sends a no-op forever.
+
+There is no AAA resource module in `cisco.ios` 4.4.0 to sidestep this the way
+`ios_vlans`/`nxos_ntp_global` do elsewhere in this project, so both roles gate
+these tasks on the config line being **absent** instead. That buys idempotency
+at the cost of never picking up a *changed* value, so each role exposes a flag
+for deliberate rotation:
+
+```
+ansible-playbook playbooks/l2s_harden_aaa.yml -e radius_force_update=true
+ansible-playbook playbooks/l2s_harden_aaa.yml -e enable_secret_force_update=true
+```
+
+(`cisco.nxos` does ship `nxos_aaa_server_host`, which compares state rather
+than strings and would handle the RADIUS key properly. It is deliberately not
+used yet: it is untested against this lab, and the riskiest role in the repo is
+the wrong place to introduce an unverified module - the `nxos_logging_global`
+schema saga in the commit history is what that costs. Worth revisiting once
+there is a device to prove it against.)
+
+### Ordering difference from the Python
+
+Both roles define the RADIUS servers **before** flipping authentication, which
+is the one place `l2s_stig_harden_aaa` does not follow
+`l2_stig_harden_aaa.py`'s command order. The Python sends `aaa new-model` and
+the dot1x globals first and the RADIUS blocks after - safe there because it is
+all one `send_config_set()`, i.e. one config session. Splitting across Ansible
+tasks means separate sessions, so the order is inverted to make sure
+`group radius` is never referenced by a method list before it has members.
+
+For the same reason, `aaa new-model` and both method lists are sent in **one**
+`ios_config` task. That is not cosmetic: the S2 lockout happened because the
+session dropped after `aaa new-model` took effect but before the method lists
+landed. Keeping them in a single task preserves the atomicity Netmiko's
+`send_config_set()` gives the Python. Do not split that task.
 
 ## Why this exists
 
@@ -188,7 +313,9 @@ pip install ansible
 ansible-galaxy collection install -r requirements.yml
 ```
 
-Fill in real values in `inventory/group_vars/l2_switches/vault.yml`, then
+Fill in real values in `inventory/group_vars/l2_switches/vault.yml` (see the
+adjacent `vault.yml.example` for the full list - the AAA roles add
+`vault_radius_key`, and the L2S one also needs `vault_enable_secret`), then
 encrypt it - **never commit real secrets in plaintext**:
 
 ```

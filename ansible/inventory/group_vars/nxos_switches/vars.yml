@@ -42,6 +42,13 @@ syslog_servers:
   - 192.168.100.10
   - 192.168.100.11
 
+# RADIUS servers, V-220513 - see services.radius_servers in inventory.yaml.
+# Shared with the L2S group, not platform-specific. Consumed by the
+# nxos_stig_harden_aaa role, which ABORTS rather than skipping if this is empty.
+radius_servers:
+  - 192.168.100.10
+  - 192.168.100.11
+
 # Bridges the vaulted secrets (vault.yml, encrypted) to plain variable names -
 # standard Ansible vault convention (vault_* holds the raw secret, the
 # plain name is what tasks actually reference).
@@ -50,3 +57,14 @@ snmpv3_auth_password: "{{ vault_snmpv3_auth_password }}"
 snmpv3_priv_password: "{{ vault_snmpv3_priv_password }}"
 ntp_auth_key_id: "{{ vault_ntp_auth_key_id }}"
 ntp_auth_key_value: "{{ vault_ntp_auth_key_value }}"
+# default('') rather than a bare binding: this key was added after the vault
+# files were already in use, so an existing vault.yml predating it has no
+# vault_radius_key, and a bare reference would be an undefined-variable error
+# for anything that touches this group. The AAA role asserts on the empty value
+# and stops with an actionable message instead.
+radius_key: "{{ vault_radius_key | default('') }}"
+
+# No enable_secret/ansible_become_pass here, unlike the l2_switches group.
+# NX-OS has no enable/privileged mode to escalate into - authorisation is
+# role-based (RBAC) on the account itself, which is also why this group carries
+# no ansible_become in hosts.yml.
