@@ -2,8 +2,23 @@
 # Global (non-interface-specific) fixes - mirrors l2_stig_harden_global.py's
 # BASE_FIXES/OPTIONAL_FIXES/UNNECESSARY_SERVICES_FIX/SSH_ENCRYPTION_FIX/
 # ARCHIVE_LOGGING_FIX/VTY_SESSION_LIMIT_FIX/CONSOLE_EXEC_TIMEOUT_FIX exactly.
-# ios_config diffs against running-config itself, so this is idempotent
-# without any extra logic - re-running only pushes what's actually missing.
+
+# Several lines below are IOS defaults, and `show running-config` omits
+# anything sitting at its default value - `ip igmp snooping` is on by default,
+# and the `no` form of an already-off service renders nothing at all. Diffed
+# against plain running-config, ios_config could never find them, so it
+# reported changed and re-pushed no-ops on every run. `show running-config all`
+# does include defaults, which is what makes these tasks idempotent. Same fix
+# as the nxos_stig_harden role's BASE_FIXES.
+#
+# Usefully bounded, confirmed on S1: `no ip http server` and `no service pad`
+# were always fine, because those two services are on by default so the `no`
+# is a real override that does render.
+- name: Gather show running-config all (includes default-valued lines)
+  cisco.ios.ios_command:
+    commands:
+      - show running-config all
+  register: ios_running_config_all
 
 # V-220623a/b (dot1x system-auth-control + AAA method) are deliberately NOT
 # in this batch - see l2_stig_harden_global.py/l2_stig_harden_aaa.py, which this
@@ -16,6 +31,7 @@
 # not pushed here rather than attempted-and-ignored.
 - name: "V-220630/631/637/638/639/580/599/612/576/578/570a/595a/600 - global BASE_FIXES"
   cisco.ios.ios_config:
+    running_config: "{{ ios_running_config_all.stdout[0] }}"
     lines:
       # The 'edge' keyword is deliberate. IOS 15.x accepts the command without
       # it but stores the normalised form, so sending the bare version means
@@ -39,7 +55,21 @@
       - ip http max-connections 2                      # V-220570a (HTTP session limit)
       - service password-encryption                     # V-220595a (password encryption)
       - logging trap critical                              # V-220600 (audit failure alert)
-      - ip device tracking   # not a STIG requirement - host visibility only
+
+# `ip device tracking` is NOT a STIG requirement - host visibility only, the
+# same thing l2_stig_harden_global.py keeps in its separate OPTIONAL_FIXES
+# bucket rather than mixed into BASE_FIXES. Split out here for the same reason,
+# plus a practical one specific to this lab: the command is accepted and logged
+# on vios_l2 but the feature never actually activates (`show ip device tracking
+# all` permanently reports Disabled - see the project's Bugs notes), so it may
+# not render in running-config at all, even with `all`. Left inside BASE_FIXES
+# it would keep a task made entirely of STIG rules reporting changed forever
+# over a line that isn't a STIG rule and can't work here anyway.
+- name: "ip device tracking - NOT a STIG rule, host visibility only (non-functional on vios_l2)"
+  cisco.ios.ios_config:
+    running_config: "{{ ios_running_config_all.stdout[0] }}"
+    lines:
+      - ip device tracking
 
 # V-220625/V-220583-585: confirmed live (see the project vault's Bugs/README.md) that
 # this lab's vios_l2 image rejects both commands outright ("% Invalid
@@ -60,8 +90,12 @@
       - file privilege 15
   ignore_errors: true
 
+# Diffed against `show running-config all` for the same reason as BASE_FIXES:
+# every one of these nine services is off by default, so IOS renders nothing
+# for the `no` form and all nine re-pushed on every run.
 - name: "V-220586 - disable unnecessary/nonsecure services"
   cisco.ios.ios_config:
+    running_config: "{{ ios_running_config_all.stdout[0] }}"
     lines:
       - no boot network
       - no ip boot server
