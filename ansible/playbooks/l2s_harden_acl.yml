@@ -1,0 +1,22 @@
+---
+# Its own playbook, never folded into l2s_harden.yml. A vty access-class that
+# excludes the automation host's own source IP blocks every future SSH
+# connection from it, so this is run and reviewed independently - same reason
+# l2_stig_harden_acl.py is its own script.
+#
+#   ansible-playbook playbooks/l2s_harden_acl.yml -e ansible_user=admin --ask-pass --limit S1
+#
+# Run one device at a time. The role arms `reload in 5` before applying the ACL
+# and cancels it only after a fresh connection proves access still works, so a
+# lockout self-heals - but only because this project never saves config during a
+# push (see ../../docs/DESIGN.md). Do not save the running config on a target
+# between applying and verifying, or the reload will restore the lockout rather
+# than clear it.
+#
+# NX-OS has no counterpart playbook: `reload in` does not exist there, so
+# nxos_stig_harden_acl.py stays the only path for V-220479. See ../README.md.
+- name: Apply the vty management ACL to Cisco IOS L2 switches
+  hosts: l2_switches
+  gather_facts: false
+  roles:
+    - l2s_stig_harden_acl

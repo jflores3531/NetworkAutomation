@@ -1,0 +1,31 @@
+---
+# Fallback defaults for the vty management ACL role. group_vars/l2_switches/
+# vars.yml supplies the real value; this exists so a missing automation_host
+# surfaces as this role's own assert rather than an undefined-variable
+# traceback - and, more importantly, so it can never silently render an ACL
+# whose only permit line is empty. That would produce
+# `permit ip host  any`, which IOS rejects, leaving a deny-only ACL. Applying
+# THAT locks out every management source on the device.
+automation_host: ""
+
+# V-220575's ACL name. Matches ACL_NAME in l2_stig_harden_acl.py so the two
+# toolchains converge on one ACL rather than creating two.
+acl_name: VTY_MGMT
+
+# Minutes before the safety-net reload fires if verification never cancels it.
+#
+# This is the whole reason an ACL role is viable in Ansible at all. The Python
+# script reverts through its still-open primary Netmiko session; Ansible has no
+# equivalent, because `meta: reset_connection` destroys the pre-change session
+# in order to test a fresh login, and a rescue block would have to reconnect
+# through the very ACL that just locked it out.
+#
+# `reload in <n>` needs no connectivity to fire, so it survives the exact
+# failure the rescue cannot. It also matches the recovery model
+# ../../../../docs/DESIGN.md already documents: this project deliberately never
+# saves config during a push, so a reload returns the device to its last saved
+# configuration - without the ACL.
+#
+# 5 is long enough to complete verification comfortably and short enough that a
+# lockout self-heals before it becomes an outage worth caring about.
+reload_safety_minutes: 5
