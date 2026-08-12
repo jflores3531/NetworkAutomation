@@ -59,9 +59,37 @@ lists, `aaa new-model` atomic with them) have not been exercised live by the
 role - only by the Python script they were ported from. S2 is the useful test
 there if it still lacks `aaa new-model`.
 
-**`nxos_stig_harden_aaa` remains unproven live.** It is the weaker of the two
-safety nets (see below), so treat its first run as a live test: `--limit
-NXCore1`, console within reach.
+`nxos_stig_harden_aaa` was confirmed live on **NXCore1** (2026-08-12):
+`ok=12 changed=0 failed=0 skipped=3`, twice consecutively, with no task
+reporting changed.
+
+Getting there took the right ordering. NXCore1 turned out **not** to be
+converged - it had `aaa group server radius RADIUS_GROUP` with a single server
+and no `aaa authentication login default` line at all, meaning
+`nxos_stig_harden_aaa.py` had never completed against it and something older or
+manual had configured what was there. So this would have been the device's
+first-ever login-auth flip, which is exactly the case this README says to give
+to the Python script rather than the role, because only the script holds the
+pre-change session open as a rollback channel.
+
+That is what was done: `nxos_stig_harden_aaa.py` performed the first flip
+(its second-connection verify passed), and the role was then run against the
+converged device. Note that dry-running the role first would **not** have
+de-risked anything - in `--check` the auth change is never pushed, so the
+"Verify a brand-new login succeeds" task passes against an unchanged device
+and proves nothing. `--check` is close to worthless for this specific role.
+
+The run also caught a real idempotency bug, now fixed: the RADIUS
+timeout/retransmit task reported `changed` on every run because
+`radius-server retransmit 1` is the NX-OS **default**, and plain
+`show running-config` omits default-valued lines - so `nxos_config` could never
+find it. It now diffs against `show running-config all`, the same fix the
+`nxos_stig_harden` role's `global.yml` already carried for five other lines.
+The lesson had been learned once in this repo and not applied here.
+
+Left alone deliberately: `aaa group server radius RADIUS_GROUP` is still on the
+device, now orphaned alongside `RADIUS_SERVERS`. Neither toolchain references
+it. Worth cleaning up, but not something either was asked to do.
 
 The `nxos_stig_harden` role's live status is also not recorded here, despite
 the commit history showing a series of idempotency fixes that could only have
