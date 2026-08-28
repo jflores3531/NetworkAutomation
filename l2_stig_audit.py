@@ -1,7 +1,10 @@
 #!/usr/bin/env python
-"""Audit a device's running-config against the DISA Cisco IOS Switch L2S/NDM
-STIG rules in New Layer 2 switch Checklist.cklb, reporting PASS/FAIL for the
-rules that can be checked from config text alone."""
+"""Audit a device's running-config against the DISA Cisco IOS XE Switch
+L2S/NDM STIG (--checklist ios-xe, IOS-XE Checklist.cklb) or the Cisco IOS
+Switch L2S/NDM STIG (the default, New Layer 2 switch Checklist.cklb),
+reporting PASS/FAIL for the rules that can be checked from config text alone.
+The two STIGs share no rule IDs but mostly the same requirements - the same
+checks serve both, re-keyed through ios_xe_rule_map.py."""
 
 import argparse
 import ipaddress
