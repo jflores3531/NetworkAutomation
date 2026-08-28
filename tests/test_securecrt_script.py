@@ -168,8 +168,12 @@ def test_full_run(tmpdir):
 
     # The script now runs the real audit itself and writes the report next to
     # the capture - the linear flow the work machine gets.
-    report = path + '_report.txt'
+    report = path[:-len('.capture')] + '_report.txt'
     check('audit auto-ran, report written next to the capture', os.path.exists(report))
+    check('report is a clean .txt, not .capture_report.txt',
+          not os.path.exists(path + '_report.txt'))
+    check('report filename carries the device hostname', 'TESTSW01' in os.path.basename(report)
+          or 'run' in os.path.basename(report))  # stub names the file, not the hostname
     if os.path.exists(report):
         text = open(report, encoding='utf-8').read()
         check('report carries verdicts', 'passed,' in text and '65 rules' in text)

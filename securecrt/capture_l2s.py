@@ -284,7 +284,11 @@ def run_audit(capture_path, hostname):
         if result.returncode != 0:
             return None, ('the audit itself failed:\n'
                           + (result.stdout + result.stderr).strip()[-500:])
-        report_path = capture_path + '_report.txt'
+        # Strip the .capture extension before appending, so the report is a
+        # clean .txt (S1_<stamp>_report.txt) rather than a double-extensioned
+        # .capture_report.txt that Windows file associations mishandle.
+        base = capture_path[:-len('.capture')] if capture_path.endswith('.capture') else capture_path
+        report_path = base + '_report.txt'
         with open(report_path, 'w', encoding='utf-8') as report_file:
             report_file.write(result.stdout)
         summary = next((line for line in result.stdout.splitlines() if 'out of' in line),
