@@ -128,6 +128,59 @@ def shutdown_access_ports(cfg, access_names):
     return shutdown
 
 
+def access_ports_on_vlans(cfg, access_names, vlan_ids):
+    """Return the subset of access_names whose explicit access VLAN is in
+    vlan_ids - used to find ports on management/infrastructure segments
+    (inventory.yaml's non_user_vlans).
+
+    Exists because of a live lockout on the rebuilt lab (2026-08-28):
+    `authentication port-control auto` was pushed to S1's Gi0/0 - the
+    management port carrying the automation host - and this image accepted it
+    and enforced it, immediately blocking the supplicant-less host. Note that
+    directly contradicts the older recorded observation that 802.1x is
+    rejected/nonfunctional on vios_l2: the `dot1x pae authenticator`/`mab`
+    commands are rejected here, but `authentication port-control auto` alone
+    is accepted and blocks the port. The 802.1x/MAB block is therefore never
+    pushed to ports on a non-user VLAN - the audit's V-220623 check stays
+    strict and will report those ports as a finding, which is the honest
+    outcome (same known/accepted-FAIL bucket as S2's V-220634)."""
+    wanted = {str(v) for v in vlan_ids}
+    matched = []
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m or m.group(1) not in access_names:
+            continue
+        vlan = re.search(r'^\s*switchport access vlan (\d+)\s*$', chunk, re.M)
+        if vlan and vlan.group(1) in wanted:
+            matched.append(m.group(1))
+    return matched
+
+
+def unassigned_access_ports(cfg, access_names):
+    """Return the subset of access_names still on the default VLAN - no
+    explicit 'switchport access vlan' line, or an explicit VLAN 1. Only these
+    get default_access_vlan pushed.
+
+    A port already assigned to another VLAN was put there deliberately, and
+    overwriting that assignment is not this script's job - V-220642 only
+    requires host-facing ports off VLAN 1, not on any particular VLAN.
+    Confirmed the hard way on the rebuilt lab (2026-08-28): S1's Gi0/0 carries
+    the automation host on the management VLAN, and re-VLANing every access
+    port moved it too - which cut the very session pushing the change
+    (Netmiko ReadTimeout mid-push) and left the switch unreachable until a
+    console fixed it. The old topology never exposed this because its
+    management path rode trunk ports, which this loop never touches."""
+    unassigned = []
+    for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
+        m = re.match(r'interface (\S+)', chunk)
+        if not m or m.group(1) not in access_names:
+            continue
+        vlan = re.search(r'^\s*switchport access vlan (\d+)\s*$', chunk, re.M)
+        if vlan is None or vlan.group(1) == '1':
+            unassigned.append(m.group(1))
+    return unassigned
+
+
 # Pushed to every trunk/uplink-classified interface (allowed-vlan list, native VLAN
 # line, added separately below once the device's actual VLAN database is known)
 TRUNK_PORT_FIXES = [
@@ -221,9 +274,13 @@ allowed_trunk_vlans = stig_common.discover_user_vlans(net_connect, exclude=trunk
 # the VLAN's own database entry is created by l2_stig_harden_global.py, not here.
 default_access_vlan = netauto.load_default_access_vlan()
 
+# Which access ports actually need the default VLAN: only those still on
+# VLAN 1 (explicitly or by omission). See unassigned_access_ports() for why
+# ports deliberately assigned elsewhere - e.g. a management uplink - are left
+# alone.
+default_vlan_ports = unassigned_access_ports(running_config, access_ports) if default_access_vlan else []
+
 access_fixes = ['switchport mode access']
-if default_access_vlan:
-    access_fixes.append(f'switchport access vlan {default_access_vlan}')
 # V-220630 (BPDU Guard): the global 'spanning-tree portfast bpduguard default'
 # fix (in l2_stig_harden_global.py) only activates BPDU Guard on ports that have
 # PortFast enabled - per the STIG's own Discussion text, BPDU Guard disables
@@ -233,17 +290,25 @@ if default_access_vlan:
 # on access/host-facing ports only, never trunk/uplinks (a trunk receiving
 # BPDUs is normal STP behavior, not a rogue-switch signal).
 access_fixes.append('spanning-tree portfast')
-# Kept for real hardware even though confirmed live that neither command
-# exists on these lab vios_l2 switches ("% Invalid input") - Jorge wants them
-# available for a real deployment, not removed just because the lab can't run
-# them. Netmiko doesn't treat a rejected command as fatal, so pushing these
-# against vios_l2 is harmless (silently skipped), not a crash risk.
-access_fixes += [
-    'switchport block unicast',                     # V-220632 (UUFB)
-    'authentication port-control auto',              # V-220623 (802.1x/MAB)
-    'dot1x pae authenticator',                        # V-220623 (802.1x/MAB)
-    'mab',                                            # V-220623 (802.1x/MAB)
+# V-220632 (UUFB): rejected on lab vios_l2 ("% Invalid input"), kept for real
+# hardware - Netmiko doesn't treat a rejected command as fatal, so pushing it
+# is harmless there.
+access_fixes.append('switchport block unicast')
+
+# V-220623 (802.1x/MAB) - pushed per-port below, NOT in the flat list, and
+# never to access ports on a non-user VLAN (management/infrastructure segments
+# from inventory.yaml). `authentication port-control auto` is accepted and
+# enforced even on lab vios_l2 (dot1x pae/mab are the rejected ones), so
+# landing it on the management port blocks the supplicant-less automation host
+# and cuts the very session doing the pushing - confirmed live on the rebuilt
+# S1, 2026-08-28. See access_ports_on_vlans() for the audit-side consequence.
+DOT1X_FIXES = [
+    'authentication port-control auto',
+    'dot1x pae authenticator',
+    'mab',
 ]
+non_user_vlan_ids = netauto.load_non_user_vlans(device_name=device_name)
+mgmt_vlan_ports = set(access_ports_on_vlans(running_config, access_ports, non_user_vlan_ids))
 # V-220636 (storm control) is pushed per-port, not in the flat access_fixes
 # list above - the threshold varies by port speed, and FastEthernet ports
 # are skipped entirely (see storm_control_command()).
@@ -260,6 +325,10 @@ interface_commands = []
 for name in access_ports:
     interface_commands.append(f'interface {name}')
     interface_commands += access_fixes
+    if name not in mgmt_vlan_ports:
+        interface_commands += DOT1X_FIXES
+    if name in default_vlan_ports:
+        interface_commands.append(f'switchport access vlan {default_access_vlan}')
     if name in storm_control_ports:
         interface_commands.append(storm_control_ports[name])
 for name in trunk_ports:
@@ -274,8 +343,9 @@ for name in disabled_ports:
 applied_fixes = {}
 if access_ports:
     applied_fixes['Default access mode/VLAN'] = (
-        f'switchport mode access' + (f'; switchport access vlan {default_access_vlan}' if default_access_vlan else '')
-        + f' (on {len(access_ports)} access port(s))'
+        f'switchport mode access (on {len(access_ports)} access port(s))'
+        + (f'; switchport access vlan {default_access_vlan} (on the {len(default_vlan_ports)} '
+           'still on VLAN 1 - explicit assignments elsewhere kept)' if default_access_vlan else '')
     )
     applied_fixes['V-220630b (PortFast, required for BPDU Guard to activate)'] = f'spanning-tree portfast (on {len(access_ports)} access port(s))'
     applied_fixes['V-220632 (UUFB)'] = f'switchport block unicast (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
@@ -284,7 +354,13 @@ if access_ports:
             f'storm-control broadcast level bps ... (speed-scaled, on {len(storm_control_ports)} of {len(access_ports)} '
             f'access port(s) - not supported on lab vios_l2, kept for real hardware)'
         )
-    applied_fixes['V-220623 (802.1x/MAB)'] = f'authentication port-control auto; dot1x pae authenticator; mab (on {len(access_ports)} access port(s) - not supported on lab vios_l2, kept for real hardware)'
+    dot1x_ports = [name for name in access_ports if name not in mgmt_vlan_ports]
+    applied_fixes['V-220623 (802.1x/MAB)'] = (
+        f'authentication port-control auto; dot1x pae authenticator; mab '
+        f'(on {len(dot1x_ports)} of {len(access_ports)} access port(s) - '
+        f'{len(mgmt_vlan_ports)} on non-user VLANs skipped: port-control auto is enforced '
+        'even on vios_l2 and locks out a supplicant-less management host)'
+    )
 if trunk_ports:
     applied_fixes['V-220640 (static trunk)'] = f'switchport nonegotiate (on {len(trunk_ports)} trunk port(s))'
     applied_fixes['V-220633b/635b (DHCP snooping + DAI trust)'] = f'ip dhcp snooping trust; ip arp inspection trust (on {len(trunk_ports)} trunk port(s))'

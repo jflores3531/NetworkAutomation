@@ -175,9 +175,14 @@ def _all_access_ports_have(cfg, pattern, what, exclude_prefixes=()):
 # V-220623: every access port must have either 802.1x (dot1x pae authenticator
 # + authentication port-control auto) or MAB (mab, for devices that don't
 # support an 802.1x supplicant) - either is sufficient per DISA's own fix
-# text. Known non-functional on this lab's vios_l2 (confirmed: dot1x has no
-# authenticator role at the interface level here) - included anyway per
-# Jorge's request, correct for real hardware, confirmed FAIL here is expected.
+# text. Partially functional on lab vios_l2, and dangerously so: `dot1x pae
+# authenticator`/`mab` are rejected, but `authentication port-control auto`
+# alone is accepted AND enforced (confirmed live 2026-08-28 - it blocked the
+# rebuilt S1's management port). The harden deliberately skips ports on
+# non-user VLANs for exactly that reason, so this check reporting those ports
+# as a finding is expected and honest - the known/accepted-FAIL bucket, like
+# S2's V-220634 - not a harden bug. DISA's check text has no management-VLAN
+# carve-out, so the check stays strict rather than inheriting the exemption.
 def _dot1x_mab_check(cfg):
     access, _ = parse_switchports(cfg)
     if not access:
