@@ -151,12 +151,7 @@ def test_full_run(tmpdir):
     print('\nfull run against a stubbed SecureCRT (audit auto-runs, report opens suppressed)')
     path = os.path.join(tmpdir, 'run.capture')
     capture_l2s.OPEN_REPORT = False
-    saved_checklist = capture_l2s.AUDIT_CHECKLIST
-    capture_l2s.AUDIT_CHECKLIST = 'ios'  # fixture expectations are IOS-keyed
-    try:
-        fake = run_script(path=path)
-    finally:
-        capture_l2s.AUDIT_CHECKLIST = saved_checklist
+    fake = run_script(path=path)
     check('paging disabled first', fake.Screen.sent[0] == 'terminal length 0',
           fake.Screen.sent[:2])
     check('all five commands sent',
@@ -172,11 +167,14 @@ def test_full_run(tmpdir):
     check('audit auto-ran, report written next to the capture', os.path.exists(report))
     check('report is a clean .txt, not .capture_report.txt',
           not os.path.exists(path + '_report.txt'))
-    check('report filename carries the device hostname', 'TESTSW01' in os.path.basename(report)
-          or 'run' in os.path.basename(report))  # stub names the file, not the hostname
     if os.path.exists(report):
         text = open(report, encoding='utf-8').read()
-        check('report carries verdicts', 'passed,' in text and '65 rules' in text)
+        # 64 rules = the IOS XE checklist. The script passes no --checklist,
+        # so this asserts it inherits the audit's IOS XE default - the whole
+        # point of removing the AUDIT_CHECKLIST setting.
+        check('audited against the IOS XE checklist by default',
+              '64 rules' in text, [l for l in text.splitlines() if 'rules' in l][:2])
+        check('report carries verdicts', 'passed,' in text)
         check('dialog carries the summary line',
               any('out of' in m for _, m in fake.Dialog.messages), fake.Dialog.messages)
 

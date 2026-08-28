@@ -35,9 +35,14 @@ stay identical, so the duplication cannot drift silently.
 # the audit instead. The audit needs Python + pyyaml only; netmiko is NOT
 # required for offline audits (netauto imports it lazily, only on connect).
 #
-# Which checklist the audit uses: '' = the audit's default (IOS XE - the work
-# target). Set to 'ios' when capturing the lab's vios_l2 switches.
-AUDIT_CHECKLIST = 'ios'
+# No checklist setting: this runs against IOS XE devices, which is
+# l2_stig_audit.py's own default, so the audit is invoked without --checklist
+# and there is nothing here to set wrong. A setting existed briefly and was
+# removed on purpose - the two STIGs share no rule IDs, so a stale value
+# produces a report where nearly every rule reads NOT AUTOMATED, which looks
+# like broken tooling rather than a wrong flag. Auditing a classic-IOS device
+# (the lab's vios_l2 switches) is still possible, just not from here: run
+# `l2_stig_audit.py <name> --checklist ios --from-capture <file>` by hand.
 
 # Pop the finished report in the default .txt viewer. Tests turn this off.
 OPEN_REPORT = True
@@ -271,12 +276,13 @@ def run_audit(capture_path, hostname):
     candidates = [os.path.join(repo, '.venv', 'Scripts', 'python.exe'),
                   os.path.join(repo, '.venv', 'bin', 'python'),
                   'python', 'python3']
-    checklist_args = ['--checklist', AUDIT_CHECKLIST] if AUDIT_CHECKLIST else []
     last_error = ''
     for python in candidates:
         try:
+            # No --checklist: the audit defaults to IOS XE, which is what this
+            # script captures from. See the note at the top of the file.
             result = subprocess.run(
-                [python, audit, hostname, '--from-capture', capture_path] + checklist_args,
+                [python, audit, hostname, '--from-capture', capture_path],
                 capture_output=True, text=True, cwd=repo, timeout=180)
         except (OSError, subprocess.TimeoutExpired) as error:
             last_error = '{0}: {1}'.format(python, error)
