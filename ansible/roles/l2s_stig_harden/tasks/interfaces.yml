@@ -25,7 +25,7 @@
     all_switchports: >-
       {{
         running_config_result.stdout[0]
-        | regex_findall('(?m)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)')
+        | regex_findall('(?m)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|TwoGigabitEthernet|FiveGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|TwoHundredGigE|FourHundredGigE|Ethernet|Port-channel)\S*)')
       }}
 
 - name: Trunk-classified interface names (block contains 'switchport mode trunk')
@@ -33,7 +33,7 @@
     trunk_ports: >-
       {{
         running_config_result.stdout[0]
-        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*switchport mode trunk')
+        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|TwoGigabitEthernet|FiveGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|TwoHundredGigE|FourHundredGigE|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*switchport mode trunk')
       }}
 
 - name: Access-classified interface names (switchport-capable, not trunk)
@@ -60,7 +60,7 @@
     disabled_ports: >-
       {{
         running_config_result.stdout[0]
-        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*?\n[ \t]*shutdown[ \t]*\n')
+        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|TwoGigabitEthernet|FiveGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|TwoHundredGigE|FourHundredGigE|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*?\n[ \t]*shutdown[ \t]*\n')
         | intersect(access_ports)
       }}
   when: unused_vlan | string | length > 0
@@ -124,15 +124,15 @@
   ignore_errors: true
 
 - name: >-
-    V-220636 - storm control, speed-scaled threshold (Gigabit vs
-    TenGigabitEthernet, ~2% of link speed); FastEthernet skipped entirely -
-    not supported per the STIG's own Fix Text note. Confirmed live
+    V-220636 - storm control, threshold scaled to ~2% of link speed from the
+    interface-name prefix (storm_control_bps_by_prefix); FastEthernet skipped
+    entirely - not supported per the STIG's own Fix Text note. Confirmed live
     (Bugs/README.md) that the command itself is also rejected outright on
     this lab's vios_l2 - kept for real hardware.
   cisco.ios.ios_config:
     parents: "interface {{ item }}"
     lines:
-      - "storm-control broadcast level bps {{ '200000000' if item is match('^TenGigabitEthernet') else '20000000' }}"
+      - "storm-control broadcast level bps {{ storm_control_bps_by_prefix[item | regex_search('^[A-Za-z-]+')] | default(storm_control_bps_default) }}"
   loop: "{{ access_ports | reject('match', '^FastEthernet') | list }}"
   when: access_ports | length > 0
   ignore_errors: true

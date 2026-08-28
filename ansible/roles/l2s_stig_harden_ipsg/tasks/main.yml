@@ -37,7 +37,7 @@
     all_switchports: >-
       {{
         running_config_result.stdout[0]
-        | regex_findall('(?m)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)')
+        | regex_findall('(?m)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|TwoGigabitEthernet|FiveGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|TwoHundredGigE|FourHundredGigE|Ethernet|Port-channel)\S*)')
       }}
 
 - name: Trunk-classified interface names (block contains 'switchport mode trunk')
@@ -45,7 +45,7 @@
     trunk_ports: >-
       {{
         running_config_result.stdout[0]
-        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*switchport mode trunk')
+        | regex_findall('(?ms)^interface ((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|TwoGigabitEthernet|FiveGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|TwoHundredGigE|FourHundredGigE|Ethernet|Port-channel)\S*)\n(?:(?!^interface \S).)*switchport mode trunk')
       }}
 
 - name: Access-classified interface names (switchport-capable, not trunk)

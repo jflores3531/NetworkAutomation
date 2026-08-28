@@ -27,8 +27,18 @@ import netauto
 
 # Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd
-# otherwise be misclassified as host-facing/access.
-SWITCHPORT_PREFIXES = ('GigabitEthernet', 'FastEthernet', 'TenGigabitEthernet', 'Ethernet', 'Port-channel')
+# otherwise be misclassified as host-facing/access. The multigigabit and 25G-and-up
+# names are IOS-XE (Catalyst 9000) forms with no equivalent on the lab's vios_l2
+# image; leaving them out doesn't error, it silently skips those ports, which reads
+# exactly like a clean run. AppGigabitEthernet is deliberately excluded: it's the
+# internal port to the switch's app-hosting container, not an external attack
+# surface, and access-port hardening there would disrupt app hosting rather than
+# protect anything.
+SWITCHPORT_PREFIXES = (
+    'GigabitEthernet', 'FastEthernet', 'TenGigabitEthernet', 'TwoGigabitEthernet',
+    'FiveGigabitEthernet', 'TwentyFiveGigE', 'FortyGigabitEthernet', 'HundredGigE',
+    'TwoHundredGigE', 'FourHundredGigE', 'Ethernet', 'Port-channel',
+)
 
 IPV4_VISIBILITY_POLICY = 'IPV4_VISIBILITY'
 NOIPV6_POLICY = 'DT-NOIPV6'

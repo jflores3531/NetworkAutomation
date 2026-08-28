@@ -52,8 +52,18 @@ import stig_common
 
 # Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd
-# otherwise be misclassified as host-facing/access.
-SWITCHPORT_PREFIXES = ('GigabitEthernet', 'FastEthernet', 'TenGigabitEthernet', 'Ethernet', 'Port-channel')
+# otherwise be misclassified as host-facing/access. The multigigabit and 25G-and-up
+# names are IOS-XE (Catalyst 9000) forms with no equivalent on the lab's vios_l2
+# image; leaving them out doesn't error, it silently skips those ports, which reads
+# exactly like a clean run. AppGigabitEthernet is deliberately excluded: it's the
+# internal port to the switch's app-hosting container, not an external attack
+# surface, and access-port hardening there would disrupt app hosting rather than
+# protect anything.
+SWITCHPORT_PREFIXES = (
+    'GigabitEthernet', 'FastEthernet', 'TenGigabitEthernet', 'TwoGigabitEthernet',
+    'FiveGigabitEthernet', 'TwentyFiveGigE', 'FortyGigabitEthernet', 'HundredGigE',
+    'TwoHundredGigE', 'FourHundredGigE', 'Ethernet', 'Port-channel',
+)
 
 
 def parse_switchports(cfg):
@@ -74,20 +84,37 @@ def parse_switchports(cfg):
     return access, trunk
 
 
+# V-220636 broadcast thresholds in bps, keyed by the alphabetic part of the
+# interface name. DISA's Fix Text only enumerates ranges for Gigabit (10M-1G)
+# and 10-Gigabit (100M-10G) ports; the faster Catalyst 9000 types below carry
+# the same ~2%-of-line-rate rule forward rather than inventing a second one.
+# Anything not listed - Port-channel, plain Ethernet - takes the Gigabit-range
+# default, since a bundled or negotiated speed isn't visible from the name.
+STORM_CONTROL_BPS = {
+    'TwoGigabitEthernet': 50000000,
+    'FiveGigabitEthernet': 100000000,
+    'TenGigabitEthernet': 200000000,
+    'TwentyFiveGigE': 500000000,
+    'FortyGigabitEthernet': 800000000,
+    'HundredGigE': 2000000000,
+    'TwoHundredGigE': 4000000000,
+    'FourHundredGigE': 8000000000,
+}
+STORM_CONTROL_BPS_DEFAULT = 20000000
+
+
 def storm_control_command(interface_name):
     """V-220636: DISA's own Fix Text notes storm control isn't supported on
     most FastEthernet interfaces - those are skipped entirely rather than
-    given a threshold that would likely just be rejected. The bps threshold
-    is scaled to DISA's allowed range by port speed (Gigabit: 10M-1G bps,
-    10-Gigabit: 100M-10G bps), both kept at ~2% of link speed. Port-channel/
-    plain Ethernet interfaces default to the Gigabit-range value - their
-    actual bundled/negotiated speed isn't visible from the interface name
-    alone."""
+    given a threshold that would likely just be rejected. Everything else gets
+    a threshold scaled to ~2% of link speed, looked up from the interface-name
+    prefix (see STORM_CONTROL_BPS)."""
     if interface_name.startswith('FastEthernet'):
         return None
-    if interface_name.startswith('TenGigabitEthernet'):
-        return 'storm-control broadcast level bps 200000000'
-    return 'storm-control broadcast level bps 20000000'
+    prefix_match = re.match(r'[A-Za-z-]+', interface_name)
+    prefix = prefix_match.group(0) if prefix_match else ''
+    bps = STORM_CONTROL_BPS.get(prefix, STORM_CONTROL_BPS_DEFAULT)
+    return f'storm-control broadcast level bps {bps}'
 
 
 def shutdown_access_ports(cfg, access_names):
