@@ -35,7 +35,8 @@ Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX
 - **`config_diff.py`** — Compare current running-config/VLANs against the last backup.
 - **`save_config.py`** — Save running-config to startup-config on one device or all. Run it *after* a harden pass and its audit, not as part of one — see [`docs/DESIGN.md`](docs/DESIGN.md).
 - **`stig_common.py`** — Shared audit engine: loads a DISA `.cklb` checklist, checks the device against it, reports PASS/FAIL/NOT AUTOMATED by severity.
-- **`l2_stig_audit.py`** — Audit against the IOS Switch L2S/NDM STIG. Full interface-scoped coverage, live discovery for root ports/VTP/user VLANs.
+- **`capture.py`** — Offline auditing. Every check is a pure function of command output, so an audit can read a capture file instead of a switch — for networks where the tooling can't be pointed at the devices directly. A malformed, truncated or partial capture is refused rather than audited, since a check handed empty text returns a verdict just as confidently as one handed real config.
+- **`l2_stig_audit.py`** — Audit against the IOS Switch L2S/NDM STIG. Full interface-scoped coverage, live discovery for root ports/VTP/user VLANs. `--from-capture` audits collected output; `--capture-to` records a live run so the two can be compared.
 - **`nxos_stig_audit.py`** — Audit against the NX-OS Switch L2S/NDM STIG.
 - **`ios_router_audit.py`** — Audit against the IOS Router NDM/RTR STIG. Most RTR rules need topology/policy context and report NOT AUTOMATED.
 - **`l2_stig_harden_global.py`** — Bulk L2S hardening: BPDU/Loop Guard, Rapid-PVST, UDLD, IGMP + DHCP snooping, archive logging, VTP, per-port access/trunk hardening, NTP, syslog, SNMPv3. **Run first** — the other `l2_stig_harden_*.py` scripts depend on it.
@@ -97,6 +98,13 @@ python3 l2_stig_audit.py S1
 python3 nxos_stig_audit.py NXCore1
 python3 ios_router_audit.py R1
 
+# Audit without connecting. Collect the five read-only show commands into a
+# file - a logged terminal session works - then audit it from anywhere.
+# --capture-to records a live run; auditing that file must give the same
+# report, which is how the offline path is checked against a real switch.
+python3 l2_stig_audit.py S1 --capture-to captures/S1.capture
+python3 l2_stig_audit.py S1 --from-capture captures/S1.capture
+
 # STIG hardening for an L2 switch - run in this order:
 python3 l2_stig_harden_global.py S1 # bulk fixes, run first
 python3 l2_stig_harden_ipsg.py S1   # IP Source Guard - can drop a statically-addressed host, see Notes
@@ -125,6 +133,9 @@ python3 save_config.py            # or every device in the inventory
 # Optional, non-STIG
 python3 l2_quiet_console.py S1      # quiet the console during interactive config work
 python3 l2_device_tracking.py S1    # IOS-XE only, host IP visibility
+
+# Tests - no framework, no device needed
+python3 tests/test_capture.py
 ```
 
 ## Notes

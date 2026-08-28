@@ -12,7 +12,8 @@ SEVERITY_ORDER = {'high': 0, 'medium': 1, 'low': 2}
 
 
 def run_stig_audit(device_name, device_info, checklist_path, checks, title, username, password,
-                    not_automated_note='need manual review or external infrastructure'):
+                    not_automated_note='need manual review or external infrastructure',
+                    session=None):
     """Connect to a device, check its running-config against a DISA STIG checklist's
     rules using `checks` (group_id -> predicate(running_config) -> bool, or
     -> (bool, reason) to show why a rule passed/failed, or -> (None, reason)
@@ -22,15 +23,24 @@ def run_stig_audit(device_name, device_info, checklist_path, checks, title, user
     automatable - e.g. a check that can determine NOT APPLICABLE from config
     text alone but needs manual review, like a live command's output, the
     rest of the time), and print a PASS/FAIL/NOT APPLICABLE/NOT AUTOMATED
-    report. Rules with no entry in `checks` are reported as NOT AUTOMATED."""
+    report. Rules with no entry in `checks` are reported as NOT AUTOMATED.
+
+    `session` overrides connecting to the device: pass a capture.CaptureSession
+    to audit text captured earlier instead of a live switch. Every check here
+    is a pure function of command output, so the verdicts are identical either
+    way - the only thing that changes is where the output came from. The
+    stand-in implements send_command() and a no-op disconnect(), which is why
+    the flow below needs no second branch."""
     with open(checklist_path, encoding='utf-8') as f:
         checklist = json.load(f)
     rules = [rule for stig in checklist['stigs'] for rule in stig['rules']]
     rules.sort(key=lambda rule: SEVERITY_ORDER.get(rule['severity'], 99))
 
-    net_connect = netauto.connect(device_name, device_info, username, password)
+    net_connect = session
     if net_connect is None:
-        raise SystemExit(1)
+        net_connect = netauto.connect(device_name, device_info, username, password)
+        if net_connect is None:
+            raise SystemExit(1)
 
     running_config = str(net_connect.send_command('show running-config'))
     net_connect.disconnect()

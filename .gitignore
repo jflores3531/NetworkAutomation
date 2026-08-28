@@ -6,6 +6,12 @@ backups/
 audit_logs/
 ansible/reports/
 
+# Device output collected for `l2_stig_audit.py --from-capture`. A capture is a
+# verbatim copy of a switch's running-config - real addressing, hostnames and
+# password hashes - and captures taken at work are someone else's production
+# network. This repository is public. Never commit one.
+captures/
+
 # Ad-hoc command files passed to push_config.py
 commands*.txt
 

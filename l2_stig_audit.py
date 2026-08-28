@@ -8,6 +8,7 @@ import ipaddress
 import re
 import os
 
+import capture
 import netauto
 import stig_common
 
@@ -950,17 +951,49 @@ CHECKS = {
 
 # Parse the target device from the command line
 parser = argparse.ArgumentParser(description='Audit a device against DISA STIG rules from New Layer 2 switch Checklist.cklb')
-parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. S1)')
+parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. S1) — with '
+                                   '--from-capture, any label to report the results under')
+parser.add_argument('--from-capture', metavar='PATH', dest='from_capture',
+                    help='Audit output captured from a device instead of connecting to it. The '
+                         'device needs no inventory.yaml entry and no credentials are prompted '
+                         'for. See capture.py for the commands a capture must cover.')
+parser.add_argument('--non-user-vlans', metavar='IDS', dest='non_user_vlans',
+                    help='Comma-separated VLAN IDs to treat as non-user (management, servers, '
+                         'unused), overriding inventory.yaml. Needed alongside --from-capture for '
+                         'a switch whose VLAN scheme this inventory does not describe.')
+parser.add_argument('--capture-to', metavar='PATH', dest='capture_to',
+                    help='During a live audit, also write everything read from the device to a '
+                         'capture file. Re-running with --from-capture against that file must '
+                         'produce an identical report, which is how the offline path is verified '
+                         'against a switch. Read-only; nothing is pushed.')
 args = parser.parse_args()
+
+if args.capture_to and args.from_capture:
+    print('--capture-to records a live audit and --from-capture replaces one; pick one.')
+    raise SystemExit(2)
 
 device_name = args.device
 
-# Load the target device from the YAML inventory
-all_devices = netauto.load_inventory()
-device_info = netauto.require_devices(all_devices, [device_name])[device_name]
-
-# Prompt for credentials
-username, password = netauto.get_credentials()
+# Offline runs skip both the inventory lookup and the credential prompt, so a
+# switch that isn't described in this repo's inventory.yaml — and shouldn't be,
+# if it's someone else's production kit — can still be audited. One session
+# object serves the live-discovery commands below and run_stig_audit's
+# running-config read, exactly as the single Netmiko pair does online.
+if args.from_capture:
+    device_info = None
+    username = password = None
+    try:
+        audit_session = capture.load(args.from_capture, capture.AUDIT_COMMANDS_L2S)
+    except capture.CaptureError as capture_error:
+        print(capture_error)
+        raise SystemExit(1)
+    discovery_connect = audit_session
+    print(f'Auditing capture {audit_session.source} as {device_name}\n')
+else:
+    audit_session = None
+    all_devices = netauto.load_inventory()
+    device_info = netauto.require_devices(all_devices, [device_name])[device_name]
+    username, password = netauto.get_credentials()
 
 # Discover genuine user VLANs (excludes management/servers/unused VLANs from
 # inventory.yaml's non_user_vlans/non_user_vlans_by_device, plus unused_vlan/
@@ -976,22 +1009,53 @@ username, password = netauto.get_credentials()
 # in running-config, see _vtp_password_check), and the live SNMPv3 user info
 # for V-220604/605 (same platform quirk, see _snmpv3_user_live_check). Uses a
 # separate connection since run_stig_audit manages its own for running-config.
-vlan_discovery_connect = netauto.connect(device_name, device_info, username, password,
+if audit_session is None:
+    discovery_connect = netauto.connect(device_name, device_info, username, password,
                                              purpose='live discovery: VTP password, root port, VLANs')
-if vlan_discovery_connect is None:
+    if discovery_connect is None:
+        raise SystemExit(1)
+
+# --non-user-vlans replaces the inventory's list outright rather than adding to
+# it, including the unused/native VLANs folded in below. Those are this lab's
+# VLAN 999/1000; carrying them onto a switch with a different numbering scheme
+# would quietly exclude two real user VLANs from the DHCP snooping and DAI
+# coverage checks, which is the false PASS this whole check exists to prevent.
+if args.non_user_vlans:
+    non_user_vlan_exclude = [vlan.strip() for vlan in args.non_user_vlans.split(',') if vlan.strip()]
+else:
+    non_user_vlan_exclude = list(netauto.load_non_user_vlans(device_name=device_name))
+    unused_vlan = netauto.load_unused_vlan()
+    native_vlan_id = netauto.load_native_vlan()
+    if unused_vlan:
+        non_user_vlan_exclude.append(unused_vlan)
+    if native_vlan_id:
+        non_user_vlan_exclude.append(native_vlan_id)
+
+try:
+    user_vlans = stig_common.discover_user_vlans(discovery_connect, exclude=non_user_vlan_exclude)
+    root_ports = stig_common.discover_root_port_interfaces(discovery_connect)
+    vtp_password_output = str(discovery_connect.send_command('show vtp password'))
+    snmp_user_output = str(discovery_connect.send_command('show snmp user'))
+    # discover_user_vlans/discover_root_port_interfaces don't hand back the raw
+    # text they parsed, so --capture-to re-reads those two commands rather than
+    # reshaping those helpers around recording. run_stig_audit opens its own
+    # connection for running-config, which is why that is read here as well:
+    # all five commands come off this one session so the capture is internally
+    # consistent, at the cost of reading running-config twice during a
+    # --capture-to run. All read-only, and only when explicitly asked for.
+    if args.capture_to:
+        capture.write(args.capture_to, {
+            'show running-config': str(discovery_connect.send_command('show running-config')),
+            'show vlan brief': str(discovery_connect.send_command('show vlan brief')),
+            'show spanning-tree': str(discovery_connect.send_command('show spanning-tree')),
+            'show vtp password': vtp_password_output,
+            'show snmp user': snmp_user_output,
+        })
+        print(f'Wrote capture to {args.capture_to}')
+except capture.CaptureError as capture_error:
+    print(capture_error)
     raise SystemExit(1)
-non_user_vlan_exclude = list(netauto.load_non_user_vlans(device_name=device_name))
-unused_vlan = netauto.load_unused_vlan()
-native_vlan_id = netauto.load_native_vlan()
-if unused_vlan:
-    non_user_vlan_exclude.append(unused_vlan)
-if native_vlan_id:
-    non_user_vlan_exclude.append(native_vlan_id)
-user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=non_user_vlan_exclude)
-root_ports = stig_common.discover_root_port_interfaces(vlan_discovery_connect)
-vtp_password_output = str(vlan_discovery_connect.send_command('show vtp password'))
-snmp_user_output = str(vlan_discovery_connect.send_command('show snmp user'))
-vlan_discovery_connect.disconnect()
+discovery_connect.disconnect()
 
 CHECKS['V-220633'] = lambda cfg: _dhcp_snooping_check(cfg, user_vlans)
 CHECKS['V-220635'] = lambda cfg: _vlan_range_covers_user_vlans(
@@ -1006,4 +1070,5 @@ stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,
     title='STIG audit',
     username=username, password=password,
+    session=audit_session,
 )
