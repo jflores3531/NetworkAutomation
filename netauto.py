@@ -9,9 +9,13 @@ from datetime import datetime
 from getpass import getpass
 
 import yaml
-from netmiko import ConnectHandler
-from netmiko.exceptions import NetmikoTimeoutException, NetmikoAuthenticationException
-from paramiko.ssh_exception import SSHException
+
+# netmiko is imported inside connect(), not here. Everything else in this
+# module is file/inventory handling, and the offline audit path
+# (l2_stig_audit.py --from-capture) never opens a connection - deferring the
+# import lets that path run on a machine with only Python + pyyaml installed,
+# which is exactly the situation on the work machine where captures are
+# collected via SecureCRT and no netmiko install is available or wanted.
 
 # Every path below is anchored to the directory this file lives in, not the
 # caller's working directory, so the scripts behave the same wherever they're
@@ -167,6 +171,12 @@ def connect(device_name, device_info, username, password, purpose=None):
     second session against the same device on purpose (live discovery, or
     verifying new logins still work), and without a label the repeated
     'Connecting to device: X' reads like a failed retry."""
+    # Deferred so the offline audit path works without netmiko installed -
+    # see the note at the top of this file.
+    from netmiko import ConnectHandler
+    from netmiko.exceptions import NetmikoTimeoutException, NetmikoAuthenticationException
+    from paramiko.ssh_exception import SSHException
+
     if purpose:
         print(f'Opening a second session to {device_name} ({purpose})')
     else:

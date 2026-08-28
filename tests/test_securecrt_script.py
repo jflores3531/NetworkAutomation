@@ -148,9 +148,15 @@ def test_strip_echo():
 
 
 def test_full_run(tmpdir):
-    print('\nfull run against a stubbed SecureCRT')
+    print('\nfull run against a stubbed SecureCRT (audit auto-runs, report opens suppressed)')
     path = os.path.join(tmpdir, 'run.capture')
-    fake = run_script(path=path)
+    capture_l2s.OPEN_REPORT = False
+    saved_checklist = capture_l2s.AUDIT_CHECKLIST
+    capture_l2s.AUDIT_CHECKLIST = 'ios'  # fixture expectations are IOS-keyed
+    try:
+        fake = run_script(path=path)
+    finally:
+        capture_l2s.AUDIT_CHECKLIST = saved_checklist
     check('paging disabled first', fake.Screen.sent[0] == 'terminal length 0',
           fake.Screen.sent[:2])
     check('all five commands sent',
@@ -159,6 +165,16 @@ def test_full_run(tmpdir):
     check('capture file written', os.path.exists(path))
     check('reported success', any('complete' in t.lower() for t, _ in fake.Dialog.messages),
           fake.Dialog.messages)
+
+    # The script now runs the real audit itself and writes the report next to
+    # the capture - the linear flow the work machine gets.
+    report = path + '_report.txt'
+    check('audit auto-ran, report written next to the capture', os.path.exists(report))
+    if os.path.exists(report):
+        text = open(report, encoding='utf-8').read()
+        check('report carries verdicts', 'passed,' in text and '65 rules' in text)
+        check('dialog carries the summary line',
+              any('out of' in m for _, m in fake.Dialog.messages), fake.Dialog.messages)
 
     if os.path.exists(path):
         session = capture.load(path)

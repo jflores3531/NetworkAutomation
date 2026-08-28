@@ -26,6 +26,22 @@ capture.py rather than imported. tests/test_securecrt_script.py asserts the two
 stay identical, so the duplication cannot drift silently.
 """
 
+# After a successful capture, the script tries to run the audit right here on
+# this machine and open the report - one linear flow: connect, Script > Run,
+# read the report. That works when this file still lives inside its repo
+# (audit script in the parent directory) and a Python that can run it exists.
+# When either is missing - e.g. only this one file was copied to a locked-down
+# work machine - the capture is still saved and the dialog says where to run
+# the audit instead. The audit needs Python + pyyaml only; netmiko is NOT
+# required for offline audits (netauto imports it lazily, only on connect).
+#
+# Which checklist the audit uses: '' = the audit's default (IOS XE - the work
+# target). Set to 'ios' when capturing the lab's vios_l2 switches.
+AUDIT_CHECKLIST = ''
+
+# Pop the finished report in the default .txt viewer. Tests turn this off.
+OPEN_REPORT = True
+
 # The five commands an L2S audit reads. Four of these exist because the state
 # is not in running-config: user VLANs, the STP root port, the VTP password,
 # and the SNMPv3 users. Keep in step with capture.AUDIT_COMMANDS_L2S.
@@ -195,10 +211,22 @@ def main():
                 'folder you can write to.'.format(path, error), 'Capture failed')
             return
 
-        crt.Dialog.MessageBox(
-            'Captured {0} commands from {1}.\n\nWritten to:\n{2}\n\nAudit it with:\n'
-            'python3 l2_stig_audit.py {1} --from-capture <file>'
-            .format(len(COMMANDS), hostname, path), 'Capture complete')
+        import os
+
+        report_path, detail = run_audit(path, hostname)
+        if report_path:
+            crt.Dialog.MessageBox(
+                'Captured {0} commands from {1} and audited the capture.\n\n'
+                '{2}\n\nCapture: {3}\nReport:  {4}'
+                .format(len(COMMANDS), hostname, detail, path, report_path),
+                'Capture and audit complete')
+            if OPEN_REPORT and hasattr(os, 'startfile'):
+                os.startfile(report_path)
+        else:
+            crt.Dialog.MessageBox(
+                'Captured {0} commands from {1}.\n\nWritten to:\n{2}\n\n'
+                'The audit did not run here - {3}'
+                .format(len(COMMANDS), hostname, path, detail), 'Capture complete')
     except Exception as error:  # surfaced in a dialog; SecureCRT hides tracebacks
         crt.Dialog.MessageBox('{0}\n\nNo capture was written.'.format(error), 'Capture failed')
     finally:
@@ -208,6 +236,48 @@ def main():
 def _timestamp():
     import time
     return time.strftime('%Y%m%d_%H%M%S')
+
+
+def run_audit(capture_path, hostname):
+    """Run l2_stig_audit.py --from-capture against the just-saved capture,
+    writing the report next to it. Returns (report_path, summary_line) on
+    success, (None, why_not) when the audit cannot run here - which is not a
+    capture failure, just a machine without the repo."""
+    import os.path
+    import subprocess
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(script_dir)
+    audit = os.path.join(repo, 'l2_stig_audit.py')
+    if not os.path.exists(audit):
+        return None, ('l2_stig_audit.py not found next to this script - run the audit '
+                      'on a machine with the repo:\n'
+                      'python l2_stig_audit.py {0} --from-capture <capture>'.format(hostname))
+
+    # Prefer the repo's own venv; fall back to whatever python is on PATH.
+    candidates = [os.path.join(repo, '.venv', 'Scripts', 'python.exe'),
+                  os.path.join(repo, '.venv', 'bin', 'python'),
+                  'python', 'python3']
+    checklist_args = ['--checklist', AUDIT_CHECKLIST] if AUDIT_CHECKLIST else []
+    last_error = ''
+    for python in candidates:
+        try:
+            result = subprocess.run(
+                [python, audit, hostname, '--from-capture', capture_path] + checklist_args,
+                capture_output=True, text=True, cwd=repo, timeout=180)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            last_error = '{0}: {1}'.format(python, error)
+            continue
+        if result.returncode != 0:
+            return None, ('the audit itself failed:\n'
+                          + (result.stdout + result.stderr).strip()[-500:])
+        report_path = capture_path + '_report.txt'
+        with open(report_path, 'w', encoding='utf-8') as report_file:
+            report_file.write(result.stdout)
+        summary = next((line for line in result.stdout.splitlines() if 'out of' in line),
+                       'report written')
+        return report_path, summary
+    return None, 'no runnable python found (tried the repo venv and PATH): ' + last_error
 
 
 # `crt` is supplied by SecureCRT at runtime, not imported. Declared here only so
