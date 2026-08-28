@@ -170,13 +170,30 @@ def main():
                     'hand and try again.'.format(command), 'Output truncated')
                 return
 
-        default_path = '{0}_{1}.capture'.format(hostname, _timestamp())
+        # The default is an absolute path in the user's home directory. A bare
+        # filename resolves against SecureCRT's working directory - its own
+        # install folder under Program Files - and the write dies with
+        # Permission denied after a perfectly good capture (found on the first
+        # real-terminal run, 2026-08-28, with all five commands captured).
+        import os.path
+        default_path = os.path.join(
+            os.path.expanduser('~'),
+            '{0}_{1}.capture'.format(hostname, _timestamp()))
         path = crt.Dialog.Prompt('Write the capture to:', 'Save capture', default_path)
         if not path:
             return
+        if not os.path.isabs(path):
+            path = os.path.join(os.path.expanduser('~'), path)
 
-        with open(path, 'w', encoding='utf-8') as capture_file:
-            capture_file.write(render(outputs))
+        try:
+            with open(path, 'w', encoding='utf-8') as capture_file:
+                capture_file.write(render(outputs))
+        except OSError as error:
+            crt.Dialog.MessageBox(
+                'Could not write {0}:\n{1}\n\nThe capture is intact in memory but '
+                'was not saved. Run the script again and give a full path to a '
+                'folder you can write to.'.format(path, error), 'Capture failed')
+            return
 
         crt.Dialog.MessageBox(
             'Captured {0} commands from {1}.\n\nWritten to:\n{2}\n\nAudit it with:\n'
