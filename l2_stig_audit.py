@@ -381,15 +381,16 @@ def _dhcp_snooping_check(cfg, user_vlans):
 # subnet, not just present. A "permit any" or out-of-subnet source doesn't
 # satisfy "controlling the flow of management information."
 def _acl_source_in_subnet(source_spec, subnet):
-    if source_spec.strip() == 'any':
+    source_spec = source_spec.strip()
+    if source_spec == 'any':
         return False
-    m = re.match(r'host (\S+)$', source_spec.strip())
+    m = re.match(r'host (\S+)$', source_spec)
     if m:
         try:
             return ipaddress.ip_address(m.group(1)) in subnet
         except ValueError:
             return False
-    m = re.match(r'(\S+)\s+(\S+)$', source_spec.strip())
+    m = re.match(r'(\S+)\s+(\S+)$', source_spec)
     if m:
         addr, wildcard = m.groups()
         try:
@@ -398,31 +399,71 @@ def _acl_source_in_subnet(source_spec, subnet):
             return acl_net.subnet_of(subnet)
         except ValueError:
             return False
-    return False
+    # Bare address with no wildcard - a standard ACL's implicit single host
+    # (`permit 10.1.1.5`). Extended ACLs never produce this shape.
+    try:
+        return ipaddress.ip_address(source_spec) in subnet
+    except ValueError:
+        return False
+
+
+# Standard ACL numbers per IOS: 1-99 and 1300-1999. Everything else applied
+# with access-class is treated as extended.
+def _numbered_acl_kind(name):
+    if not name.isdigit():
+        return None
+    number = int(name)
+    return 'standard' if (1 <= number <= 99 or 1300 <= number <= 1999) else 'extended'
 
 
 def _vty_acl_blocks(cfg):
-    """Return a list of (line_vty_chunk, acl_name_or_None, acl_block_or_None)
-    for EVERY 'line vty ...' stanza in the config - handles split vty ranges
-    (e.g. 'line vty 0 1' / 'line vty 2 4', a real DISA-endorsed pattern shown
-    in the checklist's own V-220570 example). The old version of this
-    function stopped at the first 'line vty' chunk that had an access-class
-    applied, silently ignoring any other vty range that lacked one - a
-    false PASS if a split range left one segment wide open."""
+    """Return (line_vty_chunk, acl_name_or_None, acl_block_or_None, kind) for
+    EVERY 'line vty ...' stanza - handles split vty ranges (e.g. 'line vty 0 1'
+    / 'line vty 2 4', a real DISA-endorsed pattern shown in the checklist's own
+    V-220570 example). The old version stopped at the first 'line vty' chunk
+    that had an access-class applied, silently ignoring any other vty range
+    that lacked one - a false PASS if a split range left one segment open.
+
+    `kind` is 'standard' or 'extended', because the two spell their entries
+    differently and the callers have to parse accordingly. Both matter: the
+    IOS book's V-220575 fix text builds an extended ACL, the IOS XE book's
+    V-220523 builds a *standard* one for the same requirement. Only matching
+    extended would false-FAIL a switch configured exactly per DISA's own IOS
+    XE instructions. Numbered ACLs are supported too - they are common on real
+    switches even though neither book's example uses one, and their entries
+    live as scattered top-level lines rather than a block."""
     results = []
     for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
         if not chunk.startswith('line vty'):
             continue
         m = re.search(r'access-class (\S+) in', chunk)
         acl_name = m.group(1) if m else None
-        acl_block = None
+        acl_block, kind = None, None
         if acl_name:
             for c2 in re.split(r'^(?=\S)', cfg, flags=re.M):
-                if c2.startswith(f'ip access-list extended {acl_name}'):
-                    acl_block = c2
+                m2 = re.match(rf'ip access-list (standard|extended) {re.escape(acl_name)}\s*$',
+                              c2.splitlines()[0] if c2.splitlines() else '')
+                if m2:
+                    acl_block, kind = c2, m2.group(1)
                     break
-        results.append((chunk, acl_name, acl_block))
+            if acl_block is None:
+                numbered = re.findall(rf'^access-list {re.escape(acl_name)} (.+)$', cfg, re.M)
+                if numbered:
+                    acl_block = '\n'.join(numbered)
+                    kind = _numbered_acl_kind(acl_name) or 'extended'
+        results.append((chunk, acl_name, acl_block, kind))
     return results
+
+
+def _acl_permit_sources(acl_block, kind):
+    """Source specs from an ACL's permit entries, in whichever syntax the ACL
+    uses: `permit ip <source> any` for extended, `permit <source>` for
+    standard (no protocol, no destination)."""
+    if kind == 'standard':
+        return [s.strip() for s in re.findall(
+            r'^\s*(?:\d+\s+)?permit\s+(.+?)\s*$', acl_block, re.M)]
+    return [s.strip() for s in re.findall(
+        r'^\s*(?:\d+\s+)?permit ip (.+?)\s+any\s*$', acl_block, re.M)]
 
 
 def _vty_management_acl_check(cfg, subnet_str):
@@ -435,23 +476,26 @@ def _vty_management_acl_check(cfg, subnet_str):
         return False, 'no `line vty` block found'
 
     problems, compliant = [], []
-    for chunk, acl_name, acl_block in vty_blocks:
+    for chunk, acl_name, acl_block, kind in vty_blocks:
         header = chunk.splitlines()[0].strip()
         if not acl_name:
             problems.append(f'{header}: no `access-class <name> in` applied')
             continue
         if acl_block is None:
-            problems.append(f'{header}: `access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found')
+            problems.append(f'{header}: `access-class {acl_name} in` applied, but no matching '
+                            f'`ip access-list standard|extended {acl_name}` block or '
+                            f'`access-list {acl_name} ...` lines found')
             continue
-        permits = re.findall(r'^\s*(?:\d+\s+)?permit ip (.+?)\s+any\s*$', acl_block, re.M)
+        permits = _acl_permit_sources(acl_block, kind)
+        shape = 'permit <source>' if kind == 'standard' else 'permit ip <source> any'
         if not permits:
-            problems.append(f'{header}: `{acl_name}` has no `permit ip <source> any` lines')
+            problems.append(f'{header}: {kind} ACL `{acl_name}` has no `{shape}` lines')
             continue
         bad = [src for src in permits if not _acl_source_in_subnet(src, subnet)]
         if bad:
             problems.append(f'{header}: `{acl_name}` permits source(s) outside {subnet_str}: {", ".join(bad)}')
             continue
-        compliant.append(f'{header}: `{acl_name}` permits only sources within {subnet_str}: {", ".join(permits)}')
+        compliant.append(f'{header}: {kind} ACL `{acl_name}` permits only sources within {subnet_str}: {", ".join(permits)}')
     if problems:
         return False, '; '.join(problems)
     return True, '; '.join(compliant)
@@ -469,18 +513,29 @@ def _vty_acl_log_input_check(cfg):
         return False, 'no `line vty` block found'
 
     problems, compliant = [], []
-    for chunk, acl_name, acl_block in vty_blocks:
+    for chunk, acl_name, acl_block, kind in vty_blocks:
         header = chunk.splitlines()[0].strip()
         if not acl_name:
             problems.append(f'{header}: no `access-class <name> in` applied')
             continue
         if acl_block is None:
-            problems.append(f'{header}: `access-class {acl_name} in` applied, but no `ip access-list extended {acl_name}` block found')
+            problems.append(f'{header}: `access-class {acl_name} in` applied, but no matching '
+                            f'`ip access-list standard|extended {acl_name}` block or '
+                            f'`access-list {acl_name} ...` lines found')
             continue
-        if not re.search(r'^\s*(?:\d+\s+)?deny\s+ip any any log-input\s*$', acl_block, re.M):
-            problems.append(f'{header}: `{acl_name}` has no `deny ip any any log-input` line')
+        # A standard ACL has no protocol or destination to name, so its logged
+        # trailing deny is `deny any log` - `log-input` is accepted but not
+        # required there, since standard ACLs on vty lines commonly only
+        # support `log`. Extended keeps requiring log-input, which is what the
+        # rule's own fix text configures.
+        if kind == 'standard':
+            pattern, shape = r'^\s*(?:\d+\s+)?deny\s+any\s+log(-input)?\s*$', 'deny any log'
+        else:
+            pattern, shape = r'^\s*(?:\d+\s+)?deny\s+ip any any log-input\s*$', 'deny ip any any log-input'
+        if not re.search(pattern, acl_block, re.M):
+            problems.append(f'{header}: {kind} ACL `{acl_name}` has no `{shape}` line')
             continue
-        compliant.append(f'{header}: `{acl_name}` has a logged trailing deny (`deny ip any any log-input`)')
+        compliant.append(f'{header}: `{acl_name}` has a logged trailing deny (`{shape}`)')
     if problems:
         return False, '; '.join(problems)
     return True, '; '.join(compliant)
@@ -573,17 +628,30 @@ def _single_local_account_check(cfg):
     return True, f'exactly 1 local account (`{usernames[0]}`), configured as fallback after the AAA server group'
 
 
-# V-220617: at least 2 RADIUS servers, actually used as the primary auth source
-# (not just configured but unused). Checks both the classic single-line
-# 'radius-server host <ip>' form and the modern block-style 'radius server
-# <name>' / 'address ipv4 <ip> ...' form - confirmed live that this lab's
-# vios_l2 image only accepts the modern form ("radius-server host" is
-# rejected outright), but other platforms may still use the classic one.
+# V-220617 / IOS XE V-220565: at least 2 RADIUS servers, actually used as the
+# primary auth source (not just configured but unused). Checks both the classic
+# single-line 'radius-server host <ip>' form and the modern block-style
+# 'radius server <name>' / 'address ipv4 <ip> ...' form - confirmed live that
+# this lab's vios_l2 image only accepts the modern form ("radius-server host"
+# is rejected outright), but other platforms may still use the classic one.
+#
+# The method list may name the built-in `radius` group or a named group
+# defined with `aaa group server radius <name>`. The IOS XE book's fix text
+# uses a named group throughout ("aaa group server radius radius_group" /
+# "aaa authentication login console group radius_group local"), so requiring
+# the literal word `radius` as the group would false-FAIL a switch configured
+# exactly per DISA's own IOS XE instructions. A named group is only accepted
+# when it is actually defined, so an arbitrary word cannot pass for one.
 def _radius_redundancy_check(cfg):
     if 'aaa new-model' not in cfg:
         return False, 'missing `aaa new-model`'
-    if not re.search(r'^aaa authentication \S+ \S+ group radius( local)?\s*$', cfg, re.M):
-        return False, 'missing an `aaa authentication ... group radius ...` line using RADIUS as the primary source'
+    named_groups = set(re.findall(r'^aaa group server radius (\S+)', cfg, re.M))
+    method_groups = set(re.findall(r'^aaa authentication \S+ \S+ group (\S+)', cfg, re.M))
+    if not (method_groups & ({'radius'} | named_groups)):
+        detail = f' (defined RADIUS groups: {", ".join(sorted(named_groups))})' if named_groups else ''
+        return False, ('missing an `aaa authentication ... group radius ...` line using RADIUS as '
+                       f'the primary source, or a `group <name>` naming a defined '
+                       f'`aaa group server radius` group{detail}')
     legacy_servers = re.findall(r'^radius-server host (\S+)', cfg, re.M) + re.findall(r'^radius host (\S+)', cfg, re.M)
     modern_servers = []
     for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
