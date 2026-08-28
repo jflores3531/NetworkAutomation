@@ -35,6 +35,7 @@ Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX
 - **`config_diff.py`** — Compare current running-config/VLANs against the last backup.
 - **`save_config.py`** — Save running-config to startup-config on one device or all. Run it *after* a harden pass and its audit, not as part of one — see [`docs/DESIGN.md`](docs/DESIGN.md).
 - **`stig_common.py`** — Shared audit engine: loads a DISA `.cklb` checklist, checks the device against it, reports PASS/FAIL/NOT AUTOMATED by severity.
+- **`securecrt/capture_l2s.py`** — Runs *inside* SecureCRT (Script → Run) against an already-open session, sending the five read-only show commands and writing a capture file. Standalone by design: no netmiko, no repository, nothing but SecureCRT's own embedded Python, since the machine that reaches the switches may have nothing else installed.
 - **`capture.py`** — Offline auditing. Every check is a pure function of command output, so an audit can read a capture file instead of a switch — for networks where the tooling can't be pointed at the devices directly. A malformed, truncated or partial capture is refused rather than audited, since a check handed empty text returns a verdict just as confidently as one handed real config.
 - **`l2_stig_audit.py`** — Audit against the IOS Switch L2S/NDM STIG. Full interface-scoped coverage, live discovery for root ports/VTP/user VLANs. `--from-capture` audits collected output; `--capture-to` records a live run so the two can be compared; `--checklist ios-xe` audits against the IOS XE STIG instead.
 - **`ios_xe_rule_map.py`** — The IOS and IOS XE switch STIGs share no rule IDs, but 58 of the IOS XE STIG's 64 rules are the same requirement as an IOS rule already checked here. This maps them, accepting a pair only when the literal "this is a finding" condition matches in both. Four rules are deliberately excluded and report NOT AUTOMATED — reusing their IOS check would answer a different question.
@@ -142,6 +143,7 @@ python3 l2_device_tracking.py S1    # IOS-XE only, host IP visibility
 # Tests - no framework, no device needed
 python3 tests/test_capture.py
 python3 tests/test_ios_xe_map.py
+python3 tests/test_securecrt_script.py
 ```
 
 ## Notes
