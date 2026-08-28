@@ -94,11 +94,11 @@ def classify_switchports(cfg):
     Checks for the VLAN assignment, not 'switchport mode access' -
     confirmed live that 'switchport mode access' alone doesn't reliably
     show up in NX-OS running-config (default mode, same omission pattern
-    IOS uses for VLAN 1), so it isn't a trustworthy signal on its own. Per
-    Jorge's policy for these core switches: unless a port is already
-    configured as access, it should be trunk - these are the switch's
-    interconnect/uplink ports, or ports left in NX-OS's default negotiated
-    mode. Returns (access_names, non_access_names)."""
+    IOS uses for VLAN 1), so it isn't a trustworthy signal on its own. The
+    policy for these core switches: unless a port is already configured as
+    access, it should be trunk - these are the switch's interconnect/uplink
+    ports, or ports left in NX-OS's default negotiated mode.
+    Returns (access_names, non_access_names)."""
     access, non_access = [], []
     for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
         m = re.match(r'interface (\S+)', chunk)

@@ -874,7 +874,7 @@ CHECKS = {
     # accounts from SNMP-only shadow entries. Don't re-attempt a heuristic here
     # without new evidence - two attempts (cross-referencing snmp-server user
     # names, then the `username <name> passphrase lifetime` line) were tried and
-    # reverted; Jorge explicitly chose NOT AUTOMATED over a single-example guess.
+    # reverted. NOT AUTOMATED was chosen deliberately over a single-example guess.
     'V-220475': _aaa_accounting_check,
     'V-220476': _aaa_accounting_check,
     'V-220477': _aaa_accounting_check,

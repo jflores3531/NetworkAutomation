@@ -16,10 +16,10 @@ Three policies, all independent (none replaces another):
 DT-NOIPV6 and NOTRACK are both attached at VLAN scope ('vlan configuration
 <id>' / 'device-tracking attach-policy <name>'), to every VLAN except the
 default (1) and native/unused (inventory.yaml's native_vlan/unused_vlan).
-Per Jorge: IOS-XE allows multiple attach-policy lines under the same VLAN
-target and resolves conflicts by system-determined priority (see the Cisco
-FHS/SISF Configuration Guide) - not verifiable live in this lab, since none
-of it does anything on the classic-IOS switches available here."""
+IOS-XE allows multiple attach-policy lines under the same VLAN target and
+resolves conflicts by system-determined priority (see the Cisco FHS/SISF
+Configuration Guide) - not verifiable live in this lab, since none of it does
+anything on the classic-IOS switches available here."""
 
 import argparse
 import re
