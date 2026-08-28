@@ -8,7 +8,7 @@ Run this from an already-connected, already-authenticated SecureCRT session
 writes their output to a capture file, which l2_stig_audit.py then audits
 offline:
 
-    python3 l2_stig_audit.py SW01 --checklist ios-xe --from-capture <file>
+    python3 l2_stig_audit.py SW01 --from-capture <file>
 
 Nothing is configured and nothing is saved. The only command sent that is not a
 show is `terminal length 0`, which disables paging for this session only - it is
@@ -180,7 +180,7 @@ def main():
 
         crt.Dialog.MessageBox(
             'Captured {0} commands from {1}.\n\nWritten to:\n{2}\n\nAudit it with:\n'
-            'python3 l2_stig_audit.py {1} --checklist ios-xe --from-capture <file>'
+            'python3 l2_stig_audit.py {1} --from-capture <file>'
             .format(len(COMMANDS), hostname, path), 'Capture complete')
     except Exception as error:  # surfaced in a dialog; SecureCRT hides tracebacks
         crt.Dialog.MessageBox('{0}\n\nNo capture was written.'.format(error), 'Capture failed')

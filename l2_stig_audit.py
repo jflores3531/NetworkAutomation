@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 """Audit a device's running-config against the DISA Cisco IOS XE Switch
-L2S/NDM STIG (--checklist ios-xe, IOS-XE Checklist.cklb) or the Cisco IOS
-Switch L2S/NDM STIG (the default, New Layer 2 switch Checklist.cklb),
-reporting PASS/FAIL for the rules that can be checked from config text alone.
-The two STIGs share no rule IDs but mostly the same requirements - the same
-checks serve both, re-keyed through ios_xe_rule_map.py."""
+L2S/NDM STIG (the default, IOS-XE Checklist.cklb) or the Cisco IOS Switch
+L2S/NDM STIG (--checklist ios, New Layer 2 switch Checklist.cklb - what the
+lab's vios_l2 switches are), reporting PASS/FAIL for the rules that can be
+checked from config text alone. The two STIGs share no rule IDs but mostly
+the same requirements - the same checks serve both, re-keyed through
+ios_xe_rule_map.py."""
 
 import argparse
 import ipaddress
@@ -971,12 +972,13 @@ parser.add_argument('--non-user-vlans', metavar='IDS', dest='non_user_vlans',
                     help='Comma-separated VLAN IDs to treat as non-user (management, servers, '
                          'unused), overriding inventory.yaml. Needed alongside --from-capture for '
                          'a switch whose VLAN scheme this inventory does not describe.')
-parser.add_argument('--checklist', choices=('ios', 'ios-xe'), default='ios',
+parser.add_argument('--checklist', choices=('ios', 'ios-xe'), default='ios-xe',
                     help='Which DISA checklist to audit against. The IOS and IOS XE switch '
-                         'STIGs share no rule IDs at all, so auditing an IOS XE switch against '
-                         "the IOS checklist reports every rule NOT AUTOMATED. 'ios-xe' re-keys "
-                         'the same checks onto the IOS XE numbering — see ios_xe_rule_map.py '
-                         'for which rules carry over and which deliberately do not. Default: ios.')
+                         'STIGs share no rule IDs at all, so auditing against the wrong one '
+                         "reports every rule NOT AUTOMATED. 'ios-xe' re-keys the same checks "
+                         'onto the IOS XE numbering — see ios_xe_rule_map.py for which rules '
+                         "carry over and which deliberately do not. Default: ios-xe (the work "
+                         "deployment target); pass 'ios' for the lab's vios_l2 switches.")
 parser.add_argument('--capture-to', metavar='PATH', dest='capture_to',
                     help='During a live audit, also write everything read from the device to a '
                          'capture file. Re-running with --from-capture against that file must '

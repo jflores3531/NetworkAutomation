@@ -9,8 +9,11 @@
 # delegate_to: localhost because the scripts do their own Netmiko connection
 # (via netauto.py) - Ansible here is just a fan-out/report-collection driver,
 # not the thing connecting to the device.
+# audit_args carries per-group script flags - the l2_switches group passes
+# '--checklist ios' because l2_stig_audit.py now defaults to the IOS XE STIG
+# (the work deployment target) while the lab's vios_l2 switches are IOS.
 - name: Run {{ audit_script }} for {{ inventory_hostname }}
-  command: python3 {{ audit_script }} {{ inventory_hostname }}
+  command: python3 {{ audit_script }} {{ inventory_hostname }} {{ audit_args | default('') }}
   args:
     # The scripts resolve checklists/, inventory.yaml and secrets.yaml against
     # netauto.PROJECT_ROOT now rather than the working directory, so this is

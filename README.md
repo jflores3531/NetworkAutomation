@@ -38,7 +38,7 @@ Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX
 - **`lab/rebuild_lab.py`** — Rebuilds the GNS3 lab from `lab/topology.yaml` (nodes, links, the automation container's SSH/repo/package provisioning, the switch's base config) through the GNS3 REST API and device consoles. Written after losing the lab VM once: the next loss costs one command instead of an afternoon. Idempotent — run against the live lab it verifies everything and changes nothing; `--verify` checks without touching. Disk images are the one thing it can't restore.
 - **`securecrt/capture_l2s.py`** — Runs *inside* SecureCRT (Script → Run) against an already-open session, sending the five read-only show commands and writing a capture file. Standalone by design: no netmiko, no repository, nothing but SecureCRT's own embedded Python, since the machine that reaches the switches may have nothing else installed.
 - **`capture.py`** — Offline auditing. Every check is a pure function of command output, so an audit can read a capture file instead of a switch — for networks where the tooling can't be pointed at the devices directly. A malformed, truncated or partial capture is refused rather than audited, since a check handed empty text returns a verdict just as confidently as one handed real config.
-- **`l2_stig_audit.py`** — Audit against the IOS Switch L2S/NDM STIG. Full interface-scoped coverage, live discovery for root ports/VTP/user VLANs. `--from-capture` audits collected output; `--capture-to` records a live run so the two can be compared; `--checklist ios-xe` audits against the IOS XE STIG instead.
+- **`l2_stig_audit.py`** — Audit against the IOS XE Switch L2S/NDM STIG (the default) or the IOS Switch one (`--checklist ios` — what the lab's vios_l2 switches are). Full interface-scoped coverage, live discovery for root ports/VTP/user VLANs. `--from-capture` audits collected output; `--capture-to` records a live run so the two can be compared.
 - **`ios_xe_rule_map.py`** — The IOS and IOS XE switch STIGs share no rule IDs, but 58 of the IOS XE STIG's 64 rules are the same requirement as an IOS rule already checked here. This maps them, accepting a pair only when the literal "this is a finding" condition matches in both. Four rules are deliberately excluded and report NOT AUTOMATED — reusing their IOS check would answer a different question.
 - **`nxos_stig_audit.py`** — Audit against the NX-OS Switch L2S/NDM STIG.
 - **`ios_router_audit.py`** — Audit against the IOS Router NDM/RTR STIG. Most RTR rules need topology/policy context and report NOT AUTOMATED.
@@ -96,8 +96,11 @@ python3 backup_config.py
 # Diff current running-config against last backup
 python3 config_diff.py R1
 
-# STIG audit (IOS switch, NX-OS switch, IOS router)
-python3 l2_stig_audit.py S1
+# STIG audit. l2_stig_audit.py defaults to the IOS XE STIG (the deployment
+# target); the lab's vios_l2 switches are IOS, hence --checklist ios there.
+# The two STIGs share no rule IDs, so the wrong checklist reports every rule
+# NOT AUTOMATED.
+python3 l2_stig_audit.py S1 --checklist ios
 python3 nxos_stig_audit.py NXCore1
 python3 ios_router_audit.py R1
 
@@ -105,12 +108,11 @@ python3 ios_router_audit.py R1
 # file - a logged terminal session works - then audit it from anywhere.
 # --capture-to records a live run; auditing that file must give the same
 # report, which is how the offline path is checked against a real switch.
-python3 l2_stig_audit.py S1 --capture-to captures/S1.capture
-python3 l2_stig_audit.py S1 --from-capture captures/S1.capture
+python3 l2_stig_audit.py S1 --checklist ios --capture-to captures/S1.capture
+python3 l2_stig_audit.py S1 --checklist ios --from-capture captures/S1.capture
 
-# Audit an IOS XE switch. The IOS and IOS XE STIGs share no rule IDs, so
-# without this the IOS checklist reports all 64 rules NOT AUTOMATED.
-python3 l2_stig_audit.py SW01 --checklist ios-xe --from-capture captures/SW01.capture
+# An IOS XE switch needs no flag - that checklist is the default.
+python3 l2_stig_audit.py SW01 --from-capture captures/SW01.capture
 
 # STIG hardening for an L2 switch - run in this order:
 python3 l2_stig_harden_global.py S1 # bulk fixes, run first

@@ -117,11 +117,11 @@ def test_translate():
 
 
 def test_end_to_end(tmpdir):
-    print('\nend-to-end: --checklist ios-xe against a capture')
+    print('\nend-to-end: the IOS XE checklist, exercised as the DEFAULT (no flag)')
     path = capture.write(os.path.join(tmpdir, 'xe.capture'), OUTPUTS)
     result = subprocess.run(
         [sys.executable, os.path.join(PROJECT, 'l2_stig_audit.py'), 'TESTSW01',
-         '--from-capture', path, '--checklist', 'ios-xe', '--non-user-vlans', '1,10,999,1000'],
+         '--from-capture', path, '--non-user-vlans', '1,10,999,1000'],
         capture_output=True, text=True, cwd=PROJECT, timeout=120)
     check('script exits cleanly', result.returncode == 0, result.stderr[-1500:])
     check('audits the IOS XE checklist', '64 rules' in result.stdout,
@@ -140,12 +140,13 @@ def test_end_to_end(tmpdir):
         check(f'{excluded} reports NOT AUTOMATED as intended',
               re.search(rf'NOT AUTOMATED\s+{excluded}\b', result.stdout) is not None)
 
-    print('\n  the IOS checklist still audits unchanged')
+    print('\n  --checklist ios still audits the IOS checklist unchanged')
     baseline = subprocess.run(
         [sys.executable, os.path.join(PROJECT, 'l2_stig_audit.py'), 'TESTSW01',
+         '--checklist', 'ios',
          '--from-capture', path, '--non-user-vlans', '1,10,999,1000'],
         capture_output=True, text=True, cwd=PROJECT, timeout=120)
-    check('default is still the IOS checklist', '65 rules' in baseline.stdout)
+    check('--checklist ios selects the IOS checklist', '65 rules' in baseline.stdout)
     check('IOS run reports IOS ids', 'V-220630' in baseline.stdout)
 
 
