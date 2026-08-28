@@ -80,6 +80,21 @@ def test_no_double_mapping():
     check('EXCLUDED and RULE_MAP are disjoint', not overlap, overlap)
 
 
+# Pairs whose finding conditions legitimately differ, each with the reason.
+# The 0.90 gate below stays strict for everything else - an exception has to
+# be argued here rather than by lowering the threshold, so a future bad
+# mapping still fails loudly.
+DOCUMENTED_EXCEPTIONS = {
+    'V-220670': (
+        "IOS V-220644's Check Content is a byte-identical copy of its own "
+        'V-220643 (trunk pruning), including the finding sentence - the IOS book '
+        'carries two differently-titled rules with one check text between them, '
+        'and the IOS XE book fixes it. Both rules are about a management SVI on '
+        'the default VLAN, which is what the shared predicate tests.'
+    ),
+}
+
+
 def test_finding_conditions_agree():
     print('\nmapped pairs share their finding condition')
     worst, drifted = ('', 1.0), []
@@ -89,12 +104,29 @@ def test_finding_conditions_agree():
             drifted.append(f'{xe_id}->{ios_id} (no finding clause)')
             continue
         score = difflib.SequenceMatcher(None, a, b).ratio()
+        if xe_id in DOCUMENTED_EXCEPTIONS:
+            continue
         if score < worst[1]:
             worst = (f'{xe_id}->{ios_id}', score)
         if score < 0.90:
             drifted.append(f'{xe_id}->{ios_id} ({score:.2f})')
-    check('no mapped pair has drifted below 0.90', not drifted, drifted)
+    check('no undocumented pair has drifted below 0.90', not drifted, drifted)
     print(f'       weakest accepted pair: {worst[0]} at {worst[1]:.2f}')
+
+    # The exceptions must still be real mappings, and must still be exceptional -
+    # if DISA ever fixes the IOS text, this stops being needed and should go.
+    for xe_id, reason in DOCUMENTED_EXCEPTIONS.items():
+        check(f'{xe_id} is actually mapped', xe_id in ios_xe_rule_map.RULE_MAP)
+        if xe_id in ios_xe_rule_map.RULE_MAP:
+            ios_id = ios_xe_rule_map.RULE_MAP[xe_id]
+            score = difflib.SequenceMatcher(
+                None, finding_condition(XE[xe_id]), finding_condition(IOS[ios_id])).ratio()
+            check(f'{xe_id} still needs its exception (would fail the gate at {score:.2f})',
+                  score < 0.90,
+                  'conditions now agree - drop it from DOCUMENTED_EXCEPTIONS')
+    check('V-220644 and V-220643 really do share IOS check text (the reason for the exception)',
+          difflib.SequenceMatcher(None, finding_condition(IOS['V-220644']),
+                                  finding_condition(IOS['V-220643'])).ratio() > 0.99)
 
 
 def test_translate():
@@ -139,6 +171,13 @@ def test_end_to_end(tmpdir):
     for excluded in ios_xe_rule_map.EXCLUDED:
         check(f'{excluded} reports NOT AUTOMATED as intended',
               re.search(rf'NOT AUTOMATED\s+{excluded}\b', result.stdout) is not None)
+
+    # IOS XE-only checks: rules with no IOS counterpart to re-key, wired
+    # through l2_stig_audit.IOS_XE_ONLY_CHECKS rather than the map.
+    check('V-220554 gets a real verdict, not the IOS permanent finding',
+          re.search(r'(PASS|FAIL)\s+V-220554\b', result.stdout) is not None
+          and 'NOT AUTOMATED  V-220554' not in result.stdout)
+    check('V-220567 gets a real verdict', 'NOT AUTOMATED  V-220567' not in result.stdout)
 
     print('\n  --checklist ios still audits the IOS checklist unchanged')
     baseline = subprocess.run(

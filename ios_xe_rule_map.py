@@ -19,6 +19,22 @@ matching on titles paired them with each other's rules.
 A mapping is a claim that one predicate answers both rules. Where that claim
 does not hold, the rule is left out and reported NOT AUTOMATED, which is an
 honest verdict rather than a wrong one. See EXCLUDED below.
+
+One pair needed the books read against each other rather than each on its own.
+V-220670 (IOS XE) and V-220644 (IOS) share a title - "must not use the default
+VLAN for management traffic" - but their Check Content disagrees: IOS XE tests
+for a management SVI on the default VLAN, while IOS describes pruning the
+default VLAN from trunk links. The IOS text is a copy-paste of its own
+V-220643, byte-identical including the finding sentence, so the IOS book
+carries two differently-titled rules with one check text between them. The IOS
+XE book fixes it. The pair is therefore mapped: l2_stig_audit's
+_no_management_on_default_vlan tests what both rules are actually for, and the
+newer book is the evidence for that reading rather than an inference.
+
+Rules the IOS XE book asks differently enough to need their own check live in
+l2_stig_audit.IOS_XE_ONLY_CHECKS, not here - there is no IOS rule to map them
+to. Currently V-220554 (NTP, materially weaker than IOS V-220606) and
+V-220567 (PKI, no IOS L2S counterpart at all).
 """
 
 # IOS XE rule -> the IOS rule whose check answers it identically.
@@ -78,6 +94,7 @@ RULE_MAP = {
     'V-220667': 'V-220641',  # disabled ports assigned to an unused VLAN
     'V-220668': 'V-220642',  # default VLAN not assigned to host-facing ports
     'V-220669': 'V-220643',  # default VLAN pruned from trunks not carrying it
+    'V-220670': 'V-220644',  # default VLAN not used for management access
     'V-220671': 'V-220645',  # user-facing ports configured as access ports
     'V-220672': 'V-220646',  # native VLAN assigned to an ID other than default
     'V-220673': 'V-220647',  # no switchports assigned to the native VLAN
@@ -88,15 +105,6 @@ RULE_MAP = {
 # NOT AUTOMATED until an IOS XE-specific check is written and, ideally, seen
 # against a real IOS XE switch.
 EXCLUDED = {
-    'V-220554': (
-        'NTP authentication. IOS asks for "authentication with FIPS-compliant '
-        'algorithms" (V-220606), which IOS cannot satisfy - that is why the IOS '
-        'check is coded as a permanent finding. IOS XE asks only for '
-        'authentication "that is cryptographically based", which MD5 arguably '
-        'meets. Reusing the IOS check would report a permanent FAIL against a '
-        'rule this platform may genuinely pass, so the weaker wording needs a '
-        'deliberate reading before anything is coded.'
-    ),
     'V-220651': (
         'Excess bandwidth / QoS. The finding sentences agree ("if QoS has not '
         'been enabled") but the Check Content does not: IOS shows a single '
@@ -105,13 +113,6 @@ EXCLUDED = {
         '`mls qos` does not exist on IOS XE, so the existing check cannot pass '
         'there regardless of how compliant the switch is. Needs an MQC-shaped '
         'check, and the bandwidth split is site policy.'
-    ),
-    'V-220670': (
-        'Default VLAN for management traffic. Same rule title as IOS V-220644, '
-        'different finding condition: IOS XE fails if the default VLAN is used '
-        'for management access to the switch, IOS fails if the default VLAN is '
-        'not pruned from trunk links. Those are different questions about '
-        'different config, and the IOS predicate answers the wrong one.'
     ),
     'V-220566': (
         'Configuration backup. No IOS check exists to reuse (V-220618 is '

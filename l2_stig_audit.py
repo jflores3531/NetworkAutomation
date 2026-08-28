@@ -784,22 +784,32 @@ def _snmpv3_user_live_check(show_snmp_user_output, require_priv):
     return True, f'SNMPv3 user with SHA auth + AES privacy (`show snmp user`): `{auth_m.group(0)}`, `{priv_m.group(0)}`'
 
 
+def _ntp_md5_correlated_keys(cfg):
+    """Key IDs used consistently across `ntp authentication-key <id> md5`,
+    `ntp trusted-key <id>` and `ntp server <ip> key <id>`.
+
+    Correlation matters: each line existing somewhere in config proves
+    nothing, since a trusted key nothing points at authenticates nothing.
+    Shared by both NTP rules below, which read the same evidence and reach
+    opposite verdicts because their STIGs ask different questions."""
+    return (set(re.findall(r'ntp authentication-key (\d+) md5 \S+', cfg))
+            & set(re.findall(r'ntp trusted-key (\d+)', cfg))
+            & set(re.findall(r'ntp server \S+ key (\d+)', cfg)))
+
+
 def _ntp_auth_check(cfg):
-    """V-220606: Check Content's own text: "Cisco IOS is limited to MD5 for
-    NTP authentication, and incurs a permanent finding as it is not FIPS
+    """V-220606 (IOS): Check Content's own text: "Cisco IOS is limited to MD5
+    for NTP authentication, and incurs a permanent finding as it is not FIPS
     compliant." No IOS configuration can ever satisfy this rule, so it
     always reports FAIL regardless of config - the old version returned
     True once all four MD5-based commands were present anywhere in config,
     a false PASS against the checklist's own stated verdict (same shape as
-    the NX-OS V-220502 bug fixed today). Also verifies the MD5 mitigation's
-    key IDs actually correlate across authentication-key/trusted-key/server
-    lines (not just that each piece exists independently, which the old
-    `_all_of`-based check didn't confirm) when reporting whether the
-    best-effort mitigation is genuinely in place."""
-    key_ids_authenticated = set(re.findall(r'ntp authentication-key (\d+) md5 \S+', cfg))
-    key_ids_trusted = set(re.findall(r'ntp trusted-key (\d+)', cfg))
-    key_ids_used_by_servers = set(re.findall(r'ntp server \S+ key (\d+)', cfg))
-    correlated = key_ids_authenticated & key_ids_trusted & key_ids_used_by_servers
+    the NX-OS V-220502 bug fixed today).
+
+    The IOS XE STIG asks a materially weaker question - see
+    _ntp_auth_cryptographic_check, which is why these are separate checks
+    rather than one shared between the books."""
+    correlated = _ntp_md5_correlated_keys(cfg)
     if 'ntp authenticate' in cfg and correlated:
         mitigation = f'MD5-based NTP authentication is configured as the best available mitigation (key id(s) {", ".join(sorted(correlated))} correlated across authentication-key/trusted-key/server)'
     else:
@@ -807,6 +817,58 @@ def _ntp_auth_check(cfg):
     return False, (
         'permanent finding on IOS - Check Text: "Cisco IOS is limited to MD5 for NTP authentication, '
         f'and incurs a permanent finding as it is not FIPS compliant." {mitigation}.'
+    )
+
+
+def _ntp_auth_cryptographic_check(cfg):
+    """V-220554 (IOS XE): "If the Cisco switch is not configured to
+    authenticate NTP sources using authentication that is cryptographically
+    based, this is a finding."
+
+    Deliberately NOT the same verdict as IOS V-220606, despite the near-
+    identical rule title. IOS demands "authentication with FIPS-compliant
+    algorithms", which IOS cannot provide (MD5 only) - hence a permanent
+    finding there. IOS XE demands only that the authentication be
+    "cryptographically based", and MD5 is a cryptographic hash: weak and
+    not FIPS-approved, but squarely within what this sentence asks for. The
+    IOS XE Check Content also carries no equivalent of the IOS book's
+    "incurs a permanent finding" note.
+
+    Inheriting the IOS verdict here would report a permanent FAIL against a
+    rule this platform can actually satisfy - the mirror image of the false
+    PASS this project usually guards against, and just as wrong."""
+    correlated = _ntp_md5_correlated_keys(cfg)
+    if 'ntp authenticate' not in cfg:
+        return False, 'missing `ntp authenticate` - NTP authentication is not enabled'
+    if not correlated:
+        return False, (
+            'no key id is used consistently across `ntp authentication-key <id> md5`, '
+            '`ntp trusted-key <id>` and `ntp server <ip> key <id>` - the pieces exist '
+            'but do not authenticate anything'
+        )
+    return True, (
+        f'NTP sources authenticated with a cryptographically based key (MD5, key id(s) '
+        f'{", ".join(sorted(correlated))} correlated across authentication-key/trusted-key/'
+        'server). Note MD5 is not FIPS-approved - the IOS book requires FIPS and treats '
+        'this as a permanent finding (V-220606), but this rule asks only that the '
+        'authentication be cryptographically based.'
+    )
+
+
+# V-220567 (IOS XE): Check Content is a certificate-issuer review. When no
+# trustpoint exists the rule has nothing to apply to; when one does,
+# confirming its issuer is DOD-approved needs live CA review
+# (`show crypto pki certificates` CN/O/OU), not derivable from config text.
+# Ported from ios_router_audit.py's V-215711, itself ported from NX-OS -
+# IOS/IOS XE use `crypto pki trustpoint`, NX-OS uses `crypto ca trustpoint`.
+def _pki_trustpoint_check(cfg):
+    m = re.search(r'^crypto pki trustpoint (\S+)', cfg, re.M)
+    if not m:
+        return None, 'not applicable - no CA trustpoint configured'
+    return 'NOT AUTOMATED', (
+        f'CA trustpoint `{m.group(1)}` configured - verify its issuer is a DOD/DOD-approved '
+        'provider via `show crypto pki certificates` (CN/O/OU review), not derivable from '
+        'running-config text'
     )
 
 
@@ -1088,10 +1150,20 @@ CHECKS['V-220605'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, requi
 # been added, so those carry over too. Anything ios_xe_rule_map leaves out has
 # no entry here and run_stig_audit reports it NOT AUTOMATED - the honest verdict
 # for a rule whose IOS predicate would answer a different question.
+# Rules the IOS XE book asks differently enough to need their own check, so
+# they cannot be served by re-keying an IOS one. Applied after translate(),
+# which is also why they are not in ios_xe_rule_map's RULE_MAP - there is no
+# IOS rule to map them to.
+IOS_XE_ONLY_CHECKS = {
+    'V-220554': _ntp_auth_cryptographic_check,  # weaker than IOS V-220606, see the check
+    'V-220567': _pki_trustpoint_check,          # no IOS L2S counterpart at all
+}
+
 if args.checklist == 'ios-xe':
     checklist_path = IOS_XE_CHECKLIST_PATH
     audit_title = 'STIG audit (Cisco IOS XE Switch L2S/NDM)'
     CHECKS = ios_xe_rule_map.translate(CHECKS)
+    CHECKS.update(IOS_XE_ONLY_CHECKS)
 else:
     checklist_path = CHECKLIST_PATH
     audit_title = 'STIG audit'
