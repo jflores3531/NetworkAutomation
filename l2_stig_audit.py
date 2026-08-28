@@ -9,10 +9,12 @@ import re
 import os
 
 import capture
+import ios_xe_rule_map
 import netauto
 import stig_common
 
 CHECKLIST_PATH = os.path.join(netauto.PROJECT_ROOT, 'checklists', 'New Layer 2 switch Checklist.cklb')
+IOS_XE_CHECKLIST_PATH = os.path.join(netauto.PROJECT_ROOT, 'checklists', 'IOS-XE Checklist.cklb')
 
 # Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd
@@ -961,6 +963,12 @@ parser.add_argument('--non-user-vlans', metavar='IDS', dest='non_user_vlans',
                     help='Comma-separated VLAN IDs to treat as non-user (management, servers, '
                          'unused), overriding inventory.yaml. Needed alongside --from-capture for '
                          'a switch whose VLAN scheme this inventory does not describe.')
+parser.add_argument('--checklist', choices=('ios', 'ios-xe'), default='ios',
+                    help='Which DISA checklist to audit against. The IOS and IOS XE switch '
+                         'STIGs share no rule IDs at all, so auditing an IOS XE switch against '
+                         "the IOS checklist reports every rule NOT AUTOMATED. 'ios-xe' re-keys "
+                         'the same checks onto the IOS XE numbering — see ios_xe_rule_map.py '
+                         'for which rules carry over and which deliberately do not. Default: ios.')
 parser.add_argument('--capture-to', metavar='PATH', dest='capture_to',
                     help='During a live audit, also write everything read from the device to a '
                          'capture file. Re-running with --from-capture against that file must '
@@ -1066,9 +1074,21 @@ CHECKS['V-220624'] = lambda cfg: _vtp_password_check(vtp_password_output)
 CHECKS['V-220604'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=False)
 CHECKS['V-220605'] = lambda cfg: _snmpv3_user_live_check(snmp_user_output, require_priv=True)
 
+# Re-key onto the IOS XE STIG last, after the live-discovery entries above have
+# been added, so those carry over too. Anything ios_xe_rule_map leaves out has
+# no entry here and run_stig_audit reports it NOT AUTOMATED - the honest verdict
+# for a rule whose IOS predicate would answer a different question.
+if args.checklist == 'ios-xe':
+    checklist_path = IOS_XE_CHECKLIST_PATH
+    audit_title = 'STIG audit (Cisco IOS XE Switch L2S/NDM)'
+    CHECKS = ios_xe_rule_map.translate(CHECKS)
+else:
+    checklist_path = CHECKLIST_PATH
+    audit_title = 'STIG audit'
+
 stig_common.run_stig_audit(
-    device_name, device_info, CHECKLIST_PATH, CHECKS,
-    title='STIG audit',
+    device_name, device_info, checklist_path, CHECKS,
+    title=audit_title,
     username=username, password=password,
     session=audit_session,
 )
