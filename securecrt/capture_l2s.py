@@ -37,10 +37,17 @@ stay identical, so the duplication cannot drift silently.
 #
 # Which checklist the audit uses: '' = the audit's default (IOS XE - the work
 # target). Set to 'ios' when capturing the lab's vios_l2 switches.
-AUDIT_CHECKLIST = ''
+AUDIT_CHECKLIST = 'ios'
 
 # Pop the finished report in the default .txt viewer. Tests turn this off.
 OPEN_REPORT = True
+
+# Where captures and their reports are written. Created if missing; if it
+# cannot be created (making a folder at a drive root can need admin rights)
+# the script falls back to the user's home directory rather than failing a
+# capture that already succeeded. Whatever it lands on is shown in the save
+# dialog, so the actual path is never a guess.
+CAPTURE_DIR = r'C:\Documents'
 
 # The five commands an L2S audit reads. Four of these exist because the state
 # is not in running-config: user VLANs, the STP root port, the VTP password,
@@ -186,20 +193,26 @@ def main():
                     'hand and try again.'.format(command), 'Output truncated')
                 return
 
-        # The default is an absolute path in the user's home directory. A bare
-        # filename resolves against SecureCRT's working directory - its own
-        # install folder under Program Files - and the write dies with
-        # Permission denied after a perfectly good capture (found on the first
-        # real-terminal run, 2026-08-28, with all five commands captured).
+        # Always an absolute path. A bare filename resolves against SecureCRT's
+        # working directory - its own install folder under Program Files - and
+        # the write dies with Permission denied after a perfectly good capture
+        # (found on the first real-terminal run, 2026-08-28, all five commands
+        # captured and then thrown away).
+        import os
         import os.path
+        capture_dir = CAPTURE_DIR
+        try:
+            if not os.path.isdir(capture_dir):
+                os.makedirs(capture_dir)
+        except OSError:
+            capture_dir = os.path.expanduser('~')
         default_path = os.path.join(
-            os.path.expanduser('~'),
-            '{0}_{1}.capture'.format(hostname, _timestamp()))
+            capture_dir, '{0}_{1}.capture'.format(hostname, _timestamp()))
         path = crt.Dialog.Prompt('Write the capture to:', 'Save capture', default_path)
         if not path:
             return
         if not os.path.isabs(path):
-            path = os.path.join(os.path.expanduser('~'), path)
+            path = os.path.join(capture_dir, path)
 
         try:
             with open(path, 'w', encoding='utf-8') as capture_file:
