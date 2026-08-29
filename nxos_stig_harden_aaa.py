@@ -166,7 +166,7 @@ followup_commands = [f'aaa accounting default group {GROUP_NAME}']
 running_config = str(net_connect.send_command('show running-config'))
 ipsg_active = bool(re.search(r'^\s*ip verify source dhcp-snooping-vlan\s*$', running_config, re.M))
 if ipsg_active:
-    print(f'\nSkipping V-220675a/679a (802.1x globals) — IP Source Guard is active on {device_name}, '
+    print(f'\nSkipping V-220675a/679a (802.1x globals) - IP Source Guard is active on {device_name}, '
           f'and Nexus 9000 rejects `feature dot1x` while IPSG is enabled. See nxos_stig_audit.py\'s '
           f'_dot1x_mab_check, which now reports V-220675/679 NOT APPLICABLE for the same reason.')
 else:

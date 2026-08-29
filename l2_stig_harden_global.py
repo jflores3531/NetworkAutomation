@@ -98,7 +98,7 @@ SSH_ENCRYPTION_FIX = [
     'ip ssh server algorithm encryption aes256-ctr aes192-ctr aes128-ctr',
 ]
 
-# V-220586: disable unnecessary/nonsecure services — idempotent, safe to push
+# V-220586: disable unnecessary/nonsecure services - idempotent, safe to push
 # unconditionally even when a service is already disabled
 UNNECESSARY_SERVICES_FIX = [
     'no boot network',
@@ -331,21 +331,21 @@ for rule in applied_fixes:
 print('\nIP Device Tracking pushed - view results with `show ip device tracking all` on the device.')
 
 if not default_access_vlan:
-    print('\nSkipped default access VLAN database entry — add default_access_vlan to inventory.yaml to include it.')
+    print('\nSkipped default access VLAN database entry - add default_access_vlan to inventory.yaml to include it.')
 if not (snmp_auth_password and snmp_priv_password):
-    print('\nSkipped V-220604/605 (SNMPv3 auth/priv) — add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
+    print('\nSkipped V-220604/605 (SNMPv3 auth/priv) - add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
 if not unused_vlan:
-    print('\nSkipped unused VLAN database entry — add unused_vlan to inventory.yaml to include it.')
+    print('\nSkipped unused VLAN database entry - add unused_vlan to inventory.yaml to include it.')
 if not native_vlan_id:
-    print('\nSkipped native VLAN database entry — add native_vlan to inventory.yaml to include it.')
+    print('\nSkipped native VLAN database entry - add native_vlan to inventory.yaml to include it.')
 if not vtp_password:
-    print('\nSkipped V-220624 (VTP authentication) — add vtp_password to secrets.yaml to include it.')
+    print('\nSkipped V-220624 (VTP authentication) - add vtp_password to secrets.yaml to include it.')
 if not ntp_servers:
-    print('\nSkipped V-220601 (NTP time sync) — add ntp_servers to inventory.yaml\'s services section to include it.')
+    print('\nSkipped V-220601 (NTP time sync) - add ntp_servers to inventory.yaml\'s services section to include it.')
 if not syslog_servers:
-    print('\nSkipped V-220620 (dual syslog servers) — add syslog_servers to inventory.yaml\'s services section to include it.')
+    print('\nSkipped V-220620 (dual syslog servers) - add syslog_servers to inventory.yaml\'s services section to include it.')
 if not ntp_key_id:
-    print('\nSkipped V-220606 (NTP authentication) — add ntp_auth_key to secrets.yaml to include it.')
+    print('\nSkipped V-220606 (NTP authentication) - add ntp_auth_key to secrets.yaml to include it.')
 
 print('\nV-220634 (IP Source Guard) is pushed separately by l2_stig_harden_ipsg.py.')
 print('V-220635 (DAI) is pushed separately by l2_stig_harden_dai.py.')

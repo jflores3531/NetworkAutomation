@@ -202,7 +202,7 @@ def _presence(cfg, pattern, flags=0, what=None):
     label = what or f'a line matching `{pattern}`'
     if m:
         return True, f'found: `{m.group(0).strip()}`'
-    return False, f'not found — searched for {label}'
+    return False, f'not found - searched for {label}'
 
 
 def _all_of(cfg, conditions):
@@ -221,7 +221,7 @@ def _all_of(cfg, conditions):
 
 
 # V-215678: presence of any of these directives (not "no "-prefixed) is a
-# finding — unnecessary/nonsecure services that should stay disabled by
+# finding - unnecessary/nonsecure services that should stay disabled by
 # default. Same exact command list as L2S's V-220586 (UNNECESSARY_SERVICES_PATTERN
 # in l2_stig_audit.py) - the check/fix text is identical between the two
 # checklists for this rule.
@@ -325,7 +325,7 @@ def _archive_logging_enabled(cfg):
     return False, 'missing `archive` block (with `log config` / `logging enable`)'
 
 
-# V-215670: administrator activity logging — logging userinfo (privilege
+# V-215670: administrator activity logging - logging userinfo (privilege
 # escalation) plus the same archive block above.
 def _admin_activity_logged(cfg):
     if not re.search(r'^logging userinfo\s*$', cfg, re.M):

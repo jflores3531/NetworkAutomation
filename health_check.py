@@ -2,15 +2,15 @@
 """Check the operational health of devices in inventory.yaml.
 
 For each device, reports:
-  - Reachability      — did the SSH connection succeed?
-  - Interface health  — any interfaces that are down but NOT admin-down?
-  - Error counters    — any nonzero input/CRC errors on any interface?
-  - CPU utilization   — flagged if over 80% (IOS) or 85% (NX-OS)
-  - Optical health    — any fiber transceiver with temp/voltage/Tx/Rx power
+  - Reachability      - did the SSH connection succeed?
+  - Interface health  - any interfaces that are down but NOT admin-down?
+  - Error counters    - any nonzero input/CRC errors on any interface?
+  - CPU utilization   - flagged if over 80% (IOS) or 85% (NX-OS)
+  - Optical health    - any fiber transceiver with temp/voltage/Tx/Rx power
                         outside warning range?
-  - Environment       — temperature/power/fan warnings from `show environment`
+  - Environment       - temperature/power/fan warnings from `show environment`
                         (reported as not supported on virtual/emulated platforms)
-  - Default route     — present on IOS routers? (skipped for switches/NX-OS)
+  - Default route     - present on IOS routers? (skipped for switches/NX-OS)
 
 Usage:
     # Check all devices in inventory.yaml
@@ -76,7 +76,7 @@ def check_ios(device_name, net_connect):
             continue
         iface_name, status, protocol = parts[0], parts[4], parts[5]
         if status == 'administratively' and protocol == 'down':
-            continue  # intentionally shut — not a problem
+            continue  # intentionally shut - not a problem
         if protocol == 'down':
             findings['interfaces_down'].append(iface_name)
 
@@ -328,7 +328,7 @@ def print_report(results):
     if all_healthy:
         print('All devices healthy.')
     else:
-        print('One or more devices require attention — see above.')
+        print('One or more devices require attention - see above.')
     print('=' * 70)
     print()
 
