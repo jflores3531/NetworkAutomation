@@ -16,6 +16,7 @@ network that means real addressing, hostnames and password hashes, so captures
 belong in the gitignored captures/ directory and nowhere near a commit.
 """
 
+import codecs
 import os
 import re
 
@@ -37,6 +38,36 @@ AUDIT_COMMANDS_L2S = (
     'show vtp password',
     'show snmp user',
 )
+
+# Commands whose empty output is an answer rather than a failed read. Refusing
+# a capture because a command returned nothing is right in general - nothing
+# read and nothing configured look identical - but `show snmp user` prints
+# nothing at all when no SNMPv3 users are defined, and that is a real, legal,
+# and non-compliant switch state: exactly what V-220604/605 exist to catch.
+# Refusing it would block the whole audit on the very configuration it is meant
+# to report, so the section must still be present (see load()'s `missing`
+# check) but is allowed to be empty. _snmpv3_user_live_check reads empty output
+# as "no SNMPv3 user with an authentication protocol found" and FAILs, which is
+# the correct verdict.
+EMPTY_IS_AN_ANSWER = ('show snmp user',)
+
+
+def empty_is_an_answer(command):
+    return _normalise(command) in {_normalise(c) for c in EMPTY_IS_AN_ANSWER}
+
+
+# Deliberately loose. This only has to tell a running-config apart from shell
+# error text or an appliance's help output - not validate the configuration,
+# which is the audit's whole job. Any single marker is enough, since platforms
+# differ in which of these they emit and a trimmed capture may lack the header.
+IOS_CONFIG_MARKERS = ('current configuration', '\nhostname ', '\nend',
+                      'building configuration', '\ninterface ', '\nversion ')
+
+
+def looks_like_ios_config(text):
+    lowered = text.lower()
+    return any(marker in lowered for marker in IOS_CONFIG_MARKERS)
+
 
 # Written before each command's output by the capture tooling. The leading '!'
 # makes the whole line an IOS comment, so a capture pasted into a terminal by
@@ -208,18 +239,57 @@ class CaptureSession:
         unchanged offline rather than needing a branch at every call site."""
 
 
+# A capture does not always arrive the way the capture tooling wrote it. The
+# work switches are reachable only through PowerShell or SecureCRT, and both of
+# PowerShell's obvious ways to save output add a byte order mark: `>` and
+# Out-File default to UTF-16LE on Windows PowerShell 5.1, and
+# `Out-File -Encoding utf8` writes UTF-8 with a BOM. Decoding either as plain
+# UTF-8 fails in a way that does not name its cause - a UTF-8 BOM glues itself
+# to the first delimiter line so only that section goes missing ("missing
+# output for: show running-config"), and UTF-16 decodes to NUL-riddled text
+# that matches nothing at all ("no recognisable command output"). Both are a
+# wasted trip to a switch, so the BOM decides the encoding here instead.
+BOMS = (
+    (codecs.BOM_UTF8, 'utf-8-sig'),
+    (codecs.BOM_UTF32_LE, 'utf-32'),
+    (codecs.BOM_UTF32_BE, 'utf-32'),
+    (codecs.BOM_UTF16_LE, 'utf-16'),
+    (codecs.BOM_UTF16_BE, 'utf-16'),
+)
+
+
+def _read_text(path, source):
+    with open(path, 'rb') as capture_file:
+        raw = capture_file.read()
+    # UTF-32's BOMs start with UTF-16's, so the longer marks are tested first.
+    encoding = 'utf-8'
+    for bom, bom_encoding in BOMS:
+        if raw.startswith(bom):
+            encoding = bom_encoding
+            break
+    text = raw.decode(encoding, errors='replace')
+    if '\x00' in text:
+        raise CaptureError(
+            f'{source} is not text this can read - it contains NUL bytes, which '
+            'usually means a UTF-16 file saved without a byte order mark.\n'
+            'Re-save it as UTF-8 (PowerShell: '
+            "`Set-Content -Encoding utf8`, or `Out-File -Encoding utf8`)."
+        )
+    return text
+
+
 def load(path, required_commands=AUDIT_COMMANDS_L2S):
     """Read a capture file and return a CaptureSession.
 
-    Every command in required_commands must be present. Validating up front
-    means a capture missing 'show snmp user' is rejected before the audit
-    prints its first verdict, rather than 50 rules in."""
+    Every command in required_commands must be present, and non-empty unless
+    it is in EMPTY_IS_AN_ANSWER. Validating up front means a capture missing
+    'show vtp password' is rejected before the audit prints its first verdict,
+    rather than 50 rules in."""
     if not os.path.exists(path):
         raise CaptureError(f'No such capture file: {path}')
-    with open(path, encoding='utf-8', errors='replace') as capture_file:
-        text = capture_file.read()
-
     source = os.path.basename(path)
+    text = _read_text(path, source)
+
     sections = parse(text, required_commands, source=source)
     if not sections:
         raise CaptureError(
@@ -241,11 +311,31 @@ def load(path, required_commands=AUDIT_COMMANDS_L2S):
             'against empty output, so it is refused rather than reported.'
         )
 
-    empty = [command for command in required_commands if not sections[_normalise(command)].strip()]
+    empty = [
+        command for command in required_commands
+        if not sections[_normalise(command)].strip() and not empty_is_an_answer(command)
+    ]
     if empty:
         raise CaptureError(
             f'{source} has empty output for: {", ".join(empty)}\n'
             'A command that returned nothing is indistinguishable from a feature '
             'that is switched off, so this is refused rather than audited.'
+        )
+
+    # Last line of defence, and the only one that applies however the capture
+    # was collected. A session driven against something that is not a Cisco
+    # switch - a jump host, a console server, an appliance answering on :22 -
+    # produces a file with all five sections present and none of them config.
+    # Every rule would then be answered against shell error text, and a report
+    # of 60 findings is indistinguishable from a switch that is genuinely
+    # non-compliant. Refuse it instead.
+    config = sections[_normalise('show running-config')]
+    if not looks_like_ios_config(config):
+        raise CaptureError(
+            f'{source} does not contain a Cisco configuration.\n'
+            "'show running-config' returned text with none of the expected "
+            'markers (Current configuration, hostname, interface, version, end). '
+            'This usually means the capture was taken against something other '
+            'than a Cisco switch.'
         )
     return CaptureSession(sections, source)

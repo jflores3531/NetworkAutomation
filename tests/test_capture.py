@@ -20,6 +20,7 @@ Device output comes from fixtures.py and is synthetic. Real captures are
 gitignored and must never be committed - see capture.py.
 """
 
+import codecs
 import contextlib
 import io
 import os
@@ -116,6 +117,70 @@ def test_session_log():
           and 'hostname TESTSW01' in parsed['show running-config'])
 
 
+def test_encodings(tmpdir):
+    """A capture does not always arrive as the tooling wrote it. The work
+    switches are reachable only through PowerShell or SecureCRT, and both of
+    PowerShell's obvious ways to save output add a byte order mark: `>` and
+    Out-File default to UTF-16LE on Windows PowerShell 5.1, and
+    `Out-File -Encoding utf8` writes UTF-8 with a BOM. Neither failed loudly
+    before - a UTF-8 BOM glued itself to the first delimiter line so only
+    `show running-config` went missing, and UTF-16 matched nothing at all -
+    and either one is a wasted trip to a switch."""
+    print('\ncaptures re-saved by PowerShell still load')
+    rendered = capture.render(OUTPUTS)
+    # Written as bytes, because Python's 'utf-16-be'/'utf-16-le' codecs emit no
+    # BOM of their own - the mark has to be prepended to get the real thing.
+    variants = [
+        ('no BOM', rendered.encode('utf-8')),
+        ('UTF-8 BOM, Out-File -Encoding utf8', codecs.BOM_UTF8 + rendered.encode('utf-8')),
+        ("UTF-16LE BOM, PowerShell 5.1 '>'", codecs.BOM_UTF16_LE + rendered.encode('utf-16-le')),
+        ('UTF-16BE BOM, Out-File -Encoding bigendianunicode',
+         codecs.BOM_UTF16_BE + rendered.encode('utf-16-be')),
+        ('UTF-32LE BOM', codecs.BOM_UTF32_LE + rendered.encode('utf-32-le')),
+    ]
+    for index, (label, raw) in enumerate(variants):
+        path = os.path.join(tmpdir, f'enc_{index}.capture')
+        with open(path, 'wb') as handle:
+            handle.write(raw)
+        try:
+            session = capture.load(path)
+            ok = session.send_command('show running-config') == OUTPUTS['show running-config'].strip('\n')
+            detail = ''
+        except capture.CaptureError as error:
+            ok, detail = False, str(error)
+        check(f'{label} loads', ok, detail)
+
+    # UTF-16 with the BOM stripped cannot be sniffed. It has to name its own
+    # cause rather than surfacing as "no recognisable command output".
+    headless = os.path.join(tmpdir, 'utf16_nobom.capture')
+    with open(headless, 'wb') as handle:
+        handle.write(rendered.encode('utf-16-le'))
+    expect_error('UTF-16 without a BOM names the encoding',
+                 lambda: capture.load(headless), 'utf-16')
+
+
+def test_not_a_switch(tmpdir):
+    """A session pointed at something that is not a Cisco switch yields a file
+    with all five sections present and none of them config - bash answers every
+    command with an error, so nothing is empty and nothing is truncated. The
+    audit would then answer 64 rules against shell error text and report a
+    switch that does not exist. Caught here, however the capture was collected."""
+    print('\ncaptures from something that is not a switch are refused')
+    bash = {command: 'bash: {0}: command not found'.format(command.split()[0])
+            for command in capture.AUDIT_COMMANDS_L2S}
+    path = capture.write(os.path.join(tmpdir, 'bash.capture'), bash)
+    expect_error('a bash session is refused', lambda: capture.load(path),
+                 'does not contain a Cisco configuration')
+
+    # Loose on purpose: a capture trimmed of its "Building configuration..."
+    # header is still a config and must still load.
+    trimmed = dict(OUTPUTS)
+    trimmed['show running-config'] = 'hostname TESTSW01\n!\ninterface Vlan10\n!\nend'
+    path = capture.write(os.path.join(tmpdir, 'trimmed.capture'), trimmed)
+    check('a header-less config still loads',
+          capture.load(path).send_command('show running-config').startswith('hostname'))
+
+
 def test_refusals(tmpdir):
     print('\nmalformed captures are refused, not audited')
     paged = capture.render(OUTPUTS).replace('vlan 10\n', 'vlan 10\n --More-- \n', 1)
@@ -126,8 +191,16 @@ def test_refusals(tmpdir):
     expect_error('missing command rejected', lambda: capture.load(partial), 'show snmp user')
 
     blank = capture.write(os.path.join(tmpdir, 'blank.capture'),
-                          {**OUTPUTS, 'show snmp user': ''})
+                          {**OUTPUTS, 'show vtp password': ''})
     expect_error('empty command output rejected', lambda: capture.load(blank), 'empty output')
+
+    # `show snmp user` is the exception: a switch with no SNMPv3 users prints
+    # nothing, which is a legal state and the V-220604/605 finding itself.
+    # Refusing it would block the audit on exactly what it was run to catch.
+    no_users = capture.write(os.path.join(tmpdir, 'nosnmp.capture'),
+                             {**OUTPUTS, 'show snmp user': ''})
+    check('empty `show snmp user` accepted, and served as empty',
+          capture.load(no_users).send_command('show snmp user') == '')
 
     expect_error('absent file rejected',
                  lambda: capture.load(os.path.join(tmpdir, 'nope.capture')), 'no such capture')
@@ -184,6 +257,8 @@ if __name__ == '__main__':
     with tempfile.TemporaryDirectory() as tmpdir:
         test_round_trip()
         test_session_log()
+        test_encodings(tmpdir)
+        test_not_a_switch(tmpdir)
         test_refusals(tmpdir)
         test_equivalence(tmpdir)
         test_end_to_end(tmpdir)
