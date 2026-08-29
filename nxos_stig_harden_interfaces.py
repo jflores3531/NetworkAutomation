@@ -400,21 +400,21 @@ for rule in applied_fixes:
     print('  - ' + rule)
 
 if not access_ports:
-    print('\nNo access switchports found (explicit `switchport access vlan <n>`) — nothing to push for V-220683/685/687.')
+    print('\nNo access switchports found (explicit `switchport access vlan <n>`) - nothing to push for V-220683/685/687.')
 elif not ipsg_active and not dot1x_target_ports:
-    print('\nEvery access port is parked on unused_vlan — nothing to push for V-220675/679.')
+    print('\nEvery access port is parked on unused_vlan - nothing to push for V-220675/679.')
 if trunk_target_ports and not root_guard_ports:
-    print("\nSkipped V-220680 (Root Guard) — every trunk port is this switch's STP root port toward the root bridge; Root Guard must not be applied there.")
+    print("\nSkipped V-220680 (Root Guard) - every trunk port is this switch's STP root port toward the root bridge; Root Guard must not be applied there.")
 if not native_vlan_id:
-    print('\nSkipped V-220695 (native VLAN) — add native_vlan to inventory.yaml to include it.')
+    print('\nSkipped V-220695 (native VLAN) - add native_vlan to inventory.yaml to include it.')
 elif not trunk_target_ports:
-    print('\nNo non-access switchports found — every port already has an explicit `switchport access vlan <n>` line, nothing to push for V-220695/692.')
+    print('\nNo non-access switchports found - every port already has an explicit `switchport access vlan <n>` line, nothing to push for V-220695/692.')
 if trunk_target_ports and not allowed_trunk_vlans:
-    print('\nSkipped V-220692 (trunk VLAN pruning) — no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
+    print('\nSkipped V-220692 (trunk VLAN pruning) - no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
 if not unused_vlan:
-    print('\nSkipped V-220690 (disabled ports to unused VLAN) — add unused_vlan to inventory.yaml to include it.')
+    print('\nSkipped V-220690 (disabled ports to unused VLAN) - add unused_vlan to inventory.yaml to include it.')
 elif not disabled_ports:
-    print('\nNo administratively-shutdown ports found via `show interface status` — nothing to push for V-220690.')
+    print('\nNo administratively-shutdown ports found via `show interface status` - nothing to push for V-220690.')
 
 print('\nRules satisfied by construction (not pushed by this script):')
 for rule in SKIPPED_RULES:

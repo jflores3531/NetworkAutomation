@@ -20,7 +20,7 @@ import stig_common
 CHECKLIST_PATH = os.path.join(netauto.PROJECT_ROOT, 'checklists', 'New Layer 2 switch Checklist.cklb')
 IOS_XE_CHECKLIST_PATH = os.path.join(netauto.PROJECT_ROOT, 'checklists', 'IOS-XE Checklist.cklb')
 
-# Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
+# Interface types that take switchport commands - VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd
 # otherwise be misclassified as host-facing/access. The multigigabit and 25G-and-up
 # names are IOS-XE (Catalyst 9000) forms with no equivalent on the lab's vios_l2
@@ -118,7 +118,7 @@ def _presence(cfg, pattern, flags=0, what=None):
     label = what or f'a line matching `{pattern}`'
     if m:
         return True, f'found: `{m.group(0).strip()}`'
-    return False, f'not found — searched for {label}'
+    return False, f'not found - searched for {label}'
 
 
 def _absence(cfg, pattern, flags=0, what=None):
@@ -127,7 +127,7 @@ def _absence(cfg, pattern, flags=0, what=None):
     label = what or f'`{pattern}`'
     if m:
         return False, f'found (should be absent): `{m.group(0).strip()}`'
-    return True, f'not found (correctly absent) — searched for {label}'
+    return True, f'not found (correctly absent) - searched for {label}'
 
 
 def _all_of(cfg, conditions):
@@ -152,7 +152,7 @@ def _count_distinct(cfg, pattern, minimum, noun, flags=re.M):
         return True, f'found {len(found)} {noun}: {", ".join(found)}'
     if found:
         return False, f'only {len(found)} of {minimum}+ required {noun} found: {", ".join(found)}'
-    return False, f'no {noun} found (need {minimum}+) — searched for `{pattern}`'
+    return False, f'no {noun} found (need {minimum}+) - searched for `{pattern}`'
 
 
 def _bpdu_guard_check(cfg):
@@ -182,7 +182,7 @@ def _bpdu_guard_check(cfg):
 
     if missing:
         return False, (
-            f'BPDU Guard not functionally active on: {", ".join(missing)} — needs either per-port '
+            f'BPDU Guard not functionally active on: {", ".join(missing)} - needs either per-port '
             f'`spanning-tree bpduguard enable`, or the global `spanning-tree portfast bpduguard default` '
             f'paired with PortFast enabled on that port (global command alone is a no-op without it)'
         )
@@ -364,7 +364,7 @@ def _disabled_ports_unused_vlan_check(cfg, unused_vlan):
     return True, f'{disabled_count} disabled access port(s) correctly assigned to VLAN {unused_vlan}{exempt_note}, pruned from all {len(trunk)} trunk port(s)'
 
 
-# V-220586: presence of any of these directives (not "no "-prefixed) is a finding —
+# V-220586: presence of any of these directives (not "no "-prefixed) is a finding -
 # unnecessary/nonsecure services that should stay disabled by default.
 UNNECESSARY_SERVICES_PATTERN = (
     r'^\s*(boot network|ip boot server|ip bootp server|ip dns server|ip identd|'
@@ -384,7 +384,7 @@ def _no_unnecessary_services(cfg):
 def _vlan_range_covers_user_vlans(cfg, pattern, user_vlans, missing_line_what):
     """PASS only if the VLAN range captured by `pattern` (e.g. from an
     `ip dhcp snooping vlan <spec>` or `ip arp inspection vlan <spec>` line)
-    actually covers every VLAN in `user_vlans` — not just that *some* list is
+    actually covers every VLAN in `user_vlans` - not just that *some* list is
     configured. Catches the case where the feature is scoped to the wrong VLANs
     (e.g. management/default) while the real user VLAN has none."""
     m = re.search(pattern, cfg, re.M)
@@ -574,7 +574,7 @@ def _vty_acl_log_input_check(cfg):
 # V-220571/572/573/574/582/597/611/613: DISA reuses the exact same evidence
 # (archive / log config / logging enable) for 8 different audit-logging rules
 # (account creation/modification/disabling/removal/enabling, privileges deleted,
-# privileged activities, full-text privileged-command logging) — one check
+# privileged activities, full-text privileged-command logging) - one check
 # covers all of them.
 def _archive_logging_enabled(cfg):
     for chunk in re.split(r'^(?=\S)', cfg, flags=re.M):
@@ -586,7 +586,7 @@ def _archive_logging_enabled(cfg):
     return False, 'missing `archive` block (with `log config` / `logging enable`)'
 
 
-# V-220578: administrator activity logging — logging userinfo (privilege escalation)
+# V-220578: administrator activity logging - logging userinfo (privilege escalation)
 # plus the same archive block as the 8-rule cluster above
 def _admin_activity_logged(cfg):
     if 'logging userinfo' not in cfg:
@@ -1046,7 +1046,7 @@ CHECKS = {
     'V-220630': _bpdu_guard_check,
     'V-220631': lambda cfg: _presence(cfg, r'spanning-tree loopguard default', what='`spanning-tree loopguard default`'),
     # V-220633/635 (DHCP snooping/DAI VLAN coverage) are added below, after
-    # discovering the device's genuine user VLANs — a plain presence check can't
+    # discovering the device's genuine user VLANs - a plain presence check can't
     # tell "configured for the wrong VLANs" from "configured correctly" (e.g.
     # snooping enabled on VLAN 1,10 while the real user VLAN 55 has none).
     'V-220637': lambda cfg: _absence(cfg, r'no ip igmp snooping', what='`no ip igmp snooping` (would disable it)'),
@@ -1122,7 +1122,7 @@ CHECKS = {
 
 # Parse the target device from the command line
 parser = argparse.ArgumentParser(description='Audit a device against DISA STIG rules from New Layer 2 switch Checklist.cklb')
-parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. S1) — with '
+parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. S1) - with '
                                    '--from-capture, any label to report the results under')
 parser.add_argument('--from-capture', metavar='PATH', dest='from_capture',
                     help='Audit output captured from a device instead of connecting to it. The '
@@ -1136,7 +1136,7 @@ parser.add_argument('--checklist', choices=('ios', 'ios-xe'), default='ios-xe',
                     help='Which DISA checklist to audit against. The IOS and IOS XE switch '
                          'STIGs share no rule IDs at all, so auditing against the wrong one '
                          "reports every rule NOT AUTOMATED. 'ios-xe' re-keys the same checks "
-                         'onto the IOS XE numbering — see ios_xe_rule_map.py for which rules '
+                         'onto the IOS XE numbering - see ios_xe_rule_map.py for which rules '
                          "carry over and which deliberately do not. Default: ios-xe (the work "
                          "deployment target); pass 'ios' for the lab's vios_l2 switches.")
 parser.add_argument('--capture-to', metavar='PATH', dest='capture_to',
@@ -1153,8 +1153,8 @@ if args.capture_to and args.from_capture:
 device_name = args.device
 
 # Offline runs skip both the inventory lookup and the credential prompt, so a
-# switch that isn't described in this repo's inventory.yaml — and shouldn't be,
-# if it's someone else's production kit — can still be audited. One session
+# switch that isn't described in this repo's inventory.yaml - and shouldn't be,
+# if it's someone else's production kit - can still be audited. One session
 # object serves the live-discovery commands below and run_stig_audit's
 # running-config read, exactly as the single Netmiko pair does online.
 if args.from_capture:

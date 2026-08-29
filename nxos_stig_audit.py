@@ -275,7 +275,7 @@ def _vlan_in_spec(vlan, spec):
 def _vlan_range_covers_user_vlans(cfg, pattern, user_vlans, missing_line_what):
     """PASS only if the VLAN range captured by `pattern` (e.g. from an
     `ip dhcp snooping vlan <spec>` or `ip arp inspection vlan <spec>` line)
-    actually covers every VLAN in `user_vlans` — not just that *some* list is
+    actually covers every VLAN in `user_vlans` - not just that *some* list is
     configured. Catches the case where the feature is scoped to the wrong VLANs
     (e.g. management/default) while the real user VLAN has none."""
     m = re.search(pattern, cfg, re.M)
@@ -804,14 +804,14 @@ CHECKS = {
     'V-220694': _all_ports_explicit_mode,
     'V-220695': lambda cfg: _all_trunk_ports_have(cfg, r'switchport trunk native vlan (?!1\s*$)\d+', 'a non-default native VLAN'),
     # V-220676 (VTP password) is added below, after a separate `show vtp
-    # password` command — confirmed live on NXCore1 that NX-OS deliberately
+    # password` command - confirmed live on NXCore1 that NX-OS deliberately
     # omits the VTP password from `show running-config` entirely (only
     # 'feature vtp'/'vtp domain' show there), so scanning running-config text
     # for it can never pass regardless of whether it's actually set.
     'V-220681': _bpdu_guard_check,
     'V-220682': lambda cfg: 'spanning-tree loopguard default' in cfg,
     # V-220684/686 (DHCP snooping/DAI VLAN coverage) are added below, after
-    # discovering the device's genuine user VLANs — a plain presence check can't
+    # discovering the device's genuine user VLANs - a plain presence check can't
     # tell "configured for the wrong VLANs" from "configured correctly" (e.g.
     # snooping enabled on VLAN 1,10 while the real user VLAN has none).
     'V-220688': _igmp_snooping_check,

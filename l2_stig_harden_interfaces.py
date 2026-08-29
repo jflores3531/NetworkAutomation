@@ -50,7 +50,7 @@ import re
 import netauto
 import stig_common
 
-# Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
+# Interface types that take switchport commands - VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd
 # otherwise be misclassified as host-facing/access. The multigigabit and 25G-and-up
 # names are IOS-XE (Catalyst 9000) forms with no equivalent on the lab's vios_l2
@@ -118,7 +118,7 @@ def storm_control_command(interface_name):
 
 
 def shutdown_access_ports(cfg, access_names):
-    """Return the subset of access_names whose interface block has 'shutdown' —
+    """Return the subset of access_names whose interface block has 'shutdown' -
     used by V-220641 to reassign only ports that are already disabled."""
     shutdown = []
     for chunk in re.split(r'^(?=interface \S+)', cfg, flags=re.M):
@@ -398,23 +398,23 @@ for rule in applied_fixes:
     print('  - ' + rule)
 
 if not access_ports:
-    print('\nNo access/host-facing switchports found — nothing to push for V-220632/634/636.')
+    print('\nNo access/host-facing switchports found - nothing to push for V-220632/634/636.')
 elif not storm_control_ports:
-    print('\nSkipped V-220636 (storm control) — every access port is FastEthernet, not supported per the STIG\'s own Fix Text note.')
+    print('\nSkipped V-220636 (storm control) - every access port is FastEthernet, not supported per the STIG\'s own Fix Text note.')
 if not trunk_ports:
-    print('\nNo trunk switchports found — nothing to push for V-220629/640/643/646.')
+    print('\nNo trunk switchports found - nothing to push for V-220629/640/643/646.')
 elif not root_guard_ports:
-    print('\nSkipped V-220629 (Root Guard) — every trunk port is this switch\'s STP root port toward the root bridge; Root Guard must not be applied there.')
+    print('\nSkipped V-220629 (Root Guard) - every trunk port is this switch\'s STP root port toward the root bridge; Root Guard must not be applied there.')
 if trunk_ports and not allowed_trunk_vlans:
-    print('\nSkipped V-220643/641b (trunk VLAN scoping) — no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
+    print('\nSkipped V-220643/641b (trunk VLAN scoping) - no VLANs discovered in the VLAN database besides VLAN 1/unused_vlan.')
 if trunk_ports and not native_vlan_id:
-    print('\nSkipped V-220646 (native VLAN) — add native_vlan to inventory.yaml to include it.')
+    print('\nSkipped V-220646 (native VLAN) - add native_vlan to inventory.yaml to include it.')
 if access_ports and not default_access_vlan:
-    print('\nSkipped default access VLAN assignment — add default_access_vlan to inventory.yaml to include it. Access ports will still get switchport mode access, just no explicit VLAN.')
+    print('\nSkipped default access VLAN assignment - add default_access_vlan to inventory.yaml to include it. Access ports will still get switchport mode access, just no explicit VLAN.')
 if not unused_vlan:
-    print('\nSkipped V-220641 (unused VLAN) — add unused_vlan to inventory.yaml to include it.')
+    print('\nSkipped V-220641 (unused VLAN) - add unused_vlan to inventory.yaml to include it.')
 elif not disabled_ports:
-    print('\nNo disabled (shutdown) access ports found — nothing to reassign for V-220641.')
+    print('\nNo disabled (shutdown) access ports found - nothing to reassign for V-220641.')
 
 print('\nV-220634 (IP Source Guard) is pushed separately by l2_stig_harden_ipsg.py.')
 print('V-220635 (DAI) is pushed separately by l2_stig_harden_dai.py.')

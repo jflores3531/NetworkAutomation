@@ -16,7 +16,7 @@ import argparse
 import re
 import netauto
 
-# Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
+# Interface types that take switchport commands - VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd
 # otherwise be misclassified as host-facing/access. The multigigabit and 25G-and-up
 # names are IOS-XE (Catalyst 9000) forms with no equivalent on the lab's vios_l2
@@ -92,7 +92,7 @@ print(netauto.redact_output(output))
 if access_ports:
     print(f'\nV-220634 (IP Source Guard) addressed on {len(access_ports)} access port(s): {", ".join(access_ports)}')
 else:
-    print('\nNo access/host-facing switchports found — nothing to push.')
+    print('\nNo access/host-facing switchports found - nothing to push.')
 
 print(
     '\nReminder: IP Source Guard only trusts the DHCP snooping binding table. '

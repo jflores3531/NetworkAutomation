@@ -397,15 +397,15 @@ if not (vtp_password and vtp_domain):
         missing.append('vtp_password to secrets.yaml')
     if not vtp_domain:
         missing.append('vtp_domain to inventory.yaml')
-    print(f'\nSkipped V-220676 (VTP authentication) — add {" and ".join(missing)} to include it.')
+    print(f'\nSkipped V-220676 (VTP authentication) - add {" and ".join(missing)} to include it.')
 if not ntp_servers:
-    print('\nSkipped V-220498 (NTP time sync) — add ntp_servers to inventory.yaml\'s services section to include it.')
+    print('\nSkipped V-220498 (NTP time sync) - add ntp_servers to inventory.yaml\'s services section to include it.')
 if not ntp_key_id:
-    print('\nSkipped V-220502 (NTP authentication) — add ntp_auth_key to secrets.yaml to include it.')
+    print('\nSkipped V-220502 (NTP authentication) - add ntp_auth_key to secrets.yaml to include it.')
 if not syslog_servers:
-    print('\nSkipped V-220516 (syslog servers) — add syslog_servers to inventory.yaml\'s services section to include it.')
+    print('\nSkipped V-220516 (syslog servers) - add syslog_servers to inventory.yaml\'s services section to include it.')
 if not (snmp_auth_password and snmp_priv_password):
-    print('\nSkipped V-220500/501 (SNMPv3 auth/priv) — add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
+    print('\nSkipped V-220500/501 (SNMPv3 auth/priv) - add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
 
 print(
     '\nNext: reload the device, then run nxos_stig_harden_interfaces.py to push the interface-scoped '

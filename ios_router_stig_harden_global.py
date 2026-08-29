@@ -200,13 +200,13 @@ for rule in applied_fixes:
     print('  - ' + rule)
 
 if not ntp_servers:
-    print('\nSkipped V-215693 (NTP time sync) — add ntp_servers to inventory.yaml\'s services section to include it.')
+    print('\nSkipped V-215693 (NTP time sync) - add ntp_servers to inventory.yaml\'s services section to include it.')
 if not ntp_key_id:
-    print('\nSkipped V-215698 (NTP authentication) — add ntp_auth_key to secrets.yaml to include it.')
+    print('\nSkipped V-215698 (NTP authentication) - add ntp_auth_key to secrets.yaml to include it.')
 if not syslog_servers:
-    print('\nSkipped V-220136 (dual syslog servers) — add syslog_servers to inventory.yaml\'s services section to include it.')
+    print('\nSkipped V-220136 (dual syslog servers) - add syslog_servers to inventory.yaml\'s services section to include it.')
 if not (snmp_auth_password and snmp_priv_password):
-    print('\nSkipped V-215696/697 (SNMPv3 auth/priv) — add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
+    print('\nSkipped V-215696/697 (SNMPv3 auth/priv) - add snmpv3.auth_password and snmpv3.priv_password to secrets.yaml to include it.')
 
 print('\nRules requiring interface targeting (not pushed by this script):')
 for rule in SKIPPED_RULES:

@@ -25,7 +25,7 @@ import argparse
 import re
 import netauto
 
-# Interface types that take switchport commands — VLAN SVIs, loopbacks, etc. are
+# Interface types that take switchport commands - VLAN SVIs, loopbacks, etc. are
 # excluded since "switchport mode trunk" can never appear in their blocks and they'd
 # otherwise be misclassified as host-facing/access. The multigigabit and 25G-and-up
 # names are IOS-XE (Catalyst 9000) forms with no equivalent on the lab's vios_l2
@@ -166,9 +166,9 @@ print()
 print(netauto.redact_output(output))
 
 if not access_ports:
-    print(f'\nNo access/host-facing switchports found — {IPV4_VISIBILITY_POLICY} defined but not attached anywhere.')
+    print(f'\nNo access/host-facing switchports found - {IPV4_VISIBILITY_POLICY} defined but not attached anywhere.')
 if not target_vlans:
-    print(f'\nNo VLANs found besides VLAN 1/native/unused — {NOIPV6_POLICY}/{NOTRACK_POLICY} defined but not attached anywhere.')
+    print(f'\nNo VLANs found besides VLAN 1/native/unused - {NOIPV6_POLICY}/{NOTRACK_POLICY} defined but not attached anywhere.')
 
 print('\nView results with: show device-tracking database')
 print('View policy/VLAN attachments with: show device-tracking policy <name>')

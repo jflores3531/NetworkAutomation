@@ -45,7 +45,7 @@ def load_services(path=INVENTORY_PATH):
 
 
 def load_non_user_vlans(path=INVENTORY_PATH, device_name=None):
-    """Load the non_user_vlans list from the YAML inventory — VLAN IDs to exclude
+    """Load the non_user_vlans list from the YAML inventory - VLAN IDs to exclude
     when discovering "user VLANs" for DHCP snooping/DAI pushes (management,
     servers, unused default VLAN, etc). The same VLAN ID doesn't always mean the
     same thing on every device (e.g. VLAN 10 is a management segment on the L2S
@@ -80,7 +80,7 @@ def load_automation_host(path=INVENTORY_PATH):
 
 
 def load_unused_vlan(path=INVENTORY_PATH):
-    """Load the unused_vlan ID from the YAML inventory — the VLAN designated for
+    """Load the unused_vlan ID from the YAML inventory - the VLAN designated for
     disabled/unused ports (V-220641). Returns None if not defined."""
     with open(path) as f:
         inventory = yaml.safe_load(f)
@@ -88,7 +88,7 @@ def load_unused_vlan(path=INVENTORY_PATH):
 
 
 def load_vtp_domain(path=INVENTORY_PATH):
-    """Load the vtp_domain name from the YAML inventory — required on NX-OS
+    """Load the vtp_domain name from the YAML inventory - required on NX-OS
     before a VTP password can be set (V-220676); 'vtp password' is rejected
     with "Domain not set" without one first, confirmed live on NXCore1.
     Returns None if not defined."""
@@ -98,7 +98,7 @@ def load_vtp_domain(path=INVENTORY_PATH):
 
 
 def load_native_vlan(path=INVENTORY_PATH):
-    """Load the native_vlan ID from the YAML inventory — the VLAN to assign as
+    """Load the native_vlan ID from the YAML inventory - the VLAN to assign as
     native on 802.1q trunk links (V-220646). Returns None if not defined."""
     with open(path) as f:
         inventory = yaml.safe_load(f)
@@ -106,7 +106,7 @@ def load_native_vlan(path=INVENTORY_PATH):
 
 
 def load_default_access_vlan(path=INVENTORY_PATH):
-    """Load the default_access_vlan ID from the YAML inventory — the VLAN
+    """Load the default_access_vlan ID from the YAML inventory - the VLAN
     assigned to host-facing/access ports that aren't already in trunk mode.
     Returns None if not defined."""
     with open(path) as f:
@@ -116,7 +116,7 @@ def load_default_access_vlan(path=INVENTORY_PATH):
 
 def load_external_interfaces(device_name, path=INVENTORY_PATH):
     """Load the list of external-facing interface names for a router from the
-    YAML inventory's external_interfaces_by_device section — a security-
+    YAML inventory's external_interfaces_by_device section - a security-
     boundary/topology fact (see docs/Topology.png) that can't be derived from a
     device's own config, used by ios_router_audit.py for STIG rules scoped to
     "external" vs "internal" interfaces. Returns an empty list if the device
