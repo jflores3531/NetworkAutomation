@@ -15,7 +15,17 @@ V-220623 (802.1x/MAB): the global prerequisites ('dot1x system-auth-control',
 'aaa authentication dot1x default group radius') are pushed by
 l2_stig_harden_aaa.py instead, not here - the latter needs aaa new-model
 already active, which this script doesn't push (see that script's own
-docstring for why)."""
+docstring for why).
+
+IOS XE: every command below was compared against the IOS XE Switch STIG's own
+Fix Text, and 15 of the 16 labelled fixes are configured identically in both
+books - the scripts were written from the IOS book but are not IOS-specific.
+The one real divergence is `mls qos` (V-220625), which does not exist on IOS
+XE; it is commented at the line and rejected harmlessly there. `ip device
+tracking` in OPTIONAL_FIXES is IOS-era too, but optional and unrelated to any
+rule. Per-interface commands in the companion scripts (UUFB, storm control,
+IPSG, DAI, DHCP snooping, 802.1x) were checked the same way and match the IOS
+XE Fix Text verbatim."""
 
 import argparse
 import netauto
@@ -35,7 +45,14 @@ BASE_FIXES = {
     'V-220576 (lockout after 3 failed attempts)': 'login block-for 900 attempts 3 within 120',
     'V-220578 (admin activity logging)': 'logging userinfo',
     'V-220570a (HTTP session limit)': 'ip http max-connections 2',
-    'V-220625 (QoS enabled)': 'mls qos',
+    # IOS ONLY - `mls qos` does not exist on IOS XE, which uses MQC instead
+    # (its V-220651 Fix Text configures DSCP class-maps, a bandwidth-reserving
+    # policy-map, and service-policy on interfaces). Expect this one line to be
+    # rejected on an IOS XE switch; Netmiko does not treat a rejected command
+    # as fatal, so the rest of the batch still lands. Kept because it is
+    # correct for classic IOS. IOS XE's V-220651 is deliberately NOT AUTOMATED
+    # in the audit rather than answered by this - see ios_xe_rule_map.EXCLUDED.
+    'V-220625 (QoS enabled, IOS only - rejected on IOS XE)': 'mls qos',
     'V-220595a (password encryption)': 'service password-encryption',
     'V-220600 (audit failure alert)': 'logging trap critical',
     # Confirmed live that this lab's vios_l2 rejects 'file privilege 15'
@@ -50,8 +67,13 @@ BASE_FIXES = {
 # L2 port and populates 'show ip device tracking all' with each host's
 # IP/MAC/VLAN/interface, static or DHCP-assigned alike (unlike IP Source Guard,
 # it doesn't rely on the DHCP snooping binding table).
+#
+# Also IOS-era: IOS XE replaced this with SISF (`device-tracking policy` /
+# `device-tracking attach-policy`), which l2_device_tracking.py implements.
+# Expect the legacy command to be rejected or deprecated on IOS XE - it is
+# optional and nothing in the audit depends on it either way.
 OPTIONAL_FIXES = {
-    'IP Device Tracking (host visibility, not a STIG requirement)': 'ip device tracking',
+    'IP Device Tracking (host visibility, not a STIG requirement; IOS-era, SISF on IOS XE)': 'ip device tracking',
 }
 
 # V-220570: session-limit needs its own "line vty 0 4" context. DISA's rule is
