@@ -65,6 +65,15 @@ COMMANDS = (
     'show snmp user',
 )
 
+# Commands allowed to come back with nothing. Must match capture.py's
+# EMPTY_IS_AN_ANSWER. `show snmp user` prints nothing when no SNMPv3 users are
+# defined - a legal switch state, and a non-compliant one that V-220604/605
+# exist to catch - so refusing to write the capture would abandon the whole
+# collection over the very finding it was sent to collect.
+EMPTY_IS_AN_ANSWER = (
+    'show snmp user',
+)
+
 # Must match capture.py's DELIMITER_PREFIX / DELIMITER_SUFFIX exactly. The
 # leading '!' makes each line an IOS comment, so a capture pasted into a
 # terminal by accident is inert rather than interpreted.
@@ -121,6 +130,53 @@ def looks_paginated(text):
     return '--more--' in lowered.replace(' ', '') or '-- more --' in lowered
 
 
+# A prompt ending in '#' is not proof of a Cisco switch. root's shell prompt
+# ends in '#' too, and so does the prompt on plenty of appliances - so the
+# enable-mode check above passes on a Linux box and the five show commands go
+# to bash. That mattered little when the only way here was connecting by hand,
+# but a walker driving a list of saved sessions will eventually meet a jump
+# host, a console server, or an iDRAC, and a junk capture that only fails later
+# at audit time is the worst of the available outcomes.
+#
+# Two cheap confirmations, in order of how early they fire:
+#   not_a_switch()  - reads the reply to 'terminal length 0'. A Cisco EXEC
+#                     says nothing; a shell says "command not found". One
+#                     command has been sent at that point, and it is harmless
+#                     anywhere it lands.
+#   not_ios_config()- reads 'show running-config' itself, in case a device
+#                     accepts unknown commands silently.
+SHELL_ERRORS = ('command not found', 'not recognized', 'no such file',
+                'permission denied', 'syntax error', 'unknown command')
+
+
+def not_a_switch(terminal_length_reply):
+    """Return the offending line if this session is clearly not a Cisco EXEC,
+    or '' when the reply looks the way IOS answers (silence)."""
+    for line in terminal_length_reply.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if any(error in lowered for error in SHELL_ERRORS):
+            return stripped
+    return ''
+
+
+def not_ios_config(running_config):
+    """Return a reason if 'show running-config' output is not a Cisco config.
+
+    Deliberately loose: it only has to tell a running-config apart from a
+    shell error or an appliance's help text, not validate the config. Any one
+    marker is enough, because platforms vary in which they emit."""
+    lowered = running_config.lower()
+    markers = ('current configuration', '\nhostname ', '\nend', 'building configuration',
+               '\ninterface ', '\nversion ')
+    if any(marker in lowered for marker in markers):
+        return ''
+    return ('no Cisco configuration markers found (expected one of: Current '
+            'configuration, hostname, interface, version, end)')
+
+
 def read_prompt():
     """Return the device prompt from the current cursor line.
 
@@ -147,6 +203,98 @@ def run_command(command, prompt):
     return strip_echo(output, command)
 
 
+class CollectionError(Exception):
+    """A reason this session could not be captured.
+
+    Carries two forms of the same problem: `.reason` is a short phrase for a
+    bulk run's log (one line per switch, six hundred of them), and str() is the
+    full explanation a single-switch run puts in a dialog. Splitting them is
+    what lets capture_l2s_bulk.py reuse every guard below without any of the
+    dialogs - a modal box inside an unattended overnight loop would stop the
+    run dead until someone clicked it."""
+
+    def __init__(self, reason, message, title='Capture failed'):
+        Exception.__init__(self, message)
+        self.reason = reason
+        self.title = title
+
+
+def collect(prompt=None):
+    """Send the five show commands to the current session and return
+    (hostname, outputs). Raises CollectionError if the session is not a Cisco
+    switch in enable mode, or if any output arrives truncated or empty.
+
+    Assumes the session is connected and crt.Screen.Synchronous is set; both
+    callers handle that, since the bulk walker sets Synchronous once for a
+    whole run rather than per switch."""
+    if prompt is None:
+        prompt = read_prompt()
+    if not prompt:
+        raise CollectionError(
+            'no prompt',
+            'Could not read the device prompt from the current line.\n\n'
+            'Press Enter in the session so the prompt is the last thing on '
+            'screen, then run this script again.', 'No prompt found')
+    if prompt.endswith('>'):
+        raise CollectionError(
+            'user EXEC mode',
+            'This session is in user EXEC mode ({0}).\n\n'
+            'show running-config needs privileged EXEC. Run "enable" first, '
+            'then run this script again.'.format(prompt), 'Not in enable mode')
+    if not prompt.endswith('#'):
+        raise CollectionError(
+            'unexpected prompt',
+            'The prompt does not look like a Cisco EXEC prompt: "{0}"\n\n'
+            'Press Enter in the session and try again.'.format(prompt),
+            'Unexpected prompt')
+
+    hostname = prompt.rstrip('#').strip() or 'switch'
+
+    # Paging off, or running-config comes back full of --More-- prompts and
+    # backspace padding. Session-scoped, so nothing is left behind.
+    #
+    # Its response is also the first evidence of what this session is
+    # actually attached to. A Cisco EXEC returns nothing; a shell returns
+    # "terminal: command not found" or similar. See not_a_switch().
+    reply = run_command('terminal length 0', prompt)
+    wrong_device = not_a_switch(reply)
+    if wrong_device:
+        raise CollectionError(
+            'not a Cisco switch',
+            'This session does not look like a Cisco switch.\n\n'
+            '"terminal length 0" came back with:\n  {0}\n\n'
+            'Nothing was sent beyond that one command and no capture was '
+            'written. Connect to the switch, run "enable", and try '
+            'again.'.format(wrong_device), 'Not a Cisco switch')
+
+    outputs = {}
+    for command in COMMANDS:
+        outputs[command] = run_command(command, prompt)
+        if not outputs[command].strip() and command not in EMPTY_IS_AN_ANSWER:
+            raise CollectionError(
+                'empty output: ' + command,
+                "'{0}' returned nothing.\n\nNothing was written - a command that "
+                'returns nothing is indistinguishable from a feature that is '
+                'switched off, and the audit refuses captures like that rather '
+                'than reporting against them.'.format(command), 'Empty output')
+        if looks_paginated(outputs[command]):
+            raise CollectionError(
+                'paginated: ' + command,
+                "'{0}' came back with a pager prompt, so its output is "
+                'truncated.\n\nNothing was written. Run "terminal length 0" by '
+                'hand and try again.'.format(command), 'Output truncated')
+        if command == 'show running-config':
+            wrong_output = not_ios_config(outputs[command])
+            if wrong_output:
+                raise CollectionError(
+                    'not a Cisco config',
+                    '"show running-config" did not return a Cisco '
+                    'configuration - {0}.\n\nNo capture was written. Check '
+                    'that this session is on the switch you meant.'
+                    .format(wrong_output), 'Not a Cisco switch')
+    return hostname, outputs
+
+
 def main():
     if not crt.Session.Connected:
         crt.Dialog.MessageBox('Connect and log in to the switch first, then run this script.',
@@ -155,48 +303,11 @@ def main():
 
     crt.Screen.Synchronous = True
     try:
-        prompt = read_prompt()
-        if not prompt:
-            crt.Dialog.MessageBox(
-                'Could not read the device prompt from the current line.\n\n'
-                'Press Enter in the session so the prompt is the last thing on '
-                'screen, then run this script again.', 'No prompt found')
+        try:
+            hostname, outputs = collect()
+        except CollectionError as refused:
+            crt.Dialog.MessageBox(str(refused), refused.title)
             return
-        if prompt.endswith('>'):
-            crt.Dialog.MessageBox(
-                'This session is in user EXEC mode ({0}).\n\n'
-                'show running-config needs privileged EXEC. Run "enable" first, '
-                'then run this script again.'.format(prompt), 'Not in enable mode')
-            return
-        if not prompt.endswith('#'):
-            crt.Dialog.MessageBox(
-                'The prompt does not look like a Cisco EXEC prompt: "{0}"\n\n'
-                'Press Enter in the session and try again.'.format(prompt),
-                'Unexpected prompt')
-            return
-
-        hostname = prompt.rstrip('#').strip() or 'switch'
-
-        # Paging off, or running-config comes back full of --More-- prompts and
-        # backspace padding. Session-scoped, so nothing is left behind.
-        run_command('terminal length 0', prompt)
-
-        outputs = {}
-        for command in COMMANDS:
-            outputs[command] = run_command(command, prompt)
-            if not outputs[command].strip():
-                crt.Dialog.MessageBox(
-                    "'{0}' returned nothing.\n\nNothing was written - a command that "
-                    'returns nothing is indistinguishable from a feature that is '
-                    'switched off, and the audit refuses captures like that rather '
-                    'than reporting against them.'.format(command), 'Empty output')
-                return
-            if looks_paginated(outputs[command]):
-                crt.Dialog.MessageBox(
-                    "'{0}' came back with a pager prompt, so its output is "
-                    'truncated.\n\nNothing was written. Run "terminal length 0" by '
-                    'hand and try again.'.format(command), 'Output truncated')
-                return
 
         # Always an absolute path. A bare filename resolves against SecureCRT's
         # working directory - its own install folder under Program Files - and
