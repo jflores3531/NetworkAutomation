@@ -147,6 +147,8 @@ python3 l2_device_tracking.py S1    # IOS-XE only, host IP visibility
 python3 tests/test_capture.py
 python3 tests/test_ios_xe_map.py
 python3 tests/test_securecrt_script.py
+python3 tests/test_switchports.py
+python3 tests/test_securecrt_bulk.py
 ```
 
 ## Notes

@@ -122,6 +122,10 @@ The same comparison run against the harden scripts found **one** divergence in 1
 
 That asymmetry is structural rather than luck. An audit must **recognise** whatever syntax a device happens to carry; a harden only has to **emit** one valid form, and where both books accept the same command, emitting it works everywhere. Recognition is the harder problem, so that is where the bugs are — worth knowing before porting this to a third platform.
 
+The same asymmetry produced a second class of false FAIL that has nothing to do with syntax: **recognising which ports a rule governs.** Every per-access-port rule reads its port list from `parse_switchports()`, which classified interfaces by name. Two Layer 3 interfaces have switchport-shaped names — a routed port (`no switchport`) and a Catalyst's out-of-band management port, `GigabitEthernet0/0` in `Mgmt-vrf`, which is not switchport-capable hardware at all — and both landed in the access bucket, drawing a finding from BPDU Guard, UUFB, IP Source Guard, storm control, 802.1x, the access-VLAN rule and the explicit-mode rule at once. None of those commands can be applied to either port.
+
+Excluding by name is not available: the lab's `vios_l2` image carries a genuine switchport called `GigabitEthernet0/0`, and one audit serves both platforms. The interface block's own contents decide it instead — `no switchport`, or an `ip address`/`vrf forwarding` with no switchport line anywhere — and anything ambiguous stays a switchport, so the error falls on the strict side. `tests/test_switchports.py` asserts both directions, including that the lab's `GigabitEthernet0/0` is still audited.
+
 ### Where DISA's own text is wrong
 
 `V-220670` (IOS XE) and `V-220644` (IOS) share the title "must not use the default VLAN for management traffic" but their Check Content disagrees: IOS XE tests for a management SVI on the default VLAN, IOS describes pruning the default VLAN from trunk links. The IOS text is a byte-identical copy of its own `V-220643`, finding sentence included — so the IOS book ships two differently-titled rules with one check text between them, and the newer IOS XE book fixes it.
@@ -129,3 +133,13 @@ That asymmetry is structural rather than luck. An audit must **recognise** whate
 The pair is mapped anyway, and the audit tests the management SVI on both. This is a rare case of implementing a rule's evident intent over its literal Check Content, and it is only defensible because the correction comes from DISA's own later publication rather than from inference. The exception is named in `tests/test_ios_xe_map.py` with its reasoning, and the test asserts both that the exception is still needed and that the two IOS rules still share their text — so if DISA ever corrects the IOS book, the suite says the exception can go.
 
 SNMPv3 auth/priv (V-220604/605) is config-only — there's no NMS in this lab to actually poll it.
+
+## Captures arrive in whatever encoding saved them
+
+The work switches are reachable only through PowerShell or SecureCRT, and both of PowerShell's obvious ways to save output add a byte order mark: `>` and `Out-File` default to UTF-16LE on Windows PowerShell 5.1, and `Out-File -Encoding utf8` writes UTF-8 with a BOM. Read as plain UTF-8, neither failed in a way that named its cause — a UTF-8 BOM glues itself to the first delimiter line, so only `show running-config` goes missing, and UTF-16 decodes to NUL-riddled text matching nothing at all. Both refusals are correct and neither is actionable, which on someone else's network costs a second trip to the switch. `capture.py` sniffs the BOM instead, and a UTF-16 file with the BOM stripped — the one case that cannot be sniffed — names the encoding in its error.
+
+## When empty output is the answer
+
+A capture is refused if any command came back with nothing: a command that returned nothing and a feature that is switched off look identical, and a check handed empty text reports a verdict as confidently as one handed real config.
+
+`show snmp user` is the exception. It prints nothing at all when no SNMPv3 users are defined — a legal switch state, and a non-compliant one that V-220604/605 exist to catch. Refusing the capture there abandons the entire collection over the very finding it was sent to collect, and it fails at collection time, before there is a report to explain it. The section must still be present, so a command that was never run is still caught; it is only allowed to be empty. `_snmpv3_user_live_check` reads empty output as "no SNMPv3 user with an authentication protocol found" and FAILs, which is the right verdict. The exemption list is duplicated in `securecrt/capture_l2s.py` (standalone by design) and `tests/test_securecrt_script.py` asserts the two cannot drift.
