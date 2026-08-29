@@ -125,6 +125,9 @@ def test_constants_match_capture_module():
     check('command list identical',
           tuple(capture_l2s.COMMANDS) == tuple(capture.AUDIT_COMMANDS_L2S),
           f'{capture_l2s.COMMANDS} vs {capture.AUDIT_COMMANDS_L2S}')
+    check('empty-is-an-answer list identical',
+          tuple(capture_l2s.EMPTY_IS_AN_ANSWER) == tuple(capture.EMPTY_IS_AN_ANSWER),
+          f'{capture_l2s.EMPTY_IS_AN_ANSWER} vs {capture.EMPTY_IS_AN_ANSWER}')
 
 
 def test_render_round_trips():
@@ -204,8 +207,33 @@ def test_refusals(tmpdir):
     ok, titles = wrote_nothing('paged', paginate='show vlan brief')
     check('pager output refused', ok and 'truncated' in titles, titles)
 
-    ok, titles = wrote_nothing('empty', empty='show snmp user')
+    ok, titles = wrote_nothing('empty', empty='show vtp password')
     check('empty command output refused', ok and 'empty' in titles, titles)
+
+    # The prompt character is not proof of a Cisco switch: root's shell prompt
+    # ends in '#' too, so the enable-mode check passes on a Linux box. A walker
+    # driving saved sessions will meet a jump host eventually, and bash answers
+    # every command with an error - nothing empty, nothing truncated, so every
+    # other guard here waves it through.
+    ok, titles = wrote_nothing('bash', outputs={
+        command: 'bash: {0}: command not found'.format(command.split()[0])
+        for command in capture_l2s.COMMANDS})
+    check('a bash session with a root # prompt is refused',
+          ok and 'cisco' in titles, titles)
+
+    # ...but not for the one command whose empty output is the answer. A switch
+    # with no SNMPv3 users prints nothing, and that is the V-220604/605 finding
+    # itself - abandoning the capture there would throw away the whole
+    # collection over the very thing it was sent to find.
+    path = os.path.join(tmpdir, 'noSnmpUsers.capture')
+    fake = run_script(path=path, empty='show snmp user')
+    titles = ' '.join(t for t, _ in fake.Dialog.messages).lower()
+    check('empty `show snmp user` still writes the capture',
+          os.path.exists(path) and 'empty' not in titles, titles)
+    if os.path.exists(path):
+        session = capture.load(path)
+        check('and the audit loads it, serving empty snmp output',
+              session.send_command('show snmp user') == '')
 
     ok, titles = wrote_nothing('timeout', timeout_on='show running-config')
     check('read timeout refused', ok and 'failed' in titles, titles)
