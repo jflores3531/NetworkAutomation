@@ -88,4 +88,44 @@ The matching encryption line (V-220608) is accepted, which is why the two rules 
 
 The scripts still push all of these unconditionally, since they're correct for real Cisco hardware. `l2_device_tracking.py` in particular is IOS-XE only and untested against real hardware so far.
 
+## Mapping one STIG onto another
+
+The Cisco IOS Switch and IOS XE Switch L2S/NDM STIGs cover largely the same requirements and share **no rule IDs at all** — IOS XE runs `V-220518` upward, IOS `V-220570` upward, with zero overlap. Auditing an IOS XE switch against the IOS checklist therefore doesn't produce wrong verdicts; it produces 64 rules of `NOT AUTOMATED`, which is worse in a specific way — it looks like broken tooling rather than a wrong argument.
+
+`ios_xe_rule_map.py` maps the two so the same checks serve both. Getting that right needed three separate comparisons, and **each caught a class of error the others structurally could not.**
+
+### Rule titles are not evidence
+
+The first attempt matched on rule title and paired IOS XE's BPDU Guard rule with IOS's **IP Source Guard** rule. Both titles read "must have X enabled on all user-facing or untrusted access switch ports" and differ by two words. That table would have passed review and reported IP Source Guard's verdict under BPDU Guard's ID.
+
+### Check Content answers "is this the same requirement?"
+
+Pairs are accepted only where the literal `... this is a finding` condition matches in both books — the same rule this project already applies when reading a single rule, applied to comparing two. The gate is asserted in `tests/test_ios_xe_map.py`, so a future mapping that drifts fails the suite rather than shipping.
+
+Two rules illustrate why the finding sentence, not the title, has to govern:
+
+- **NTP authentication.** IOS (`V-220606`) requires "authentication with FIPS-compliant algorithms", which IOS cannot provide — it is a permanent finding by DISA's own text. IOS XE (`V-220554`) requires only authentication "that is cryptographically based", and MD5 is a cryptographic hash: weak, not FIPS-approved, and squarely inside what that sentence asks. Same title, opposite verdicts. Inheriting the IOS check would have reported a permanent FAIL against a rule the platform passes — a false FAIL, the mirror image of the false PASS this project usually guards against.
+- **Excess bandwidth / QoS.** The finding sentences agree, the remediation does not: IOS wants `mls qos`, IOS XE wants full MQC. IOS XE's rule is left `NOT AUTOMATED` rather than answered by a check that could never pass there.
+
+### Fix Text answers a different question: "does the same syntax satisfy it?"
+
+Two pairs agreed on the requirement and disagreed on the commands. Both would have reported a finding against a switch configured **exactly per DISA's own IOS XE instructions**:
+
+- **Management ACL** (`V-220523`) — IOS XE builds a *standard* ACL (`ip access-list standard` / `permit x.x.x.0 0.0.0.255`); IOS builds an extended one. The check matched only `ip access-list extended`, and parsed only `permit ip <source> any` — syntax a standard ACL never writes, having no protocol or destination to name. It now branches on ACL kind, including the trailing deny (`deny any log` vs `deny ip any any log-input`), and supports numbered ACLs, which neither book's example uses but real switches do.
+- **RADIUS redundancy** (`V-220565`) — IOS XE points the method list at a named group (`aaa group server radius <name>`); the check required the literal word `radius`. It now accepts either, but a named group counts only when actually defined, so an arbitrary word cannot pass for one.
+
+Two further Fix Text differences were checked and needed no code: `V-220552` carries extra `snmp-server view` lines the audit never reads (it uses live `show snmp user`), and `V-220556`'s apparent difference is a typo in the IOS XE document itself — `iip ssh server algorithm encryption`.
+
+### Audits are more exposed to this than harden scripts
+
+The same comparison run against the harden scripts found **one** divergence in 16 global fixes, and none at all in the per-interface commands — UUFB, storm control, IP Source Guard, DAI, DHCP snooping and 802.1x RADIUS all match the IOS XE Fix Text verbatim, including the modern `radius server <name>` / `address ipv4` form this project already used because `vios_l2` rejected the classic one.
+
+That asymmetry is structural rather than luck. An audit must **recognise** whatever syntax a device happens to carry; a harden only has to **emit** one valid form, and where both books accept the same command, emitting it works everywhere. Recognition is the harder problem, so that is where the bugs are — worth knowing before porting this to a third platform.
+
+### Where DISA's own text is wrong
+
+`V-220670` (IOS XE) and `V-220644` (IOS) share the title "must not use the default VLAN for management traffic" but their Check Content disagrees: IOS XE tests for a management SVI on the default VLAN, IOS describes pruning the default VLAN from trunk links. The IOS text is a byte-identical copy of its own `V-220643`, finding sentence included — so the IOS book ships two differently-titled rules with one check text between them, and the newer IOS XE book fixes it.
+
+The pair is mapped anyway, and the audit tests the management SVI on both. This is a rare case of implementing a rule's evident intent over its literal Check Content, and it is only defensible because the correction comes from DISA's own later publication rather than from inference. The exception is named in `tests/test_ios_xe_map.py` with its reasoning, and the test asserts both that the exception is still needed and that the two IOS rules still share their text — so if DISA ever corrects the IOS book, the suite says the exception can go.
+
 SNMPv3 auth/priv (V-220604/605) is config-only — there's no NMS in this lab to actually poll it.
