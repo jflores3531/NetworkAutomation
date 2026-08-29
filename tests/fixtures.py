@@ -5,6 +5,12 @@ Not taken from any real switch. Addressing is RFC 5737 documentation space and
 the hostname is invented, so this file is safe to commit where a real capture
 would not be - see capture.py. Shaped like a Catalyst running IOS XE, including
 a TwentyFiveGigE uplink, so the interface-prefix handling is exercised too.
+
+It also carries the two Layer 3 interfaces whose names look like switchports:
+the out-of-band management port GigabitEthernet0/0 (in Mgmt-vrf, and never a
+switchport on Catalyst hardware) and a routed uplink carrying 'no switchport'.
+Both used to land in the access bucket and draw findings from every per-access-
+port rule at once. Every suite that reads this config now exercises that.
 """
 
 RUNNING_CONFIG = """Building configuration...
@@ -67,6 +73,17 @@ interface TwentyFiveGigE1/1/1
  switchport trunk allowed vlan 10,20
  ip dhcp snooping trust
  ip arp inspection trust
+!
+interface GigabitEthernet0/0
+ description out-of-band management
+ vrf forwarding Mgmt-vrf
+ ip address 198.51.100.5 255.255.255.0
+ negotiation auto
+!
+interface TenGigabitEthernet1/0/24
+ description routed uplink to the core
+ no switchport
+ ip address 198.51.100.9 255.255.255.252
 !
 interface Vlan10
  ip address 192.0.2.5 255.255.255.0
