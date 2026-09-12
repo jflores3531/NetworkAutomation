@@ -30,9 +30,9 @@ not pushed, which STIG readings were argued over — is in [`docs/DESIGN.md`](do
 |---|---|
 | `netauto.py` | Inventory loading, credential prompting, Netmiko SSH, privilege escalation. |
 | `stig_common.py` | The audit engine: reads a `.cklb`, checks the device, reports PASS/FAIL/NOT APPLICABLE/NOT AUTOMATED. Each answered rule also names what it was read from and the filtered command that shows the same evidence on the switch. |
-| `inventory.yaml` | Devices and hardening config — NTP/syslog/RADIUS addresses, VLAN IDs, management subnet. No credentials. Written as JSON. |
+| `inventory.yaml` | Devices and hardening config — NTP/syslog/RADIUS addresses, VLAN IDs, management subnet. No credentials. YAML, comments and all; JSON is still read. |
 | `secrets.yaml` *(gitignored)* | Secrets for the `*_harden*.py` scripts. Copy `secrets.yaml.example`. |
-| `yaml.py` | Stand-in for PyYAML where nothing can be installed — `safe_load` via the stdlib `json` parser. |
+| `yaml.py` | Stand-in for PyYAML where nothing can be installed — parses the subset an inventory uses (nested mappings, lists, scalars, comments) with the standard library alone, and refuses anything outside it by line number rather than guessing. |
 
 ### Reading what is already out there
 | | |
@@ -122,19 +122,19 @@ Which of the two paths applies is decided by whether the host lets you install a
 
 The inventory it reads can be this small:
 
-```json
-{
-  "devices": {},
-  "non_user_vlans": [1, 10],
-  "unused_vlan": 999,
-  "native_vlan": 998,
-  "management_subnet": "10.0.0.0/24"
-}
+```yaml
+devices: {}
+non_user_vlans:
+  - 1
+  - 10
+unused_vlan: 999
+native_vlan: 998
+management_subnet: 10.0.0.0/24
 ```
 
-`devices` stays an empty object because `load_inventory()` indexes that key directly; captures are audited under whatever label you pass on the command line, so no switch needs an entry. `management_subnet` takes one prefix or several (a list, or one comma-separated string) — a management network is not always a single range — and is **not** optional — with it absent the vty management ACL rule (V-220575, or V-220523 under the IOS XE checklist) reports FAIL on every device with the missing key as its reason, rather than a real verdict about the switch. `automation_host` is not needed here: only the `*_harden_acl.py` scripts read it, and those push config over a live connection. Every key is documented in [`inventory.yaml.example`](inventory.yaml.example).
+`devices` stays an empty mapping because `load_inventory()` indexes that key directly; captures are audited under whatever label you pass on the command line, so no switch needs an entry. `management_subnet` takes one prefix or several (a list, or one comma-separated string) — a management network is not always a single range — and is **not** optional — with it absent the vty management ACL rule (V-220575, or V-220523 under the IOS XE checklist) reports FAIL on every device with the missing key as its reason, rather than a real verdict about the switch. `automation_host` is not needed here: only the `*_harden_acl.py` scripts read it, and those push config over a live connection. Every key is documented in [`inventory.yaml.example`](inventory.yaml.example).
 
-Across a fleet where each site numbers its user and voice VLANs differently, add `user_vlan_names: ["USERS", "VOICE"]`. Those names are matched against the name column of `show vlan brief`, which every capture already carries, and they override `non_user_vlans` — so a switch whose user VLAN is 10 is still checked even though 10 is the management VLAN elsewhere and sits in that ID list. Without it the ID exclusion wins and the audit reports PASS for DHCP snooping and DAI coverage it never verified. `non_user_vlan_names` is the mirror, for a non-user VLAN whose ID moves instead; where every non-user VLAN is consistently numbered, leave it empty. `--user-vlan-names` and `--non-user-vlan-names` override either list for one run.
+Across a fleet where each site numbers its user and voice VLANs differently, add a `user_vlan_names:` list of `USERS`, `VOICE` and whatever else the site calls them. Those names are matched against the name column of `show vlan brief`, which every capture already carries, and they override `non_user_vlans` — so a switch whose user VLAN is 10 is still checked even though 10 is the management VLAN elsewhere and sits in that ID list. Without it the ID exclusion wins and the audit reports PASS for DHCP snooping and DAI coverage it never verified. `non_user_vlan_names` is the mirror, for a non-user VLAN whose ID moves instead; where every non-user VLAN is consistently numbered, leave it empty. `--user-vlan-names` and `--non-user-vlan-names` override either list for one run.
 
 **Live runs — Netmiko over SSH.** Only for scripts that actually open a connection: the `*_stig_harden*.py` pushes, live audits, and the backup/diff/save utilities. On a host where installs are possible:
 
@@ -285,6 +285,7 @@ python3 tests/test_checklist_target.py
 python3 tests/test_sanitize_capture.py
 python3 tests/test_arp_inventory.py
 python3 tests/test_pdf_ips.py
+python3 tests/test_yaml_parser.py
 ```
 
 ## Getting a report into STIG Viewer 3
