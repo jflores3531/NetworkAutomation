@@ -145,7 +145,7 @@ def test_an_unautomated_rule_claims_nothing(tmpdir):
     print('\na rule nothing checked claims no command; one that looked does')
     answered = blocks(report(tmpdir, 'unautomated'))
     unautomated = [rule for rule, lines in answered.items() if 'NOT AUTOMATED' in lines[0]]
-    check('the run really did leave some rules unautomated', unautomated, unautomated)
+    print(f'       ({len(unautomated)} rule(s) came back NOT AUTOMATED on this inventory)')
 
     def claims(rule):
         return any(line.startswith('Inspected with:') for line in answered[rule][1:])
@@ -155,12 +155,17 @@ def test_an_unautomated_rule_claims_nothing(tmpdir):
 
     skipped = [rule for rule in unautomated if not has_reason(rule)]
     looked = [rule for rule in unautomated if has_reason(rule)]
+    # Both of these are invariants, not requirements that the case occur. Which
+    # rules come back NOT AUTOMATED depends on the inventory the run was given -
+    # declare `core_switch_hostname_tags` and V-220671 resolves instead - so
+    # asserting that some rule took each path made the suite fail on a different
+    # inventory rather than on a defect.
     check('no skipped rule names a command',
           not [rule for rule in skipped if claims(rule)],
           [rule for rule in skipped if claims(rule)])
     check('a check that looked and then deferred to a human still says what it read',
-          looked and all(claims(rule) for rule in looked),
-          [r for r in looked if not claims(r)] or 'no such rule in this run')
+          all(claims(rule) for rule in looked),
+          [r for r in looked if not claims(r)] or 'no rule took this path in this run')
 
     # Every rule in this checklist happens to have a check, so the skipped case
     # above can be vacuous. Proven directly instead: an audit with no checks at
@@ -211,12 +216,17 @@ def test_the_line_reaches_the_exported_checklist(tmpdir):
                   and not (rule.get('finding_details') or rule.get('comments'))))
 
 
-def test_templates_are_named_on_every_rule_that_read_them(tmpdir):
-    """When a config sources interface templates, every check reads the
-    expanded config - so every rule really was decided partly from the
-    template's own body, and the command that produced it belongs beside the
-    verdict."""
-    print('\nwhere templates were expanded, the rules say which ones they read')
+def test_templates_are_named_only_on_the_rules_they_could_move(tmpdir):
+    """Expanding a template inserts its body into an interface block and
+    changes nothing else. So an interface rule really was decided partly from
+    the template, and a rule grepping `^logging userinfo` reaches the identical
+    verdict either way.
+
+    This once named the template read on every rule, because every check is
+    wrapped by through_templates - true about the code, false about the rules,
+    and it put a claim that the template mattered into all sixty-odd comment
+    boxes."""
+    print('\nthe template read is named on interface rules and nowhere else')
     outputs = dict(fixtures.OUTPUTS)
     config = outputs['show running-config']
     templated = config.replace('interface GigabitEthernet1/0/1\n',
@@ -227,12 +237,29 @@ def test_templates_are_named_on_every_rule_that_read_them(tmpdir):
         'Template Name  : USER-PORT\n----------\n switchport mode access\nend\n')
 
     answered = blocks(report(tmpdir, 'templated', outputs=outputs))
-    lines = [line for rule, block in answered.items() for line in block
-             if line.startswith('Inspected with:')]
     check('the report still answered its rules', len(answered) > 40, len(answered))
-    check('and names the template command it read',
-          all('show template interface source user USER-PORT' in line for line in lines),
-          lines[:3])
+
+    named, unnamed = set(), set()
+    for rule, block in answered.items():
+        for line in block:
+            if line.startswith('Inspected with:'):
+                (named if 'show template' in line else unnamed).add(rule)
+
+    check('some rules name the template read', named, named)
+    check('and most do not', len(unnamed) > len(named), (len(named), len(unnamed)))
+
+    # The interface rules, by what their own evidence is. Every one of these is
+    # decided from an interface block, which is the thing expansion changes.
+    for rule in ('V-220656', 'V-220658', 'V-220662', 'V-220666', 'V-220672'):
+        check(f'{rule} is an interface rule and names it', rule in named, sorted(named))
+    # These are decided from lines a template cannot reach.
+    for rule in ('V-220518', 'V-220525', 'V-220547', 'V-220555', 'V-220657'):
+        check(f'{rule} is not, and does not', rule in unnamed or rule not in answered,
+              sorted(named))
+
+    check('the ones that do name the template by name',
+          all('USER-PORT' in line for rule in named for line in answered[rule]
+              if line.startswith('Inspected with:') and 'show template' in line))
 
 
 def apply_filter(command, config):
@@ -374,7 +401,7 @@ if __name__ == '__main__':
         test_the_report_says_what_each_rule_was_read_from(tmpdir)
         test_an_unautomated_rule_claims_nothing(tmpdir)
         test_the_line_reaches_the_exported_checklist(tmpdir)
-        test_templates_are_named_on_every_rule_that_read_them(tmpdir)
+        test_templates_are_named_only_on_the_rules_they_could_move(tmpdir)
         test_every_verify_filter_can_show_its_own_evidence(tmpdir)
         test_verify_is_never_confused_with_what_the_audit_ran(tmpdir)
     print('\n' + ('ALL CHECKS PASSED' if not failures
