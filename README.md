@@ -16,51 +16,95 @@ Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX
 
 ## What's here
 
-### Shared
-- **`netauto.py`** — Inventory loading, device-name validation, credential prompting, Netmiko SSH connection handling, automatic privilege escalation.
-- **`inventory.yaml`** — Device inventory and STIG-hardening config (NTP/syslog/RADIUS server IPs, VLAN IDs, management subnet, automation host). No credentials.
-- **`secrets.yaml`** (gitignored) — Plaintext secrets for the `*_stig_harden*.py` scripts. Copy `secrets.yaml.example` to start.
+Everything runs from the repository root — `python3 scripts/<name>.py`. Names below are bare for
+readability. `inventory.yaml`, `secrets.yaml`, `checklists/`, `backups/` and `audit_logs/` sit at
+the root, beside `scripts/` rather than inside it.
 
-### Read-only / diagnostics
-- **`show_command.py`** — Run a show command against one or more devices.
-- **`health_check.py`** — Reachability, unexpected interface state, error counters, CPU, environment health (temp/power/fans).
+Anything marked **configures devices** writes to running-config. Everything else only reads.
+The reasoning behind the ones that look odd — why scripts are split, what is deliberately
+not pushed, which STIG readings were argued over — is in [`docs/DESIGN.md`](docs/DESIGN.md).
+
+### Shared
+| | |
+|---|---|
+| `netauto.py` | Inventory loading, credential prompting, Netmiko SSH, privilege escalation. |
+| `stig_common.py` | The audit engine: reads a `.cklb`, checks the device, reports PASS/FAIL/NOT APPLICABLE/NOT AUTOMATED. Each answered rule also names what it was read from and the filtered command that shows the same evidence on the switch. |
+| `inventory.yaml` | Devices and hardening config — NTP/syslog/RADIUS addresses, VLAN IDs, management subnet. No credentials. Written as JSON, which PyYAML parses unchanged. |
+| `secrets.yaml` *(gitignored)* | Secrets for the `*_harden*.py` scripts. Copy `secrets.yaml.example`. |
+
+### Read-only and diagnostics
+| | |
+|---|---|
+| `show_command.py` | Run a show command against one or more devices. |
+| `health_check.py` | Reachability, unexpected interface state, error counters, CPU, temperature/power/fans. |
+| `arp_inventory.py` | What is live on a subinterface, from the router's ARP table, as a CSV. |
+| `pdf_ips.py` | Addresses out of a PDF network diagram, with the page and label beside each. |
+| `merge_walk_csvs.py` | Merges the per-run CSVs the SecureCRT walks write into one file, newest row per switch. |
+| `backup_config.py` | Back up running-config + VLANs; a latest copy per device plus a pruned archive. |
+| `config_diff.py` | Compare current running-config/VLANs against the last backup. |
 
 ### Configuration
-- **`config_loopback.py`** — Create or update a loopback interface.
-- **`push_config.py`** — Push config commands from a file to one or more devices.
-- **`l2_quiet_console.py`** — Disable live console/monitor logging. Quality-of-life, not a STIG item; messages still buffer and forward to syslog.
+| | |
+|---|---|
+| `config_loopback.py` | **Configures devices.** Create or update a loopback interface. |
+| `push_config.py` | **Configures devices.** Push config commands from a file to one or more devices. |
+| `save_config.py` | running-config to startup-config. Run it *after* a harden pass **and** its audit. |
+| `l2_quiet_console.py` | Disable live console/monitor logging. Quality-of-life, not a STIG item — messages still buffer and forward to syslog. |
+| `l2_device_tracking.py` | SISF `device-tracking policy` for host IP visibility. Not a STIG requirement, IOS XE only. |
+| `lab/rebuild_lab.py` | Rebuilds the GNS3 lab from `lab/topology.yaml`. |
 
-### Backup & compliance
-- **`backup_config.py`** — Back up running-config + VLANs; keeps a "latest" copy per device plus a timestamped archive pruned to 5.
-- **`config_diff.py`** — Compare current running-config/VLANs against the last backup.
-- **`save_config.py`** — Save running-config to startup-config on one device or all. Run it *after* a harden pass and its audit, not as part of one — see [`docs/DESIGN.md`](docs/DESIGN.md).
-- **`stig_common.py`** — Shared audit engine: loads a DISA `.cklb` checklist, checks the device against it, reports PASS/FAIL/NOT AUTOMATED by severity.
-- **`lab/rebuild_lab.py`** — Rebuilds the GNS3 lab from `lab/topology.yaml` (nodes, links, the automation container's SSH/repo/package provisioning, the switch's base config) through the GNS3 REST API and device consoles. Written after losing the lab VM once: the next loss costs one command instead of an afternoon. Idempotent — run against the live lab it verifies everything and changes nothing; `--verify` checks without touching. Disk images are the one thing it can't restore.
-- **`securecrt/capture_l2s.py`** — Runs *inside* SecureCRT (Script → Run) against an already-open session, sending the five read-only show commands and writing a capture file — then, when it finds the repo next to itself, runs the audit and opens the report, making the whole flow one action: connect, run script, read report. Collection is standalone by design (no netmiko, no repo imports), and the offline audit itself needs only Python + pyyaml — netmiko is imported lazily, only when a live connection is actually opened.
-- **`capture.py`** — Offline auditing. Every check is a pure function of command output, so an audit can read a capture file instead of a switch — for networks where the tooling can't be pointed at the devices directly. A malformed, truncated or partial capture is refused rather than audited, since a check handed empty text returns a verdict just as confidently as one handed real config.
-- **`l2_stig_audit.py`** — Audit against the IOS XE Switch L2S/NDM STIG (the default) or the IOS Switch one (`--checklist ios` — what the lab's vios_l2 switches are). Full interface-scoped coverage, live discovery for root ports/VTP/user VLANs. `--from-capture` audits collected output; `--capture-to` records a live run so the two can be compared.
-- **`ios_xe_rule_map.py`** — The IOS and IOS XE switch STIGs share no rule IDs, but 58 of the IOS XE STIG's 64 rules are the same requirement as an IOS rule already checked here. This maps them, accepting a pair only when the literal "this is a finding" condition matches in both. Four rules are deliberately excluded and report NOT AUTOMATED — reusing their IOS check would answer a different question.
-- **`nxos_stig_audit.py`** — Audit against the NX-OS Switch L2S/NDM STIG.
-- **`ios_router_audit.py`** — Audit against the IOS Router NDM/RTR STIG. Most RTR rules need topology/policy context and report NOT AUTOMATED.
-- **`l2_stig_harden_global.py`** — Bulk L2S hardening: BPDU/Loop Guard, Rapid-PVST, UDLD, IGMP + DHCP snooping, archive logging, VTP, per-port access/trunk hardening, NTP, syslog, SNMPv3. **Run first** — the other `l2_stig_harden_*.py` scripts depend on it.
-- **`l2_stig_harden_ipsg.py`** — IP Source Guard (V-220634) on access ports. See Notes for the static-host caveat.
-- **`l2_stig_harden_dai.py`** — Dynamic ARP Inspection (V-220635) on user VLANs. Same static-host caveat.
-- **`l2_stig_harden_interfaces.py`** — Per-port L2S fixes split out of the bulk pass: access vs. trunk classification, UUFB, storm control, allowed-VLAN scoping, 802.1x/MAB.
-- **`l2_stig_harden_acl.py`** — vty management ACL (V-220575), scoped to the automation host. Run as its own script.
-- **`l2_stig_harden_aaa.py`** — `aaa new-model` + RADIUS auth (V-220587/617) + password policy (V-220589-594). **Run last.**
-- **`l2_device_tracking.py`** — SISF `device-tracking policy` for host IP visibility. Not a STIG requirement, IOS-XE only.
+### Auditing
+| | |
+|---|---|
+| `l2_stig_audit.py` | IOS XE Switch L2S/NDM (default) or IOS Switch (`--checklist ios`). Interface-scoped, with live discovery for root ports, VTP and user VLANs. `--from-capture` audits collected output, `--to-cklb` writes a STIG Viewer 3 checklist. |
+| `nxos_stig_audit.py` | NX-OS Switch L2S/NDM. |
+| `ios_router_audit.py` | IOS Router NDM/RTR. Most RTR rules need topology context and report NOT AUTOMATED. |
+| `capture.py` | Offline auditing from a capture file. Refuses a malformed, truncated or partial capture rather than auditing it. |
+| `sanitize_capture.py` | Redact a capture so it can leave the network. Refuses to write if anything sensitive survives the pass. |
+| `ios_xe_rule_map.py` | Maps 60 of the IOS XE STIG's 64 rules onto the IOS rule that asks the same thing, accepting a pair only where the finding sentence matches in both. |
 
-#### NX-OS
-- **`nxos_stig_harden_global.py`** — NX-OS equivalent of `l2_stig_harden_global.py`, enabling required features (`feature udld`, `feature dhcp`, `feature vtp`, `feature ntp`) before applying fixes.
-- **`nxos_stig_harden_interfaces.py`** — Per-port NX-OS fixes: UUFB, IP Source Guard, storm control, DAI trust, VLAN pruning.
-- **`nxos_stig_harden_acl.py`** — NX-OS management ACL (V-220479), scoped to the automation host.
-- **`nxos_stig_harden_aaa.py`** — NX-OS RADIUS auth and accounting. NX-OS falls back to the local account automatically when RADIUS is unreachable.
+### SecureCRT
+Run inside SecureCRT (Script → Run) on a host where netmiko cannot be installed. Copy the folder
+together — they import from each other. Host keys are **not** accepted blind, so a switch whose key
+SecureCRT has never seen stops an unattended run on a modal dialog; connect to it once by hand first.
 
-#### IOS Router
-- **`ios_router_stig_harden_global.py`** — Global RTR/NDM fixes: disable gratuitous ARP, CDP, AUX port; enable CEF; NTP, syslog, SSH FIPS ciphers, password encryption.
-- **`ios_router_stig_harden_acl.py`** — vty management ACL (V-215667), the router port of `l2_stig_harden_acl.py`.
-- **`ios_router_stig_harden_aaa.py`** — AAA/RADIUS (V-215709) plus password complexity (V-215681-686). `local` stays last in the method list, so SSH login still succeeds if RADIUS is unreachable.
-- **`ios_router_stig_harden_urpf.py`** — Unicast Reverse Path Forwarding (V-216989) on external-facing interfaces. Requires `allow-default` — see [`docs/DESIGN.md`](docs/DESIGN.md).
+| | |
+|---|---|
+| `capture_l2s.py` | One open session: send the read-only commands, audit them, write the `.cklb`. Cannot connect to anything, so it cannot be aimed at the wrong device. |
+| `capture_l2s_bulk.py` | The same across every saved session, unattended. One `run_log_<stamp>.csv` accounting for every session, including the ones nothing answered from. |
+| `inventory_l2s.py` | `show version` per session into one `inventory_<stamp>.csv`. A stack is one row per chassis. |
+| `harden_l2s_bulk.py` | **Configures devices.** Logging/audit, access control, SSH crypto, the V-220534 service block. vty limit opt-in. Never writes startup-config. |
+| `harden_access_ports_bulk.py` | **Configures devices.** The access-port fixes on every host-facing port. Never sends a trunk command. Reads and expands interface templates before classifying any port. |
+
+### Hardening — IOS / IOS XE switch
+Run in the order listed. Each is separate because of what it can cost you if it is wrong.
+
+| | |
+|---|---|
+| `l2_stig_harden_global.py` | **Run first.** BPDU/Loop Guard, Rapid-PVST, UDLD, IGMP + DHCP snooping, archive logging, VTP, NTP, syslog, SNMPv3. |
+| `l2_stig_harden_logging_access.py` | Logging/audit, access control, SSH crypto, unnecessary services. Touches no forwarding, so it needs no change window. vty lines behind `--with-vty`. |
+| `l2_stig_harden_access_ports.py` | Host-facing ports: access mode, PortFast, UUFB, storm control, unused VLAN on shut ports. Safe on a working day. 802.1x is deliberately not pushed. |
+| `l2_stig_harden_trunk_ports.py` | Uplink ports: `nonegotiate`, snooping/DAI trust, allowed-VLAN list, native VLAN, Root Guard. **Its own change window** — these decide what the uplink carries. |
+| `l2_stig_harden_ipsg.py` | IP Source Guard (V-220634). Static-host caveat in Notes. |
+| `l2_stig_harden_dai.py` | Dynamic ARP Inspection (V-220635). Same caveat. |
+| `l2_stig_harden_acl.py` | vty management ACL (V-220575). Its own script — a wrong `access-class` locks out every future session. |
+| `l2_stig_harden_aaa.py` | **Run last.** `aaa new-model`, RADIUS auth, password policy. |
+
+### Hardening — NX-OS
+| | |
+|---|---|
+| `nxos_stig_harden_global.py` | Enables the required features first, then applies the global fixes. |
+| `nxos_stig_harden_interfaces.py` | Per-port: UUFB, IPSG, storm control, DAI trust, VLAN pruning. |
+| `nxos_stig_harden_acl.py` | Management ACL (V-220479). |
+| `nxos_stig_harden_aaa.py` | RADIUS auth and accounting. |
+
+### Hardening — IOS router
+| | |
+|---|---|
+| `ios_router_stig_harden_global.py` | Disable gratuitous ARP, CDP, AUX; enable CEF; NTP, syslog, SSH FIPS ciphers. |
+| `ios_router_stig_harden_acl.py` | vty management ACL (V-215667). |
+| `ios_router_stig_harden_aaa.py` | AAA/RADIUS plus password complexity. `local` stays last, so SSH still works if RADIUS is unreachable. |
+| `ios_router_stig_harden_urpf.py` | uRPF (V-216989) on external interfaces. Needs `allow-default` — see Notes. |
 
 ## Requirements
 
@@ -68,97 +112,101 @@ Validated against a 7-device virtual lab (2 IOS routers, 3 IOSvL2 switches, 2 NX
 pip install -r requirements.txt
 ```
 
-Copy `secrets.yaml.example` to `secrets.yaml` and fill in real values before running any `*_stig_harden*.py` script that needs them.
+netmiko and PyYAML are real dependencies here. Netmiko is still imported inside
+`netauto.connect()` rather than at module scope, so `--from-capture` audits and the SecureCRT
+collectors never load it.
+
+Copy `secrets.yaml.example` to `secrets.yaml` and fill in real values before running any
+`*_stig_harden*.py` script that needs them.
 
 ## Usage
 
-Each script prompts for your SSH username and password via `getpass` (not echoed or stored).
-
 ```bash
 # Run a show command against one or more devices
-python3 show_command.py "show ip interface brief" R1
-python3 show_command.py "show ip interface brief" R1 R2 S1
+python3 scripts/show_command.py "show ip interface brief" R1
+python3 scripts/show_command.py "show ip interface brief" R1 R2 S1
 
-# Check operational health of all devices, or specific ones
-python3 health_check.py
-python3 health_check.py R1 S1
+# Operational health of all devices, or specific ones
+python3 scripts/health_check.py
+python3 scripts/health_check.py R1 S1
 
-# Configure a loopback interface
-python3 config_loopback.py R1 1.1.1.1 255.255.255.255 --interface 0
+# Configure a loopback, or push commands from a file
+python3 scripts/config_loopback.py R1 1.1.1.1 255.255.255.255 --interface 0
+python3 scripts/push_config.py commands.txt R1 R2
 
-# Push config commands from a file to one or more devices
-python3 push_config.py commands.txt R1 R2
+# Back up, then diff against the last backup
+python3 scripts/backup_config.py --all
+python3 scripts/config_diff.py S1
 
-# Back up one device or all devices
-python3 backup_config.py R1
-python3 backup_config.py
+# STIG audit. Defaults to the IOS XE STIG; --checklist ios for classic IOS.
+# The two share no rule IDs, so the wrong one reports every rule NOT AUTOMATED.
+python3 scripts/l2_stig_audit.py S1 --checklist ios
+python3 scripts/nxos_stig_audit.py NXCore1
+python3 scripts/ios_router_audit.py R1
 
-# Diff current running-config against last backup
-python3 config_diff.py R1
+# Audit without connecting: collect the show commands into a file - a logged
+# terminal session works - then audit it anywhere. --capture-to records a live
+# run, and auditing that file must give the same report.
+python3 scripts/l2_stig_audit.py S1 --capture-to captures/S1.capture --checklist ios
+python3 scripts/l2_stig_audit.py S1 --from-capture captures/S1.capture --checklist ios
 
-# STIG audit. l2_stig_audit.py defaults to the IOS XE STIG (the deployment
-# target); the lab's vios_l2 switches are IOS, hence --checklist ios there.
-# The two STIGs share no rule IDs, so the wrong checklist reports every rule
-# NOT AUTOMATED.
-python3 l2_stig_audit.py S1 --checklist ios
-python3 nxos_stig_audit.py NXCore1
-python3 ios_router_audit.py R1
+# Write the verdicts into a STIG Viewer 3 checklist instead of retyping 64
+# rules. NOT AUTOMATED becomes not_reviewed, never not_a_finding.
+python3 scripts/l2_stig_audit.py SW01 --from-capture captures/SW01.capture --to-cklb checklists/out/
 
-# Audit without connecting. Collect the five read-only show commands into a
-# file - a logged terminal session works - then audit it from anywhere.
-# --capture-to records a live run; auditing that file must give the same
-# report, which is how the offline path is checked against a real switch.
-python3 l2_stig_audit.py S1 --checklist ios --capture-to captures/S1.capture
-python3 l2_stig_audit.py S1 --checklist ios --from-capture captures/S1.capture
-
-# An IOS XE switch needs no flag - that checklist is the default.
-python3 l2_stig_audit.py SW01 --from-capture captures/SW01.capture
+# Redact a capture so it can leave the network. Refuses to write at all if
+# anything it recognises as sensitive survives the pass.
+python3 scripts/sanitize_capture.py captures/SW01.capture
 
 # STIG hardening for an L2 switch - run in this order:
-python3 l2_stig_harden_global.py S1 # bulk fixes, run first
-python3 l2_stig_harden_ipsg.py S1   # IP Source Guard - can drop a statically-addressed host, see Notes
-python3 l2_stig_harden_dai.py S1    # DAI - same static-host risk as IPSG, see Notes
-python3 l2_stig_harden_acl.py S1    # vty management ACL - run isolated
-python3 l2_stig_harden_aaa.py S1    # AAA/RADIUS + password policy - run last
+python3 scripts/l2_stig_harden_global.py S1
+python3 scripts/l2_stig_harden_logging_access.py S1
+python3 scripts/l2_stig_harden_access_ports.py S1
+python3 scripts/l2_stig_harden_trunk_ports.py S1     # its own change window
+python3 scripts/l2_stig_harden_ipsg.py S1
+python3 scripts/l2_stig_harden_dai.py S1
+python3 scripts/l2_stig_harden_acl.py S1
+python3 scripts/l2_stig_harden_aaa.py S1             # last
 
 # NX-OS hardening - global first, then the isolated scripts
-python3 nxos_stig_harden_global.py NXCore1
-python3 nxos_stig_harden_interfaces.py NXCore1
-python3 nxos_stig_harden_acl.py NXCore1
-python3 nxos_stig_harden_aaa.py NXCore1
+python3 scripts/nxos_stig_harden_global.py NXCore1
+python3 scripts/nxos_stig_harden_interfaces.py NXCore1
+python3 scripts/nxos_stig_harden_acl.py NXCore1
+python3 scripts/nxos_stig_harden_aaa.py NXCore1
 
 # IOS router hardening - same order
-python3 ios_router_stig_harden_global.py R1
-python3 ios_router_stig_harden_urpf.py R1     # external-facing interfaces only
-python3 ios_router_stig_harden_acl.py R1
-python3 ios_router_stig_harden_aaa.py R1
+python3 scripts/ios_router_stig_harden_global.py R1
+python3 scripts/ios_router_stig_harden_urpf.py R1
+python3 scripts/ios_router_stig_harden_acl.py R1
+python3 scripts/ios_router_stig_harden_aaa.py R1
 
-# Persist the result - only after re-auditing and confirming it's what you wanted.
-# Until this runs, a reload reverts the device, which is the escape hatch if a
-# push locked you out.
-python3 save_config.py NXCore1
-python3 save_config.py            # or every device in the inventory
+# Persist the result - only after re-auditing and confirming it is what you wanted.
+python3 scripts/save_config.py --all
 
 # Optional, non-STIG
-python3 l2_quiet_console.py S1      # quiet the console during interactive config work
-python3 l2_device_tracking.py S1    # IOS-XE only, host IP visibility
+python3 scripts/l2_quiet_console.py S1
+python3 scripts/l2_device_tracking.py S1
 
 # Tests - no framework, no device needed
-python3 tests/test_capture.py
-python3 tests/test_ios_xe_map.py
-python3 tests/test_securecrt_script.py
-python3 tests/test_switchports.py
-python3 tests/test_securecrt_bulk.py
+for t in tests/test_*.py; do python3 "$t"; done
 ```
+
+## Getting a report into STIG Viewer 3
+
+`--to-cklb` is a flag on the audit, not a separate conversion step: one run produces
+both the printed report and the checklist file. The end-to-end walkthrough on Windows —
+collect, audit, open, and what a re-run does to anything typed into STIG Viewer — is in
+[`docs/STIG-VIEWER.md`](docs/STIG-VIEWER.md).
 
 ## Notes
 
 - Devices are defined in `inventory.yaml` by name, host, and Netmiko `device_type` (e.g. `cisco_ios`, `cisco_nxos`).
-- Backups are written to `backups/`, with dated copies in `backups/archive/`.
-- STIG rules requiring external infrastructure (org-defined DoS safeguards, PKI, IOS-version tracking) or manual/topology review are reported NOT AUTOMATED rather than guessed at.
-- `l2_stig_harden_ipsg.py` and `l2_stig_harden_dai.py` both only trust the DHCP snooping binding table — a statically-addressed host with no DHCP lease is invisible to either and can have its traffic dropped once they're pushed. Confirmed live. If a statically-addressed host (e.g. the automation host itself) is directly connected to a device, consider skipping one or both scripts for that device until this has a real fix.
-- Scripts that push config append a JSON-line audit record (timestamp, script, device, username, commands) to `audit_logs/audit.log`. Not tracked in git.
-- Several STIG-required commands don't exist or function on this lab's `vios_l2` image — see [`docs/DESIGN.md`](docs/DESIGN.md) for the list and why the scripts still push them.
+- Backups go to `backups/`, dated copies to `backups/archive/`. Scripts that push config append a JSON-line record to `audit_logs/audit.log`. Neither is tracked in git.
+- The L2 audit prints, above the report, which VLANs it classified as user VLANs and why — a VLAN wrongly excluded there produces a quiet false PASS.
+- Rules needing external infrastructure or topology judgment are reported NOT AUTOMATED rather than guessed at.
+- `l2_stig_harden_ipsg.py` and `l2_stig_harden_dai.py` both trust only the DHCP snooping binding table, so a statically-addressed host with no lease has its traffic dropped.
+- `ios_router_stig_harden_urpf.py` is pushed with `allow-default`; strict mode drops sources reachable only via the default route, which on this lab includes the management path.
+- Several STIG-required commands do not exist or function on the lab's `vios_l2` image — see [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Roadmap
 

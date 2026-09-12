@@ -13,17 +13,20 @@ So the constants are asserted equal, and a stubbed SecureCRT drives the real
 main() to produce a real file, which capture.load() then has to accept.
 """
 
+import json
 import os
+import re
 import sys
 import tempfile
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT)
+sys.path.insert(0, os.path.join(PROJECT, 'scripts'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT, 'securecrt'))
 
 import capture
 import capture_l2s
+import fixtures
 from fixtures import OUTPUTS
 
 failures = []
@@ -61,6 +64,10 @@ class FakeScreen:
 
     def Send(self, text):
         command = text.rstrip('\r\n')
+        # A bare carriage return is read_prompt() asking for a fresh prompt,
+        # not a command - a real switch answers it with one and nothing else.
+        if not command:
+            return
         self.sent.append(command)
         if command == self.timeout_on:
             self._pending = None
@@ -112,6 +119,57 @@ def run_script(**kwargs):
     return fake
 
 
+# l2_stig_audit.py parses argv and runs an audit at import, so its readers
+# cannot simply be imported here. They are lifted out of its source instead -
+# ugly, and much less ugly than a second hand-written copy of what they are
+# supposed to agree with. The switch table they lean on lives in stig_common,
+# which imports cleanly, so only the two readers themselves need lifting.
+def audit_version_readers():
+    """The audit's `show version` readers, executed out of its source."""
+    import stig_common
+    with open(os.path.join(PROJECT, 'scripts', 'l2_stig_audit.py'), encoding='utf-8') as handle:
+        source = handle.read()
+    start = source.index('def _show_version_switch_table')
+    end = source.index('def _ios_release_supported_check')
+    namespace = {'re': __import__('re'), 'stig_common': stig_common}
+    exec(compile(source[start:end], 'l2_stig_audit.py', 'exec'), namespace)
+    return namespace
+
+
+# A stack of two models with the active member second. Every per-member field -
+# model, serial, base MAC - is printed once per member in member order, so both
+# readers have to pair them with the table's active row rather than take the
+# first. They disagreeing here would put one switch's serial in the log beside
+# another switch's model.
+SHOW_VERSION_MIXED_STACK = """Cisco IOS XE Software, Version 17.12.04
+
+Switch 01
+---------
+Base Ethernet MAC Address            : 00:11:11:11:11:11
+Model Number                         : C9300-24P
+System Serial Number                 : FOC1111X1XX
+
+Switch 02
+---------
+Base Ethernet MAC Address            : 00:22:22:22:22:22
+Model Number                         : C9300-48P
+System Serial Number                 : FOC2222X2XX
+
+Switch Ports Model              SW Version        SW Image              Mode
+------ ----- -----              ----------        ----------            ----
+     1 24    C9300-24P          17.12.04          CAT9K_IOSXE           INSTALL
+*    2 48    C9300-48P          17.12.04          CAT9K_IOSXE           INSTALL"""
+
+# A `show version` with no version banner and no `Model Number` line, where the
+# switch table is the only place either fact appears. Both readers have to
+# agree there too, not just on the easy shape.
+SHOW_VERSION_TABLE_ONLY = """Cisco IOS Software [Dublin], Catalyst L3 Switch Software (CAT9K_IOSXE)
+
+Switch Ports Model              SW Version        SW Image              Mode
+------ ----- -----              ----------        ----------            ----
+*    1 52    C9300-48P          17.12.04          CAT9K_IOSXE           INSTALL"""
+
+
 def test_constants_match_capture_module():
     print('standalone copies match capture.py')
     check('delimiter prefix identical',
@@ -122,18 +180,65 @@ def test_constants_match_capture_module():
     check('delimiter line identical for a sample command',
           capture_l2s.format_delimiter('show vtp password')
           == capture.format_delimiter('show vtp password'))
+    # The collector sends the required commands and the optional ones alike -
+    # it is the only chance to read the switch, so a command left out here is
+    # one no later audit of that capture can ever have.
     check('command list identical',
-          tuple(capture_l2s.COMMANDS) == tuple(capture.AUDIT_COMMANDS_L2S),
-          f'{capture_l2s.COMMANDS} vs {capture.AUDIT_COMMANDS_L2S}')
+          tuple(capture_l2s.COMMANDS)
+          == tuple(capture.AUDIT_COMMANDS_L2S) + tuple(capture.OPTIONAL_COMMANDS_L2S),
+          f'{capture_l2s.COMMANDS} vs '
+          f'{capture.AUDIT_COMMANDS_L2S + capture.OPTIONAL_COMMANDS_L2S}')
     check('empty-is-an-answer list identical',
           tuple(capture_l2s.EMPTY_IS_AN_ANSWER) == tuple(capture.EMPTY_IS_AN_ANSWER),
           f'{capture_l2s.EMPTY_IS_AN_ANSWER} vs {capture.EMPTY_IS_AN_ANSWER}')
+    # The per-device sixth command. The collector spells it, the loader demands
+    # it by the same spelling, and a capture whose section headers disagree with
+    # what the audit asks for is one the audit refuses.
+    check('interface template command identical',
+          capture_l2s.template_command('USER_PORT') == capture.template_command('USER_PORT'),
+          capture_l2s.template_command('USER_PORT'))
+    sourcing = ' source template A\n source template A\n source template B\n'
+    check('and both find the same names in a config, in order and without repeats',
+          capture_l2s.sourced_template_names(sourcing)
+          == capture.sourced_template_names(sourcing) == ['A', 'B'],
+          capture_l2s.sourced_template_names(sourcing))
+
+    # The bulk walker's run log names each switch's hostname, model and release,
+    # and cannot import the audit's readers for them - nothing in securecrt/ may
+    # import from the repository. So they are duplicated, and a log that
+    # disagreed with the checklist beside it about which switch or which
+    # release would be worse than no log at all. Asserted against the audit's
+    # own readers on the same output, rather than against a hand-written
+    # expectation that could go stale with both of them.
+    audit = audit_version_readers()
+    import stig_common
+    for name, ours, theirs, expected in (
+            ('model', capture_l2s.show_version_model,
+             audit['_show_version_model'], 'C9300-48P'),
+            ('release', capture_l2s.show_version_release,
+             audit['_show_version_release'], '17.12.4'),
+            ('serial', capture_l2s.show_version_serial,
+             stig_common.parse_serial_number, 'FOC0000X0XX')):
+        for label, output in (('the Catalyst form', fixtures.SHOW_VERSION),
+                              ('the switch table alone', SHOW_VERSION_TABLE_ONLY),
+                              ('a mixed stack', SHOW_VERSION_MIXED_STACK)):
+            # The walker returns '' where the audit returns None: a blank CSV
+            # cell against an unset checklist field. Not a disagreement about
+            # the value, so absence is compared as absence.
+            check(f'{name} from {label} is what the audit reads',
+                  (ours(output) or None) == (theirs(output) or None),
+                  f'{ours(output)!r} vs {theirs(output)!r}')
+        check(f'{name} is right on the fixture', ours(fixtures.SHOW_VERSION) == expected,
+              ours(fixtures.SHOW_VERSION))
+    check('and the hostname is the config\'s, which is what names the checklist',
+          capture_l2s.running_config_hostname(fixtures.RUNNING_CONFIG) == 'TESTSW01',
+          capture_l2s.running_config_hostname(fixtures.RUNNING_CONFIG))
 
 
 def test_render_round_trips():
     print('\nrendered text parses back through capture.py')
     parsed = capture.parse(capture_l2s.render(OUTPUTS))
-    check('all five sections recovered', set(parsed) == set(OUTPUTS), sorted(parsed))
+    check('every section recovered', set(parsed) == set(OUTPUTS), sorted(parsed))
     for command, original in OUTPUTS.items():
         check(f'{command!r} verbatim', parsed.get(command) == original.strip('\n'))
 
@@ -151,52 +256,104 @@ def test_strip_echo():
 
 
 def test_full_run(tmpdir):
-    print('\nfull run against a stubbed SecureCRT (audit auto-runs, report opens suppressed)')
-    path = os.path.join(tmpdir, 'run.capture')
-    capture_l2s.OPEN_REPORT = False
-    fake = run_script(path=path)
+    print('\nfull run against a stubbed SecureCRT (audit auto-runs, folder opening suppressed)')
+    out = os.path.join(tmpdir, 'run')
+    os.makedirs(out, exist_ok=True)
+    capture_l2s.OPEN_OUTPUT_FOLDER = False
+    fake = run_script(path=out)
     check('paging disabled first', fake.Screen.sent[0] == 'terminal length 0',
           fake.Screen.sent[:2])
-    check('all five commands sent',
+    check('every command sent',
           fake.Screen.sent[1:] == list(capture_l2s.COMMANDS), fake.Screen.sent[1:])
     check('synchronous mode restored', fake.Screen.Synchronous is False)
-    check('capture file written', os.path.exists(path))
-    check('reported success', any('complete' in t.lower() for t, _ in fake.Dialog.messages),
+    check('reported success', any('written' in t.lower() for t, _ in fake.Dialog.messages),
           fake.Dialog.messages)
 
-    # The script now runs the real audit itself and writes the report next to
-    # the capture - the linear flow the work machine gets.
-    report = path[:-len('.capture')] + '_report.txt'
-    check('audit auto-ran, report written next to the capture', os.path.exists(report))
-    check('report is a clean .txt, not .capture_report.txt',
-          not os.path.exists(path + '_report.txt'))
-    if os.path.exists(report):
-        text = open(report, encoding='utf-8').read()
-        # 64 rules = the IOS XE checklist. The script passes no --checklist,
-        # so this asserts it inherits the audit's IOS XE default - the whole
-        # point of removing the AUDIT_CHECKLIST setting.
-        check('audited against the IOS XE checklist by default',
-              '64 rules' in text, [l for l in text.splitlines() if 'rules' in l][:2])
-        check('report carries verdicts', 'passed,' in text)
+    # One file, and it is the checklist. The capture is the audit's input and
+    # is cleaned up once the checklist exists; no report .txt is written at
+    # all, because the checklist carries every verdict and its reason.
+    written = sorted(os.listdir(out))
+    checklists = [name for name in written if name.endswith('.cklb')]
+    check('exactly one file is left behind', len(written) == 1, written)
+    check('and it is the checklist', len(checklists) == 1, written)
+    check('no capture kept', not any(name.endswith('.capture') for name in written), written)
+    check('no report .txt written', not any(name.endswith('.txt') for name in written), written)
+
+    if checklists:
+        # TESTSW01 is the fixture's own `hostname`, and the versions are read
+        # out of the checklist the audit ran against - so the name says which
+        # switch, when, and against which benchmark revision.
+        name = checklists[0]
+        check('named for the switch, the date, and the STIG revisions',
+              re.match(r'^TESTSW01_\d{2}[A-Z]{3}\d{4}_L2S_V\d+R\d+_NDM_V\d+R\d+\.cklb$', name),
+              name)
+        check('and carries no time of day', not re.search(r'\d{2}[-_:]\d{2}[-_:]\d{2}', name), name)
+
+        with open(os.path.join(out, name), encoding='utf-8') as checklist_file:
+            checklist = json.load(checklist_file)
+        rules = [rule for stig in checklist['stigs'] for rule in stig['rules']]
+        # 64 rules = the IOS XE checklist. The script passes no --checklist, so
+        # this asserts it inherits the audit's IOS XE default - the whole point
+        # of removing the AUDIT_CHECKLIST setting.
+        check('audited against the IOS XE checklist by default', len(rules) == 64, len(rules))
+        check('checklist carries verdicts',
+              any(rule['status'] == 'not_a_finding' for rule in rules))
         check('dialog carries the summary line',
               any('out of' in m for _, m in fake.Dialog.messages), fake.Dialog.messages)
 
-    if os.path.exists(path):
-        session = capture.load(path)
-        check('capture.load accepts it', session is not None)
-        for command, original in OUTPUTS.items():
-            check(f'{command!r} survives the whole path',
-                  session.send_command(command) == original.strip('\n'))
+        # The asset block: what a reviewer would otherwise re-derive per switch.
+        target = checklist['target_data']
+        check('host name from the switch', target['host_name'] == 'TESTSW01', target['host_name'])
+        check('IP address from the management SVI', target['ip_address'] == '192.0.2.5',
+              target['ip_address'])
+        check('MAC address from `show version`', target['mac_address'] == '00:1A:2B:3C:4D:5E',
+              target['mac_address'])
+        check('FQDN as <hostname>.<domain name>', target['fqdn'] == 'TESTSW01.example.test',
+              target['fqdn'])
+
+
+def test_interface_templates_are_collected(tmpdir):
+    """A capture is only as complete as the commands that were sent, and on an
+    IOS XE switch that templates its user ports the fixed six are not all of
+    them: the port's own block says `source template <name>` and nothing else.
+    Collected here or the audit never sees that configuration - and since it
+    refuses a capture that sources a template it does not carry, a collector
+    that skipped this would produce files that cannot be audited at all."""
+    print('\ntemplates the config sources are collected in a second pass')
+    templated = OUTPUTS['show running-config'].replace(
+        ' description user port\n', ' description user port\n source template USER_PORT\n')
+    template_command = capture_l2s.template_command('USER_PORT')
+    outputs = {**OUTPUTS, 'show running-config': templated,
+               template_command: 'Template Name : USER_PORT\n switchport mode access'}
+
+    out = os.path.join(tmpdir, 'templated')
+    os.makedirs(out, exist_ok=True)
+    capture_l2s.OPEN_OUTPUT_FOLDER = False
+    fake = run_script(path=out, outputs=outputs)
+    check('the template command is sent, after the fixed ones',
+          fake.Screen.sent[1:] == list(capture_l2s.COMMANDS) + [template_command],
+          fake.Screen.sent[1:])
+    check('and the run still produces a checklist',
+          any(name.endswith('.cklb') for name in os.listdir(out)), os.listdir(out))
+
+    # And nothing extra on a switch that uses no templates - the fixture config
+    # sources none, so test_full_run's exact-command assertion still holds.
+    plain_out = os.path.join(tmpdir, 'plain')
+    os.makedirs(plain_out, exist_ok=True)
+    plain = run_script(path=plain_out)
+    check('a switch with no templates is asked nothing extra',
+          plain.Screen.sent[1:] == list(capture_l2s.COMMANDS), plain.Screen.sent[1:])
 
 
 def test_refusals(tmpdir):
     print('\nthe script refuses rather than writing a bad capture')
 
     def wrote_nothing(name, **kwargs):
-        path = os.path.join(tmpdir, name + '.capture')
-        fake = run_script(path=path, **kwargs)
+        out = os.path.join(tmpdir, name)
+        os.makedirs(out, exist_ok=True)
+        fake = run_script(path=out, **kwargs)
         titles = ' '.join(t for t, _ in fake.Dialog.messages).lower()
-        return (not os.path.exists(path)), titles
+        return (not os.listdir(out)), titles
 
     ok, titles = wrote_nothing('usermode', prompt='TESTSW01>')
     check('user EXEC mode refused', ok and 'enable' in titles, titles)
@@ -221,31 +378,56 @@ def test_refusals(tmpdir):
     check('a bash session with a root # prompt is refused',
           ok and 'cisco' in titles, titles)
 
+    # A running-config that stopped early. The collector reads up to the
+    # prompt, so anything making the prompt appear early ends the read early -
+    # a `TESTSW01#` inside a banner, a description or an ACL remark is enough,
+    # and a switch hardened to this STIG carries a large mandatory banner in
+    # its config. What comes back opens exactly like a running-config, because
+    # it is the opening of one, so every other guard here waves it through:
+    # not empty, not paginated, and full of Cisco markers.
+    #
+    # Auditing it answers aaa, line vty, logging, ntp, snmp and ssh - all of
+    # which sit near the end of a config - against text that never arrived, and
+    # reports each as a finding on a switch that configured every one of them.
+    whole = fixtures.RUNNING_CONFIG
+    ok, titles = wrote_nothing('cutshort', outputs={
+        **OUTPUTS, 'show running-config': whole[:whole.index('aaa new-model')]})
+    check('a running-config that stops before `end` is refused',
+          ok and 'truncated' in titles, titles)
+    check('and the whole config is still accepted, so this is not just "shorter"',
+          capture_l2s.config_cut_short(whole) == '', capture_l2s.config_cut_short(whole))
+
     # ...but not for the one command whose empty output is the answer. A switch
     # with no SNMPv3 users prints nothing, and that is the V-220604/605 finding
     # itself - abandoning the capture there would throw away the whole
     # collection over the very thing it was sent to find.
-    path = os.path.join(tmpdir, 'noSnmpUsers.capture')
-    fake = run_script(path=path, empty='show snmp user')
+    out = os.path.join(tmpdir, 'noSnmpUsers')
+    os.makedirs(out, exist_ok=True)
+    fake = run_script(path=out, empty='show snmp user')
     titles = ' '.join(t for t, _ in fake.Dialog.messages).lower()
-    check('empty `show snmp user` still writes the capture',
-          os.path.exists(path) and 'empty' not in titles, titles)
-    if os.path.exists(path):
-        session = capture.load(path)
-        check('and the audit loads it, serving empty snmp output',
-              session.send_command('show snmp user') == '')
+    written = [name for name in os.listdir(out) if name.endswith('.cklb')]
+    check('empty `show snmp user` still produces a checklist',
+          written and 'empty' not in titles, titles or os.listdir(out))
+    if written:
+        with open(os.path.join(out, written[0]), encoding='utf-8') as checklist_file:
+            rules = {rule['group_id']: rule for stig in json.load(checklist_file)['stigs']
+                     for rule in stig['rules']}
+        # V-220604/605 (IOS XE: V-220552/553) are the rules empty output is the
+        # answer to, and 'open' is the answer.
+        check('and the SNMPv3 rules are answered from it, not skipped',
+              rules['V-220552']['status'] == 'open', rules['V-220552']['status'])
 
     ok, titles = wrote_nothing('timeout', timeout_on='show running-config')
     check('read timeout refused', ok and 'failed' in titles, titles)
 
-    path = os.path.join(tmpdir, 'cancelled.capture')
+    before = set(os.listdir(tmpdir))
     fake = FakeCRT(path='')
     capture_l2s.crt = fake
     try:
         capture_l2s.main()
     finally:
         capture_l2s.crt = None
-    check('cancelling the save dialog writes nothing', not os.path.exists(path))
+    check('cancelling the save dialog writes nothing', set(os.listdir(tmpdir)) == before)
 
 
 if __name__ == '__main__':
@@ -254,6 +436,7 @@ if __name__ == '__main__':
     test_strip_echo()
     with tempfile.TemporaryDirectory() as tmpdir:
         test_full_run(tmpdir)
+        test_interface_templates_are_collected(tmpdir)
         test_refusals(tmpdir)
     print('\n' + ('ALL CHECKS PASSED' if not failures
                   else f'{len(failures)} FAILED: {", ".join(failures)}'))

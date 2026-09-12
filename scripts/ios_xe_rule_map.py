@@ -18,7 +18,9 @@ matching on titles paired them with each other's rules.
 
 A mapping is a claim that one predicate answers both rules. Where that claim
 does not hold, the rule is left out and reported NOT AUTOMATED, which is an
-honest verdict rather than a wrong one. See EXCLUDED below.
+honest verdict rather than a wrong one. EXCLUDED below holds those; it is
+currently empty, because every rule that once sat in it now has a check of its
+own in l2_stig_audit.IOS_XE_ONLY_CHECKS.
 
 One pair needed the books read against each other rather than each on its own.
 V-220670 (IOS XE) and V-220644 (IOS) share a title - "must not use the default
@@ -32,9 +34,12 @@ _no_management_on_default_vlan tests what both rules are actually for, and the
 newer book is the evidence for that reading rather than an inference.
 
 Rules the IOS XE book asks differently enough to need their own check live in
-l2_stig_audit.IOS_XE_ONLY_CHECKS, not here - there is no IOS rule to map them
-to. Currently V-220554 (NTP, materially weaker than IOS V-220606) and
-V-220567 (PKI, no IOS L2S counterpart at all).
+l2_stig_audit.IOS_XE_ONLY_CHECKS, not here - re-keying an IOS predicate onto
+them would answer a different question. Currently V-220554 (NTP, materially
+weaker than IOS V-220606), V-220567 (PKI, no IOS L2S counterpart at all) and
+V-220651 (QoS: the IOS rule's evidence is a single `mls qos`, a command IOS XE
+does not have, so its predicate can only ever fail there - the IOS XE rule
+wants the MQC shape, which l2_stig_audit._qos_bandwidth_check reads instead).
 """
 
 # IOS XE rule -> the IOS rule whose check answers it identically.
@@ -77,6 +82,7 @@ RULE_MAP = {
     'V-220561': 'V-220613',  # log records for privileged activities
     'V-220565': 'V-220617',  # two authentication servers for administrative access
     'V-220568': 'V-220620',  # send log data to at least two central log servers
+    'V-220569': 'V-220621',  # running an IOS release currently supported by Cisco
     'V-220649': 'V-220623',  # identify/authenticate network-connected endpoints (802.1x)
     'V-220650': 'V-220624',  # authenticate VTP messages with a hash
     'V-220655': 'V-220629',  # Root Guard on ports toward access-layer switches
@@ -100,27 +106,22 @@ RULE_MAP = {
     'V-220673': 'V-220647',  # no switchports assigned to the native VLAN
 }
 
-# Deliberately not mapped. Each of these has an IOS rule with the same title,
-# and reusing its predicate would produce a confident wrong answer. They report
-# NOT AUTOMATED until an IOS XE-specific check is written and, ideally, seen
-# against a real IOS XE switch.
-EXCLUDED = {
-    'V-220651': (
-        'Excess bandwidth / QoS. The finding sentences agree ("if QoS has not '
-        'been enabled") but the Check Content does not: IOS shows a single '
-        '`mls qos`, IOS XE shows DSCP-matching class-maps, a policy-map '
-        'reserving bandwidth per class, and service-policy on interfaces. '
-        '`mls qos` does not exist on IOS XE, so the existing check cannot pass '
-        'there regardless of how compliant the switch is. Needs an MQC-shaped '
-        'check, and the bandwidth split is site policy.'
-    ),
-    'V-220566': (
-        'Configuration backup. No IOS check exists to reuse (V-220618 is '
-        'NOT AUTOMATED there too - it needs an SCP target this project has no '
-        'access to), and IOS XE additionally fails the rule for using an '
-        'insecure transfer method, which is not derivable from config text.'
-    ),
-}
+# Deliberately not mapped, and not checked anywhere else either: the IOS rule
+# with the same title has no predicate worth reusing, and no IOS XE-specific
+# check can answer it from config text. These report NOT AUTOMATED, which is
+# what they are.
+# Empty, and worth keeping empty rather than deleting: this is where a rule
+# goes when the IOS predicate would answer the wrong question, and the reason
+# it is empty is that the last occupant turned out not to need it.
+#
+# V-220566 (configuration backup) sat here on the strength of the IOS book's
+# version, whose check is an SCP target held by the site rather than by the
+# switch. The IOS XE book asks about the mechanism instead - an EEM applet on
+# `%SYS-5-CONFIG_I` copying the running configuration to a secure destination -
+# which is running-config text like any other rule. It is checked in
+# l2_stig_audit.IOS_XE_ONLY_CHECKS, not mapped, because there is still no IOS
+# rule to re-key it from.
+EXCLUDED = {}
 
 
 def translate(checks, rule_map=None):

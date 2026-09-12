@@ -645,7 +645,14 @@ def _mgmt_acl_check(cfg, subnet_str):
     there), adapted to NX-OS's CIDR-based ACL syntax."""
     if not subnet_str:
         return False, 'no `management_subnet` configured in inventory.yaml'
-    subnet = ipaddress.ip_network(subnet_str, strict=False)
+    try:
+        subnet = ipaddress.ip_network(subnet_str, strict=False)
+    except ValueError:
+        # A netmask instead of a prefix length is the easy typo. One bad value
+        # costs this rule its verdict; it must not cost the whole report, which
+        # is what an uncaught ValueError here used to do mid-fleet-run.
+        return False, (f'`management_subnet` in inventory.yaml is not a network: {subnet_str!r} '
+                       f'- expected CIDR form, e.g. 10.10.50.0/24')
 
     acl_name = None
     m = re.search(r'^line vty\b.*\n(?:.*\n)*?\s*access-class (\S+) in', cfg, re.M)
@@ -896,6 +903,13 @@ CHECKS = {
 # Parse the target device from the command line
 parser = argparse.ArgumentParser(description='Audit a device against DISA NX-OS STIG rules from New NXOS Checklist.cklb')
 parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. NXCore1)')
+parser.add_argument('--to-cklb', metavar='PATH', dest='to_cklb',
+                    help='Also write the verdicts into a STIG Viewer 3 checklist at PATH, so '
+                         'the report does not have to be retyped rule by rule. PASS/FAIL/NOT '
+                         'APPLICABLE become not_a_finding/open/not_applicable; NOT AUTOMATED '
+                         'becomes not_reviewed, never not_a_finding. Re-running over an existing '
+                         'export re-derives everything from the new capture, including both text '
+                         'boxes: a comment typed into STIG Viewer does not survive it.')
 args = parser.parse_args()
 
 device_name = args.device
@@ -927,7 +941,13 @@ if unused_vlan:
     non_user_vlan_exclude.append(unused_vlan)
 if native_vlan_id:
     non_user_vlan_exclude.append(native_vlan_id)
-user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=non_user_vlan_exclude)
+try:
+    user_vlans = stig_common.discover_user_vlans(vlan_discovery_connect, exclude=non_user_vlan_exclude,
+                                                 exclude_names=netauto.load_non_user_vlan_names(),
+                                                 include_names=netauto.load_user_vlan_names())
+except stig_common.InventoryError as inventory_error:
+    print(inventory_error)
+    raise SystemExit(1)
 
 # V-220676: 'show vtp password' instead of running-config - see the comment
 # by CHECKS['V-220681'] above for why running-config text can't be used here.
@@ -956,8 +976,28 @@ CHECKS['V-220696'] = lambda cfg: _no_access_ports_on_native_vlan(cfg, native_vla
 CHECKS['V-220690'] = lambda cfg: _disabled_ports_on_unused_vlan(cfg, unused_vlan, interface_statuses)
 CHECKS['V-220680'] = lambda cfg: _root_guard_check(cfg, root_ports)
 
+# What each rule was actually read from, where running-config alone did not
+# answer it. Everything absent takes the default. See l2_stig_audit's own
+# RULE_COMMANDS for why this is written out rather than inferred.
+RULE_COMMANDS = {
+    # NX-OS omits the VTP password from running-config, same as IOS.
+    'V-220676': ('show vtp password',),
+    # Which VLANs are genuine user VLANs is a fact about the VLAN database.
+    'V-220684': ('show running-config', 'show vlan brief'),
+    'V-220686': ('show running-config', 'show vlan brief'),
+    # NX-OS does not render enough per-interface state to tell an
+    # administratively shut port from any other down one, so this one reads the
+    # status table as well - see _disabled_ports_on_unused_vlan.
+    'V-220690': ('show running-config', 'show interface status'),
+    # Root Guard must never land on this switch's own root port, and which port
+    # that is comes off the STP topology.
+    'V-220680': ('show running-config', 'show spanning-tree'),
+}
+
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,
+    rule_commands=RULE_COMMANDS,
     title='NX-OS STIG audit',
     username=username, password=password,
+    to_cklb=args.to_cklb,
 )

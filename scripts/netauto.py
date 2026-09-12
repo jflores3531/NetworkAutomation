@@ -12,15 +12,18 @@ import yaml
 
 # netmiko is imported inside connect(), not here. Everything else in this
 # module is file/inventory handling, and the offline audit path
-# (l2_stig_audit.py --from-capture) never opens a connection - deferring the
-# import lets that path run on a machine with only Python + pyyaml installed,
-# which is exactly the situation on the work machine where captures are
-# collected via SecureCRT and no netmiko install is available or wanted.
+# (l2_stig_audit.py --from-capture) never opens a connection, so deferring the
+# import keeps netmiko off the path that does not need it. PyYAML is a real
+# dependency here (requirements.txt) rather than the stdlib stand-in the
+# offline-only sibling project uses; `inventory.yaml` still holds JSON, which
+# PyYAML parses because JSON is a subset of YAML 1.2.
 
-# Every path below is anchored to the directory this file lives in, not the
-# caller's working directory, so the scripts behave the same wherever they're
-# run from (cron, an IDE run config, another checkout).
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+# Every path below is anchored to the repository root - the parent of scripts/,
+# where this file lives - not the caller's working directory, so the scripts
+# behave the same wherever they're run from (cron, an IDE run config, another
+# checkout). inventory.yaml, secrets.yaml, checklists/, backups/ and
+# audit_logs/ all sit at the root, beside scripts/ rather than inside it.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 INVENTORY_PATH = os.path.join(PROJECT_ROOT, 'inventory.yaml')
 SECRETS_PATH = os.path.join(PROJECT_ROOT, 'secrets.yaml')
@@ -59,6 +62,98 @@ def load_non_user_vlans(path=INVENTORY_PATH, device_name=None):
     if device_name and device_name in overrides:
         return overrides[device_name]
     return inventory.get('non_user_vlans', [])
+
+
+def load_non_user_vlan_names(path=INVENTORY_PATH):
+    """Load the non_user_vlan_names list from the YAML inventory - VLAN *names*
+    to exclude when discovering user VLANs. For a fleet where the same purpose
+    carries a different VLAN ID on each switch but the same name everywhere,
+    which is the common case once there is more than one site: VLAN 10 is
+    management here and a user VLAN there, while both are called MGMT.
+
+    Complements non_user_vlans rather than replacing it - a VLAN is non-user if
+    its ID or its name matches. Returns an empty list if nothing is defined, in
+    which case discovery behaves exactly as it did before names existed."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('non_user_vlan_names', [])
+
+
+def load_user_vlan_names(path=INVENTORY_PATH):
+    """Load the user_vlan_names list from the YAML inventory - VLAN *names* that
+    are always user VLANs, whatever ID they carry on a given switch. The user
+    and voice VLANs are the ones that move: each site numbers them with whatever
+    was free, while calling them the same thing everywhere.
+
+    A name here overrides the non_user_vlans ID list, which is what makes it
+    useful - a switch whose user VLAN is 10 is still audited for DHCP snooping
+    and DAI coverage even though 10 is the management VLAN on other switches and
+    is therefore in that list. Returns an empty list if nothing is defined."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('user_vlan_names', [])
+
+
+def load_core_switch_hostname_tags(path=INVENTORY_PATH):
+    """Substrings that mark a hostname as a core or distribution switch.
+
+    V-220645/671 asks whether any *user-facing* port is a trunk, and nothing
+    in a configuration says which ports face users. A core or distribution
+    switch has none at all, so the rule's population is empty there and the
+    verdict is NOT APPLICABLE - but only the site knows which switches those
+    are, and on a fleet named to a convention the hostname is where it says
+    so. Matched case-insensitively as a substring. Empty by default: with
+    nothing declared, no switch is exempted from anything."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('core_switch_hostname_tags', [])
+
+
+def load_uplink_description_keywords(path=INVENTORY_PATH):
+    """Substrings that mark a port's `description` as facing something other
+    than a user - another switch, an AP, a phone.
+
+    The other half of V-220645/671. A trunk described as an uplink is not a
+    user-facing trunk, and an access switch needs at least one, so without
+    this every switch in a fleet would report its own uplink for review.
+    Matched case-insensitively as a substring, so `TO-CORE` catches
+    `description TO-CORE1 Gi1/0/49`. Empty by default, in which case every
+    trunk goes to a human - which is the honest answer when nothing says
+    where a port leads."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('uplink_port_description_keywords', [])
+
+
+def load_management_vlan_names(path=INVENTORY_PATH):
+    """Load the management_vlan_names list from the YAML inventory - VLAN
+    *names* carrying the switch's own management address, matched against the
+    name column of `show vlan brief` (exactly, case-insensitively, or as a glob
+    when the entry has a wildcard).
+
+    Used only to fill the exported checklist's IP address field: `show ip
+    interface brief` says Vlan10 has an address and nothing about what VLAN 10
+    is for, and the number varies per site while the name does not. Returns an
+    empty list if nothing is defined, in which case stig_common's default
+    patterns (*mgt, *mgmt) apply. Affects no verdict."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('management_vlan_names', [])
+
+
+def load_approved_ca_hosts(path=INVENTORY_PATH):
+    """Load the approved_ca_hosts list from the YAML inventory - the hosts a
+    `crypto pki trustpoint`'s `enrollment url` may name for V-220567/V-215711,
+    matched against the URL's host exactly, case-insensitively, or as a glob.
+
+    "DOD or DOD-approved" is a policy fact about your PKI, not a property of
+    the switch, so it is declared rather than inferred. Returns an empty list
+    if nothing is defined, in which case stig_common's default (*.mil) applies
+    - every DOD PKI CA this has met is under .mil, and an enrollment URL
+    outside it is exactly the case the rule asks a reviewer to look at."""
+    with open(path) as f:
+        inventory = yaml.safe_load(f)
+    return inventory.get('approved_ca_hosts', [])
 
 
 def load_management_subnet(path=INVENTORY_PATH):
@@ -268,8 +363,8 @@ _SECRET_PATTERNS = [
     #   radius-server host 192.168.100.10 key 7 "<secret>" authentication accounting
     #
     # This gap disclosed the real RADIUS key in a session transcript on
-    # 2026-08-12, via a `show running-config | include radius` through
-    # show_command.py. Note that `key 7` does NOT mean the value is safe to
+    # 2026-08-12, via a `show running-config | include radius` through an
+    # ad-hoc show command. Note that `key 7` does NOT mean the value is safe to
     # print - NX-OS rendered the key in readable form regardless.
     #
     # Deliberately scoped to radius-server lines rather than matching any
