@@ -1,0 +1,78 @@
+{
+  "_comments": {
+    "ABOUT_THIS_FILE": "Copy to inventory.yaml and fill in real values. inventory.yaml is gitignored - it holds site-specific addressing and VLAN IDs and must never be committed. Every address here is written x.x.x.x for the same reason: no real addressing is committed, not even as an example, so the placeholders have to be replaced before anything that connects to a device or checks a management subnet will work. An x.x.x.0/24 management_subnet is not a network, so V-220575/523 reports 'not a network' until it is replaced - or pass --management-subnet to l2_stig_audit.py for a one-off run against a switch this file does not describe. The content is JSON, not YAML, because hosts that cannot install PyYAML fall back to the stdlib parser via yaml.py. JSON is a subset of YAML 1.2, so this same file also parses correctly anywhere real PyYAML is installed.",
+
+    "WHY_MISSING_KEYS_ARE_DANGEROUS": "Only 'devices' is required. Every other key is read with .get() and a default, so an absent or wrong value does NOT raise - it silently returns None or an empty collection and the audit reports a wrong result. A partially filled inventory produces confident, incorrect findings. Fill in every key that applies to your environment.",
+
+    "devices": "REQUIRED. Device name -> {host, device_type}. The name is what you pass to scripts on the command line. device_type is a Netmiko platform string: 'cisco_ios' for IOS / IOSvL2 / IOS-XE, 'cisco_nxos' for NX-OS. No credentials belong here - usernames and passwords are prompted at runtime by netauto.get_credentials(). This section defines only WHICH devices exist and HOW to reach them. Read by netauto.load_inventory() and connect(), so every script that opens an SSH session depends on it.",
+
+    "services": "Authorized server lists - ntp_servers, syslog_servers, radius_servers - each a list of IP addresses. Audits compare what the device actually has configured against these lists. Leave a list empty only if the device genuinely has no such servers; an empty list means the audit has nothing to compare against and cannot flag an unauthorized server.",
+
+    "non_user_vlans": "VLAN IDs to EXCLUDE when discovering 'user VLANs' for DHCP snooping and Dynamic ARP Inspection. Typically the default VLAN, the management/automation segment, and server VLANs - anything with no end-user access ports. Getting this wrong is the most common source of false FAILs: list too few and the audit demands snooping on infrastructure VLANs, list too many and real user VLANs go unchecked. The working rule is that any VLAN even ONE user can reside on is a user VLAN and does not belong here - an admin-only VLAN does. l2_stig_audit.py prints the classification it arrived at above the report, so what this list did can be checked against the switch rather than assumed. Shipped EMPTY so no site's VLAN numbering is committed, which means every VLAN on the switch counts as a user VLAN until you fill this in - the safe direction to be wrong in, since it over-reports rather than skipping a VLAN silently. Consumed by l2_stig_audit.py, l2_stig_harden_dai.py, l2_stig_harden_global.py.",
+
+    "non_user_vlans_by_device": "Per-device override for non_user_vlans, keyed by device name. The same VLAN ID does not always mean the same thing on every switch - VLAN 10 may be a management segment on one device and a user VLAN on another. A device listed here uses its own list INSTEAD of the shared non_user_vlans, not in addition to it. Shape is a device name mapped to a list of IDs, one entry per device; shipped as {} so no numbering is committed, and {} is also the right value when the shared list is correct everywhere.",
+
+    "user_vlan_names": "VLAN NAMES that are always user VLANs, whatever ID they carry on a given switch, matched against the name column of `show vlan brief` - exactly and case-insensitively, or as a GLOB when the entry carries a wildcard (*, ?, [ ]). The glob form is what covers a fleet that names the same role differently per site: '*user' catches every name ending in user, '*user[0-9]*' catches the numbered ones (army-xxx-abc-user1 on VLAN 800 at one site, army-yyy-def-user15 on VLAN 850 at the next), and '*user*' catches both at the cost of also catching anything else with 'user' in the name. One pattern per ROLE is the shape that holds up: where a name is site-then-role (army-xxx-abc-user1, army-xxx-abc-tel) the first parts are the site and the last word is the role, so '*user'/'*user[0-9]*' and '*tel'/'*tel[0-9]*' between them name every VLAN a user or a phone can sit on, on every switch, without naming a single one of them individually. Matching the site instead ('army-xxx-abc-*') is possible and occasionally what you want, but it takes the management and admin VLANs under that prefix with it. A plain entry is never treated as a substring, so a pattern reaches exactly as far as it says. This is the key for a fleet whose user and voice VLANs are numbered per site while being named consistently. A name here OVERRIDES non_user_vlans: a switch whose user VLAN is 10 is still checked for DHCP snooping and DAI coverage even though 10 is the management VLAN elsewhere and is therefore in that ID list. Without it the ID exclusion wins and the audit reports PASS for coverage it never verified. A name that matches nothing changes nothing, and a wrong name can only add VLANs to the audited set - a spurious finding rather than a silent pass. Consumed by l2_stig_audit.py, nxos_stig_audit.py and the harden scripts that push per-VLAN fixes.",
+
+    "non_user_vlan_names": "VLAN NAMES to exclude when discovering user VLANs, matched against the name column of `show vlan brief` exactly and case-insensitively, or as a glob when the entry carries a wildcard - same syntax as user_vlan_names. Keep patterns tighter here than there: this direction REMOVES VLANs from the audited set, so an over-broad pattern costs a silent PASS on coverage nobody verified, while an over-broad user_vlan_names pattern only costs a spurious finding. Use this where the same VLAN carries a different ID on each switch but the same name everywhere - excluding only by ID then leaves a real user VLAN out of the DHCP snooping and DAI coverage checks, and the audit reports PASS for coverage it never verified. Combines with non_user_vlans rather than replacing it: a VLAN is non-user if its ID or its name matches. An entry that matches nothing leaves the VLAN in, so a typo costs a spurious finding rather than a silent pass. Consumed by l2_stig_audit.py, nxos_stig_audit.py, l2_stig_harden_global.py, l2_stig_harden_dai.py, nxos_stig_harden_global.py, nxos_stig_harden_interfaces.py.",
+
+    "management_vlan_names": "VLAN NAMES carrying the switch's own management address, matched against the name column of `show vlan brief` exactly and case-insensitively, or as a glob when the entry has a wildcard - same syntax as user_vlan_names. Fills the IP address field of the exported STIG Viewer checklist and nothing else: `show ip interface brief` says Vlan10 has an address and never what VLAN 10 is for, and the number moves per site while the name does not. Affects NO verdict, so a wrong value here costs a wrong or empty asset field rather than a wrong finding - but an asset field is what says which switch a checklist's 64 verdicts belong to, so it is worth getting right. Defaults to *mgt and *mgmt when absent, which covers both common spellings; name only the management SVI, since two matching VLANs that both carry an address are reported as ambiguous rather than resolved by picking one. Read by l2_stig_audit.py, and overridable per run with --management-vlan-names.",
+
+    "approved_ca_hosts": "Hosts a `crypto pki trustpoint`'s `enrollment url` may name, for V-220567 (IOS XE L2S) and V-215711 (router). The rule asks whether the switch enrolled with a DOD or DOD-approved CA, and the URL naming that CA is in running-config - so the audit answers it, and this list is what 'approved' means at your site. Matched against the URL's HOST (scheme, port and path stripped) exactly and case-insensitively, or as a glob when the entry has a wildcard. Defaults to *.mil when absent, which is where the DOD PKI lives. Every enrollment URL matching the list is a PASS; one that does not is a FAIL, since an unrecognised CA is precisely what the rule exists to surface - so add your CA here rather than leaving a real finding standing on a switch that is compliant. A trustpoint with no URL at all (`enrollment terminal`, `enrollment profile`) is NOT AUTOMATED whatever this says, because nothing in the config names its CA. Read by l2_stig_audit.py, and overridable per run with --approved-ca-hosts.",
+
+    "core_switch_hostname_tags": "Substrings that mark a hostname as a core or distribution switch, e.g. ['CORE', 'DIST'] - matched case-insensitively anywhere in the hostname. V-220645/523's IOS XE twin V-220671 asks whether any user-facing port is a trunk, and no configuration says which ports face users; a core or distribution switch has none, so the rule reports NOT APPLICABLE there. Empty by default, which exempts nothing. Read by l2_stig_audit.py.",
+    "uplink_port_description_keywords": "Substrings that mark a port description as facing another switch, an AP or a phone rather than a user. Matched case-insensitively as a substring, so 'DOWNLINK' catches 'Downlink to closet 2' and 'TO-CORE' catches 'description TO-CORE1 Gi1/0/49'. The shipped list covers the usual four: an access switch trunks up to its distribution switch and often down to another access switch in the same area, and both of those are switch-to-switch links rather than user-facing ones. Add whatever your fleet actually writes - AP-, PHONE, TO-<sitename>. A trunk described this way is not a user-facing trunk (V-220645/671). Every access switch needs an uplink trunk, so with nothing declared here every trunk goes to a human for review and the rule reports NOT AUTOMATED naming the ports. Read by l2_stig_audit.py.",
+    "management_subnet": "The management network in CIDR form, e.g. 'x.x.x.0/24' - replace the x's with your real management network. More than one prefix is allowed, as a list ['x.x.x.0/24', 'y.y.y.0/24'] or one string separated by commas, for a site whose management network is several ranges - but declare what the management network actually is, not whatever the vty ACL already permits: the check only means something because the two are declared independently. Used to verify that vty access-class ACLs are actually scoped to the management network rather than permitting any source (V-220575). If this is absent, V-220575 reports FAIL with reason 'no management_subnet configured in inventory.yaml' on every device audited - not NOT AUTOMATED, so a fleet-wide run shows a finding on every switch. Read by ios_router_audit.py and l2_stig_audit.py.",
+
+    "automation_host": "IP address of the host that runs these scripts. It is the sole permitted source in the vty ACL that ios_router_stig_harden_acl.py and l2_stig_harden_acl.py build for V-220575. Set this before running either harden script - getting it wrong locks you out of the device.",
+
+    "unused_vlan": "VLAN ID designated for disabled and unused ports (V-220641). Must be a VLAN with no routing and no reachability - not VLAN 1, and not any VLAN carrying real traffic. Shipped null so no numbering is committed; V-220641 reports 'no unused_vlan configured in inventory.yaml' until it is set, rather than guessing at one. Read by l2_stig_audit.py, l2_stig_harden_global.py.",
+
+    "native_vlan": "VLAN ID to assign as the native VLAN on 802.1q trunk links (V-220646). Must differ from the default VLAN 1 and must not be a VLAN carrying user data. Shipped null so no numbering is committed - set it before a harden run, which is what pushes it to the trunks. Read by l2_stig_audit.py and l2_stig_harden_global.py.",
+
+    "default_access_vlan": "VLAN ID assigned to host-facing access ports that are not already configured as trunks. Shipped null so no numbering is committed; set it before either harden script runs, since it decides which VLAN a host-facing port lands in. Read by l2_stig_harden_global.py and l2_stig_harden_interfaces.py when placing ports into access mode.",
+
+    "vtp_domain": "VTP domain name. Required on NX-OS before a VTP password can be set (V-220676) - the 'vtp password' command is rejected with 'Domain not set' unless a domain exists first. The VTP password itself is a secret and lives in secrets.yaml, never here. Read by nxos_stig_harden_global.py.",
+
+    "external_interfaces_by_device": "Router device name -> list of interface names that face the security boundary, e.g. ['GigabitEthernet0/2']. This is a topology fact that cannot be derived from a device's own running-config, so it must be declared. STIG rules scoped to 'external' versus 'internal' interfaces depend on it. A device with an empty list or no entry has ALL of its active interfaces treated as internal - which silently skips every external-interface rule for that device. Read by ios_router_audit.py and ios_router_stig_harden_urpf.py."
+  },
+
+  "devices": {
+    "ROUTER01": { "host": "x.x.x.x", "device_type": "cisco_ios" },
+    "SWITCH01": { "host": "x.x.x.x", "device_type": "cisco_ios" },
+    "NXCORE01": { "host": "x.x.x.x", "device_type": "cisco_nxos" }
+  },
+
+  "services": {
+    "ntp_servers": ["x.x.x.x", "x.x.x.x"],
+    "syslog_servers": ["x.x.x.x"],
+    "radius_servers": ["x.x.x.x"]
+  },
+
+  "non_user_vlans": [],
+
+  "non_user_vlans_by_device": {},
+
+  "user_vlan_names": ["USERS", "VOICE", "*user", "*user[0-9]*", "*tel", "*tel[0-9]*"],
+
+  "non_user_vlan_names": [],
+
+  "management_vlan_names": ["*mgt", "*mgmt"],
+
+  "approved_ca_hosts": ["*.mil"],
+
+  "management_subnet": "x.x.x.0/24",
+  "core_switch_hostname_tags": [],
+  "uplink_port_description_keywords": ["UPLINK", "DOWNLINK", "TO-CORE", "TO-DIST"],
+  "automation_host": "x.x.x.x",
+
+  "unused_vlan": null,
+  "native_vlan": null,
+  "default_access_vlan": null,
+
+  "vtp_domain": "EXAMPLE",
+
+  "external_interfaces_by_device": {
+    "ROUTER01": ["GigabitEthernet0/2", "GigabitEthernet0/3"]
+  }
+}

@@ -368,7 +368,7 @@ table against a `shutdown` line in running-config, on the reasoning that two
 signals are safer than one. Confirmed live on NXCore1 (2026-08-12) that the
 cross-check matched **zero** ports on a switch with **59** disabled ones -
 `Ethernet1/5` is administratively down and its config block reads only
-`switchport` / `switchport access vlan 1000`. It silently reduced V-220690 to a
+`switchport` / `switchport access vlan <unused_vlan>`. It silently reduced V-220690 to a
 permanent no-op, and the `--check` run looked completely clean while doing so.
 Same default-value trap as `radius-server retransmit 1` in the AAA role.
 
@@ -387,7 +387,7 @@ injected: 59 genuinely disabled ports detected, the injected
 `spare disabled bay` / `connected` row correctly excluded, and `suspended` and
 `err-disabled` ports correctly not matched.
 
-**Why the L2S role reorders its own tasks.** `l2_stig_harden_interfaces.py`
+**Why the L2S role reorders its own tasks.** `l2_stig_harden_access_ports.py`/`l2_stig_harden_trunk_ports.py`
 pushes the default access VLAN to every access port and then overrides it for
 the disabled subset. That is harmless with Netmiko, which never diffs, but two
 Ansible tasks written that way fight each other - both report `changed` forever
@@ -502,14 +502,22 @@ landed. Keeping them in a single task preserves the atomicity Netmiko's
 
 ## Why this exists
 
-This project's Python/Netmiko toolchain already works well at this scale
-(7-8 devices, one person maintaining it) - this role isn't "better," it's
-a second, independently-working implementation of the same STIG logic,
-built to demonstrate Ansible experience. The real reasons organizations
-prefer Ansible are mostly about team/hiring standardization, inventory
-management at much larger scale, and vendor-maintained low-level plumbing
-- not because it's technically superior to a well-tested custom toolchain
-for a setup this size. See project chat/memory for the fuller discussion.
+This project's Python/Netmiko toolchain already works well on the lab these
+roles were built against (7-8 devices, one person maintaining it) - this
+isn't "better," it's a second, independently-working implementation of the
+same STIG logic, built to demonstrate Ansible experience. The real reasons
+organizations prefer Ansible are mostly about team/hiring standardization,
+inventory management at much larger scale, and vendor-maintained low-level
+plumbing - not because it's technically superior to a well-tested custom
+toolchain for a setup this size.
+
+Note where that argument stops. The deployment target these scripts were
+written for is several hundred switches on a host that can install nothing
+- no Ansible, no collections, not even netmiko or pyyaml - reached through
+SecureCRT and audited from captures. Everything here needs an install host,
+so none of it runs there. Scale is the usual argument for Ansible over a
+custom toolchain, and on the one fleet this project actually has to cover,
+scale is not what decides it.
 
 ## Prerequisites
 
@@ -524,9 +532,23 @@ pip install ansible
 ansible-galaxy collection install -r requirements.yml
 ```
 
-Fill in real values in `inventory/group_vars/l2_switches/vault.yml` (see the
-adjacent `vault.yml.example` for the full list - the AAA roles add
-`vault_radius_key`, and the L2S one also needs `vault_enable_secret`), then
+The committed inventory carries no site data. `inventory/hosts.yml` has
+`ansible_host: x.x.x.x` for every device, and both `group_vars/*/vars.yml`
+ship `x.x.x.x` for the NTP, syslog and RADIUS servers and the automation host,
+with `[]`/`""` for every VLAN ID - the same treatment `inventory.yaml.example`
+gets on the Python side, and for the same reason: `inventory.yaml` is
+gitignored, these files are not. Fill them in locally before any live run.
+
+Left as shipped, an empty VLAN ID means "skip that feature" throughout the
+roles, so a play configures less than it should rather than something wrong.
+The address placeholders are refused outright instead: the ACL role's
+preflight requires `automation_host` to look like an IPv4 address, and both
+AAA roles now apply the same test to `radius_servers`, so `x.x.x.x` aborts the
+play rather than reaching a device mid-push.
+
+Then fill in real values in `inventory/group_vars/l2_switches/vault.yml` (see
+the adjacent `vault.yml.example` for the full list - the AAA roles add
+`vault_radius_key`, and the L2S one also needs `vault_enable_secret`), and
 encrypt it - **never commit real secrets in plaintext**:
 
 ```

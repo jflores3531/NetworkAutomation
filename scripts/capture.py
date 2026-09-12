@@ -24,19 +24,58 @@ import netauto
 
 CAPTURE_DIR = os.path.join(netauto.PROJECT_ROOT, 'captures')
 
-# The complete set of commands an L2S audit reads. Four rules need live state
+# The complete set of commands an L2S audit reads. Five of its checks need state
 # that never appears in running-config: user VLANs for V-220633/635, the STP
 # root port for V-220629 (Root Guard must never be pushed there), the VTP
-# password for V-220624 and the SNMPv3 users for V-220604/605 - IOS classic
-# never writes `snmp-server user` to running-config at all. Anything added to
-# a discovery step in l2_stig_audit.py has to be added here too, or a capture
-# that looks complete will be missing it.
+# password for V-220624, the SNMPv3 users for V-220604/605 - IOS classic never
+# writes `snmp-server user` to running-config at all - and the model and
+# release for V-220621, which running-config's bare `version 17.12` line does
+# not carry. Anything added to a discovery step in l2_stig_audit.py has to be
+# added here too, or a capture that looks complete will be missing it.
+#
+# A capture taken before `show version` joined this list is refused with
+# "missing output for: show version" rather than audited without it. That is
+# the same rule as every other command here and for the same reason - the
+# alternative is a rule answered against empty output - but it does mean older
+# capture files have to be re-collected.
 AUDIT_COMMANDS_L2S = (
     'show running-config',
     'show vlan brief',
     'show spanning-tree',
     'show vtp password',
     'show snmp user',
+    'show version',
+)
+
+# Read when present, never required. `show ip interface brief` answers no rule
+# at all: it carries the switch's management address for the exported
+# checklist's asset block (stig_common.find_management_ip), which
+# running-config gives only as one SVI among others and `show vlan brief` names
+# but cannot address.
+#
+# So it is not in the tuple above, and the reason is the reason that tuple
+# exists. A missing command there means a rule would be answered against empty
+# output - a verdict nobody can see is wrong - and the capture is refused. A
+# missing command here costs an empty field in STIG Viewer's asset block, which
+# is visibly empty. Refusing a whole audit over it would be the worse trade,
+# and would invalidate every capture collected before this existed.
+#
+# `show ip ssh` is here for a different reason, and it does answer rules -
+# V-220555/220556, whose Check Content shows `ip ssh version 2` in the config.
+# A Catalyst 9300 (and a 3850) does not render that line: SSHv1 is gone on
+# those trains, so v2-only is not a non-default setting and running-config says
+# nothing about it. `show ip ssh` reports `SSH Enabled - version 2.0`, and the
+# rules' own finding sentences ask whether the switch protects the session, not
+# whether a particular line is present. Requiring the line failed both rules on
+# a switch that was compliant.
+#
+# Optional rather than required because absence costs nothing: the check falls
+# back to the config line, which is exactly what it did before this existed. No
+# rule is answered against empty output, and no capture taken before this is
+# refused.
+OPTIONAL_COMMANDS_L2S = (
+    'show ip interface brief',
+    'show ip ssh',
 )
 
 # Commands whose empty output is an answer rather than a failed read. Refusing
@@ -56,6 +95,34 @@ def empty_is_an_answer(command):
     return _normalise(command) in {_normalise(c) for c in EMPTY_IS_AN_ANSWER}
 
 
+# One more command, but a per-device one, so it cannot live in the tuple above.
+# An IOS XE interface can be configured by `source template <name>` instead of
+# carrying the commands itself, and running-config then shows only that one
+# line - the access VLAN, the mode, PortFast, BPDU Guard, 802.1x all sit in the
+# template and appear nowhere in the config text. Read against config alone
+# those ports look bare, which is a false FAIL on every per-port rule at once
+# (V-220649/656/668/671 on the work fleet). The template body has to be asked
+# for by name, and the names are only knowable from the config, so which
+# commands a capture must cover depends on the config it carries. load_l2s
+# below does that in two passes.
+TEMPLATE_COMMAND_PREFIX = 'show template interface source user '
+
+
+def template_command(name):
+    return TEMPLATE_COMMAND_PREFIX + name
+
+
+def sourced_template_names(running_config):
+    """Distinct interface-template names a running-config sources, in the order
+    they first appear. Empty for a switch that uses no templates, which is why
+    nothing about this is required of a capture that does not need it."""
+    names = []
+    for name in re.findall(r'^\s*source template (\S+)\s*$', running_config, re.M):
+        if name not in names:
+            names.append(name)
+    return names
+
+
 # Deliberately loose. This only has to tell a running-config apart from shell
 # error text or an appliance's help output - not validate the configuration,
 # which is the audit's whole job. Any single marker is enough, since platforms
@@ -67,6 +134,27 @@ IOS_CONFIG_MARKERS = ('current configuration', '\nhostname ', '\nend',
 def looks_like_ios_config(text):
     lowered = text.lower()
     return any(marker in lowered for marker in IOS_CONFIG_MARKERS)
+
+
+def config_cut_short(running_config):
+    """Return a reason if `show running-config` stopped before its end, or ''.
+
+    IOS and IOS XE finish a running-config with `end` on a line of its own, so
+    its absence means the output was cut off rather than that the switch had
+    nothing further to say. Only this platform's captures reach here - the
+    NX-OS audit does not use this loader, and NX-OS prints no `end`.
+
+    Duplicated in securecrt/capture_l2s.py, which cannot import from here: the
+    collector runs inside SecureCRT's embedded Python on a machine that may
+    have nothing else on it. Both are covered by tests/test_capture.py."""
+    for line in reversed((running_config or '').splitlines()):
+        if not line.strip():
+            continue
+        if line.strip() == 'end':
+            return ''
+        return ('does not finish with `end`, so it was cut off - the last line '
+                'read was: ' + line.strip()[:60])
+    return 'is empty'
 
 
 # Written before each command's output by the capture tooling. The leading '!'
@@ -278,19 +366,26 @@ def _read_text(path, source):
     return text
 
 
-def load(path, required_commands=AUDIT_COMMANDS_L2S):
+def load(path, required_commands=AUDIT_COMMANDS_L2S,
+         optional_commands=OPTIONAL_COMMANDS_L2S):
     """Read a capture file and return a CaptureSession.
 
     Every command in required_commands must be present, and non-empty unless
     it is in EMPTY_IS_AN_ANSWER. Validating up front means a capture missing
     'show vtp password' is rejected before the audit prints its first verdict,
-    rather than 50 rules in."""
+    rather than 50 rules in.
+
+    optional_commands are parsed if the file carries them and ignored if it
+    does not. They still have to be named here rather than simply left out:
+    a plain session log is split on the commands being looked for, so one
+    that is not in the list is not a section that goes missing - it is text
+    appended to the end of the section before it."""
     if not os.path.exists(path):
         raise CaptureError(f'No such capture file: {path}')
     source = os.path.basename(path)
     text = _read_text(path, source)
 
-    sections = parse(text, required_commands, source=source)
+    sections = parse(text, tuple(required_commands) + tuple(optional_commands), source=source)
     if not sections:
         raise CaptureError(
             f'{source} has no recognisable command output.\n'
@@ -325,7 +420,7 @@ def load(path, required_commands=AUDIT_COMMANDS_L2S):
     # Last line of defence, and the only one that applies however the capture
     # was collected. A session driven against something that is not a Cisco
     # switch - a jump host, a console server, an appliance answering on :22 -
-    # produces a file with all five sections present and none of them config.
+    # produces a file with every section present and none of them config.
     # Every rule would then be answered against shell error text, and a report
     # of 60 findings is indistinguishable from a switch that is genuinely
     # non-compliant. Refuse it instead.
@@ -338,4 +433,58 @@ def load(path, required_commands=AUDIT_COMMANDS_L2S):
             'This usually means the capture was taken against something other '
             'than a Cisco switch.'
         )
+
+    # A config that stops early passes every check above, which is what makes
+    # it worth its own. The check immediately before this one is deliberately
+    # loose - any single marker will do - and the markers a config opens with
+    # survive any truncation at all, so a config read to a third of its length
+    # is accepted as a Cisco configuration, because that is exactly what it is:
+    # a third of one. IOS and IOS XE end a running-config with `end` on a line
+    # of its own, so its absence is the output having been cut off.
+    #
+    # The cost of missing it is a report nobody can act on. aaa, line vty,
+    # logging, ntp, snmp and ssh all sit near the end of a config - the part a
+    # short read loses - so their rules come back as findings on a switch that
+    # configured every one of them, and nothing in the report says why.
+    cut_short = config_cut_short(config)
+    if cut_short:
+        raise CaptureError(
+            f"{source}: 'show running-config' {cut_short}\n"
+            'Auditing a config that stopped early reports everything configured '
+            'after the cut as a finding, on a switch that may be entirely '
+            'compliant, so this is refused rather than reported.'
+        )
     return CaptureSession(sections, source)
+
+
+def load_l2s(path):
+    """Load an L2S capture, including the interface templates its own config
+    says the interfaces are configured from.
+
+    Two passes, because the second list of required commands is written in the
+    first pass's output: the config names the templates, and each name is its
+    own show command. A capture that sources templates but does not carry them
+    is refused by the same rule as one missing `show vtp password` - the audit
+    would report every per-port rule against interfaces whose configuration it
+    cannot see, and those verdicts would read exactly like real findings.
+
+    Re-loading rather than patching the first session also fixes a plain
+    session log, where sections are split on the echoed command and the
+    template commands were not among the ones being looked for."""
+    session = load(path, AUDIT_COMMANDS_L2S)
+    names = sourced_template_names(str(session.send_command('show running-config')))
+    if not names:
+        return session
+    return load(path, AUDIT_COMMANDS_L2S + tuple(template_command(name) for name in names))
+
+
+def optional_output(session, command):
+    """A command's output, or '' where the session has none.
+
+    Only for the commands in OPTIONAL_COMMANDS_L2S, and only for the callers
+    that treat absence as a fact rather than a failure - the asset block, not a
+    verdict. Everything else asks send_command() and takes the refusal."""
+    try:
+        return str(session.send_command(command))
+    except CaptureError:
+        return ''

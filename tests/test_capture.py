@@ -29,11 +29,12 @@ import sys
 import tempfile
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT)
+sys.path.insert(0, os.path.join(PROJECT, 'scripts'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import capture
 import stig_common
+import fixtures
 from fixtures import OUTPUTS, VLAN_BRIEF, VTP_PASSWORD
 
 CHECKLIST = os.path.join(PROJECT, 'checklists', 'New Layer 2 switch Checklist.cklb')
@@ -104,8 +105,8 @@ def test_session_log():
     print('\nplain terminal session log, no delimiters')
     log = ''.join(f'TESTSW01#{command}\n{output}\nTESTSW01#\n'
                   for command, output in OUTPUTS.items())
-    parsed = capture.parse(log)
-    check('all five commands recovered', set(parsed) == set(OUTPUTS), f'got {sorted(parsed)}')
+    parsed = capture.parse(log, capture.AUDIT_COMMANDS_L2S + capture.OPTIONAL_COMMANDS_L2S)
+    check('every command recovered', set(parsed) == set(OUTPUTS), f'got {sorted(parsed)}')
     for command, original in OUTPUTS.items():
         check(f'{command!r} matches the delimited form', parsed.get(command) == original.strip('\n'))
     check('trailing prompt stripped', not parsed['show vtp password'].endswith('#'))
@@ -161,7 +162,7 @@ def test_encodings(tmpdir):
 
 def test_not_a_switch(tmpdir):
     """A session pointed at something that is not a Cisco switch yields a file
-    with all five sections present and none of them config - bash answers every
+    with all six sections present and none of them config - bash answers every
     command with an error, so nothing is empty and nothing is truncated. The
     audit would then answer 64 rules against shell error text and report a
     switch that does not exist. Caught here, however the capture was collected."""
@@ -205,10 +206,46 @@ def test_refusals(tmpdir):
     expect_error('absent file rejected',
                  lambda: capture.load(os.path.join(tmpdir, 'nope.capture')), 'no such capture')
 
+    # A config that stops early is the refusal that had been missing, and the
+    # one that passes every check above: `looks_like_ios_config` needs a single
+    # marker, and the markers a config opens with survive any truncation at
+    # all. Auditing the remainder answers aaa, line vty, logging, ntp, snmp and
+    # ssh - all of which sit near the end of a config - against text that never
+    # arrived, and reports each as a finding on a switch that configured them.
+    whole = fixtures.RUNNING_CONFIG
+    chopped = whole[:whole.index('aaa new-model')]
+    check('the truncated config still looks like a Cisco config, which is why '
+          'the marker check cannot catch this',
+          capture.looks_like_ios_config(chopped))
+    cut = capture.write(os.path.join(tmpdir, 'cut.capture'),
+                        {**OUTPUTS, 'show running-config': chopped})
+    expect_error('a running-config that stops before `end` is rejected',
+                 lambda: capture.load(cut), 'cut off')
+
+    # Not merely "shorter than expected": a config is complete when it ends the
+    # way IOS ends one, whatever its length.
+    check('a whole config is not mistaken for a cut one',
+          capture.config_cut_short(whole) == '', capture.config_cut_short(whole))
+    check('and trailing blank lines do not make one look cut',
+          capture.config_cut_short(whole + '\n\n') == '',
+          capture.config_cut_short(whole + '\n\n'))
+
     good = capture.write(os.path.join(tmpdir, 'good.capture'), OUTPUTS)
     expect_error('unrequested command raises rather than returning empty',
-                 lambda: capture.load(good).send_command('show ip interface brief'),
+                 lambda: capture.load(good).send_command('show crypto pki certificates'),
                  'no output for')
+
+    # `show ip interface brief` answers no rule - it fills the exported
+    # checklist's asset block - so a capture taken before it was collected is
+    # audited without it rather than refused. Every capture in captures/ from
+    # before this existed is one of those, and refusing them would make an
+    # older capture unauditable over a field STIG Viewer shows as blank.
+    older = capture.write(os.path.join(tmpdir, 'older.capture'),
+                          {k: v for k, v in OUTPUTS.items() if k != 'show ip interface brief'})
+    session = capture.load(older)
+    check('a capture without the optional command still loads', session is not None)
+    check('and asking for it yields nothing rather than raising',
+          capture.optional_output(session, 'show ip interface brief') == '')
 
 
 def test_equivalence(tmpdir):
@@ -231,7 +268,7 @@ def test_end_to_end(tmpdir):
     print('\nend-to-end: l2_stig_audit.py --from-capture, every rule in the checklist')
     good = capture.write(os.path.join(tmpdir, 'e2e.capture'), OUTPUTS)
     result = subprocess.run(
-        [sys.executable, os.path.join(PROJECT, 'l2_stig_audit.py'), 'TESTSW01',
+        [sys.executable, os.path.join(PROJECT, 'scripts', 'l2_stig_audit.py'), 'TESTSW01',
          '--checklist', 'ios',  # this test's expectations are IOS-keyed (65 rules)
          '--from-capture', good, '--non-user-vlans', '1,10,999,1000'],
         capture_output=True, text=True, cwd=PROJECT, timeout=120)
@@ -246,7 +283,7 @@ def test_end_to_end(tmpdir):
 
     print('\nmutually exclusive flags')
     clash = subprocess.run(
-        [sys.executable, os.path.join(PROJECT, 'l2_stig_audit.py'), 'S1',
+        [sys.executable, os.path.join(PROJECT, 'scripts', 'l2_stig_audit.py'), 'S1',
          '--checklist', 'ios',
          '--from-capture', good, '--capture-to', os.path.join(tmpdir, 'x.capture')],
         capture_output=True, text=True, cwd=PROJECT, timeout=60)

@@ -427,7 +427,14 @@ def _vty_acl_blocks(cfg):
 def _vty_management_acl_check(cfg, subnet_str):
     if not subnet_str:
         return False, 'no `management_subnet` configured in inventory.yaml'
-    subnet = ipaddress.ip_network(subnet_str, strict=False)
+    try:
+        subnet = ipaddress.ip_network(subnet_str, strict=False)
+    except ValueError:
+        # A netmask instead of a prefix length is the easy typo. One bad value
+        # costs this rule its verdict; it must not cost the whole report, which
+        # is what an uncaught ValueError here used to do mid-fleet-run.
+        return False, (f'`management_subnet` in inventory.yaml is not a network: {subnet_str!r} '
+                       f'- expected CIDR form, e.g. 10.10.50.0/24')
 
     vty_blocks = _vty_acl_blocks(cfg)
     if not vty_blocks:
@@ -939,6 +946,13 @@ CHECKS = {
 # Parse the target device from the command line
 parser = argparse.ArgumentParser(description='Audit a device against DISA IOS Router STIG rules from New IOS Router Checklist.cklb')
 parser.add_argument('device', help='Device name as it appears in inventory.yaml (e.g. R1)')
+parser.add_argument('--to-cklb', metavar='PATH', dest='to_cklb',
+                    help='Also write the verdicts into a STIG Viewer 3 checklist at PATH, so '
+                         'the report does not have to be retyped rule by rule. PASS/FAIL/NOT '
+                         'APPLICABLE become not_a_finding/open/not_applicable; NOT AUTOMATED '
+                         'becomes not_reviewed, never not_a_finding. Re-running over an existing '
+                         'export re-derives everything from the new capture, including both text '
+                         'boxes: a comment typed into STIG Viewer does not survive it.')
 args = parser.parse_args()
 
 device_name = args.device
@@ -977,9 +991,20 @@ CHECKS['V-216586'] = lambda cfg: _external_interface_absence_check(cfg, external
 CHECKS['V-216989'] = lambda cfg: _urpf_egress_check(cfg, external_interfaces)
 CHECKS['V-216575'] = lambda cfg: _bogon_filter_check(cfg, external_interfaces)
 
+# Only the SNMPv3 rules read anything but running-config: SNMPv3 users never
+# appear there. Everything else is config text, including the rules scoped by
+# inventory.yaml's external-interface list, which is a file rather than a
+# command. See l2_stig_audit's RULE_COMMANDS for why this is written out.
+RULE_COMMANDS = {
+    'V-215696': ('show snmp user',),
+    'V-215697': ('show snmp user',),
+}
+
 stig_common.run_stig_audit(
     device_name, device_info, CHECKLIST_PATH, CHECKS,
     title='IOS Router STIG audit',
     username=username, password=password,
     not_automated_note='need manual review, topology/policy context, or external infrastructure',
+    to_cklb=args.to_cklb,
+    rule_commands=RULE_COMMANDS,
 )
