@@ -755,8 +755,15 @@ def junos_reach_cli(console, password):
         'to the console manually and look at what state it is in')
 
 
-def junos_wait_ready(console, password, timeout=900):
+def junos_wait_ready(console, password, timeout=1800):
     """Wait until the CLI is stable enough to configure, not merely present.
+
+    30 minutes, not the 15 this used to allow, measured on this host. A FIRST
+    boot on a fresh disk overlay took about 16 minutes to a stable CLI on JSW1,
+    and more than 16 on JSW2 - which gave up at exactly 15 minutes, while
+    `show version` was answering on its console a few seconds later
+    (2026-09-13). A bootstrap started alongside the node, which is the normal
+    rebuild, spends almost all of its time in here.
 
     A vJunos reaches a login prompt minutes before it is actually usable: mgd
     is still starting and the PFE is still printing tnp_hello_tx chatter onto

@@ -483,10 +483,13 @@ devices:
   #     python lab/rebuild_lab.py --topology lab/topology_multivendor.yaml --only JSW1
   #
   # JSW2 STAYS COMMENTED OUT because of RAM, not because anything is broken.
-  # Each vJunos wants 5 GB and its RSS grows past that; both of them next to
-  # the Cisco lab took the 24 GB GNS3 VM to 178 MB free. On this 32 GB host,
-  # even one pushes Windows to ~0.5 GB available. Un-comment it, and its ping
-  # in verify_pings, once there is memory for it.
+  # Its block below is proven: on 2026-09-13, with JSW1 stopped, it
+  # bootstrapped JSW2 itself (commit check, commit), and NETCONF then answered
+  # "Hostname: JSW2" on 830 and 22. Each vJunos wants 5 GB and its RSS grows
+  # past that; both of them next to the Cisco lab took the 24 GB GNS3 VM to
+  # 178 MB free. On this 32 GB host, even one pushes Windows to ~0.5 GB
+  # available. Un-comment it, and its ping in verify_pings, once there is
+  # memory for both - or swap it for JSW1 to use it on its own.
   #
   JSW1:
     platform: junos

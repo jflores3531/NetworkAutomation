@@ -85,7 +85,7 @@ Option A is the one to use if you do not want to think about it again.
 | PC10 | - | VPCS | `10.0.10.100`, VLAN 10, console only |
 | PC20 | - | VPCS | `10.0.20.100`, VLAN 20, console only |
 | JSW1 | `10.10.50.14` | vJunos | fxp0 addressed, SSH and NETCONF (830) up - see below |
-| JSW2 | `.15` | vJunos | node exists and is cabled, but **stopped and unconfigured** (RAM) |
+| JSW2 | `10.10.50.15` | vJunos | configured and NETCONF-proven, but **left stopped** - no RAM for both |
 | PA1 | `.16` | PAN-OS | not built - no image |
 
 ### The Juniper switches
@@ -96,14 +96,20 @@ Junos CLI - `JUNOS 26.2R1.7`, model `ex9214`. `rebuild_lab.py` bootstraps
 passwords, SSH, NETCONF, and fxp0 at `10.10.50.14`, behind a `commit check`.
 Afterwards NETCONF answers from the controller on 830 and on 22.
 
-`JSW2` has the same config waiting, commented out in
-`lab/topology_multivendor.yaml`. The only reason it is not running is memory.
+`JSW2` has the same config at `.15`, and it is proven the same way: its own
+bootstrap committed, and NETCONF answered. Its block is still commented out in
+`lab/topology_multivendor.yaml`, and the node is left stopped, only because
+there is not memory for both. To use JSW2 instead of JSW1, stop JSW1 first
+(see below), uncomment the block, and run `--only JSW2`. Its committed config
+survives on its disk.
 
 Two practical constraints:
 
 * **RAM.** 5 GB each and their RSS grows past it. Both of them plus the Cisco
   lab took the 24 GB GNS3 VM down to 178 MB free. Start **one** at a time.
-* **Boot time.** ~10 minutes to a usable CLI, and it is silent for most of it.
+* **Boot time.** A first boot on a fresh disk took about 16 minutes to a CLI
+  stable enough to configure (JSW1 and JSW2, 2026-09-13), and it is silent for
+  most of it. SSH and NETCONF open a few minutes after ping first answers.
 
 To bring one up by hand:
 
