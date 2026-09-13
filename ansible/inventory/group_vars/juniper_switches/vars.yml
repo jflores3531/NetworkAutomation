@@ -1,71 +1,75 @@
 ---
-# Intended configuration for the Juniper (EX/QFX-class) switches, consumed by
-# the junos_baseline role. Placeholders for the same reason as every other
-# committed group_vars file here - see ../ios_switches/vars.yml.
+# JSW1 and JSW2 - the Juniper access layer, consumed by junos_baseline.
+#
+# Per-switch values (which VLAN its access ports serve) are in
+# ../../host_vars/JSW1.yml and JSW2.yml.
+#
+# Topology (see ../../../NAPALM.md):
+#
+#   SW1 ─ge-0/0/0─┐                    each switch dual-homed to both
+#   SW2 ─ge-0/0/1─┴─ JSWn              distribution switches; STP blocks one
+#                     ge-0/0/2..5 = access ports
+#
+# TWO PRECONDITIONS, both manual, both before any play here can run:
+#
+#   1. `set system services netconf ssh` - every path into these switches
+#      speaks NETCONF (NAPALM's junos driver and the junipernetworks.junos
+#      resource modules alike). Without it, SSH to the CLI still works, which
+#      makes the failure look like bad credentials. playbooks/preflight.yml
+#      checks 830 then 22 specifically to tell those two apart.
+#   2. fxp0 addressed on the management segment (JSW1 10.10.50.14, JSW2 .15).
+#      Nothing can configure the interface it would have to arrive on.
 #
 # ONE SHAPE DIFFERENCE FROM THE CISCO GROUPS, and it is a platform fact rather
-# than a style choice: Junos ethernet-switching references VLANs BY NAME, not
-# by ID. `set interfaces ge-0/0/2 unit 0 family ethernet-switching vlan members
-# USERS` is the real command, and the ID lives only in the `vlans USERS
-# vlan-id 10` stanza. So baseline_access_ports carries `vlan: USERS` here where
-# ios_switches carries `vlan: 10`.
-#
-# Deliberately not abstracted behind a shared shape. A translation layer that
-# let one inventory entry serve both platforms would have to map name to ID and
-# back, and the failure mode of getting that wrong (a port on the wrong VLAN)
-# is worse than the duplication it would save.
+# than a style choice: Junos ethernet-switching references VLANs BY NAME. The
+# ID lives only in the `vlans <name> vlan-id <id>` stanza, so the access and
+# trunk entries below carry `USERS`/`SERVERS` where ../ios_switches/vars.yml
+# carries 10 and 20. Deliberately not abstracted behind a shared shape - a
+# translation layer that mapped name to ID would put a port on the wrong VLAN
+# the day it got the mapping wrong, which is worse than the duplication.
 
-baseline_domain_name: ""
+baseline_domain_name: lab.local
 
-# VLANs. vlan_id is what goes into the `vlans <name> vlan-id <id>` stanza; name
-# is what every interface below refers to.
-#
-# baseline_vlans:
-#   - name: USERS
-#     vlan_id: 10
-#   - name: VOICE
-#     vlan_id: 20
-baseline_vlans: []
+# Named to match the Cisco side's VLAN names, IDs included, because the trunks
+# between them carry both and a mismatch is a silently black-holed VLAN.
+baseline_vlans:
+  - name: USERS
+    vlan_id: 10
+  - name: SERVERS
+    vlan_id: 20
+  - name: NATIVE_UNUSED
+    vlan_id: 999
 
-# Access ports. `vlan` is a VLAN NAME - see the note above.
-#
-# baseline_access_ports:
-#   - name: ge-0/0/2
-#     vlan: USERS
-#     description: user port
+# Uplinks to both distribution switches. allowed_vlans are NAMES; native_vlan is
+# an ID, because Junos models it as `native-vlan-id` - the asymmetry is the
+# platform's, not this file's.
+baseline_trunk_ports:
+  - name: ge-0/0/0
+    description: trunk to SW1
+    allowed_vlans: [USERS, SERVERS]
+    native_vlan: 999
+  - name: ge-0/0/1
+    description: trunk to SW2
+    allowed_vlans: [USERS, SERVERS]
+    native_vlan: 999
+
+# Access ports are per-switch: JSW1 serves USERS, JSW2 serves SERVERS. See
+# host_vars.
 baseline_access_ports: []
 
-# Trunk ports. allowed_vlans and native_vlan are names too, with one
-# exception: Junos takes the native VLAN as an ID (`native-vlan-id`), which is
-# why the example gives a number there and names everywhere else.
-#
-# baseline_trunk_ports:
-#   - name: ge-0/0/0
-#     description: uplink to R1
-#     allowed_vlans: [USERS, VOICE]
-#     native_vlan: 999
-baseline_trunk_ports: []
-
-# Layer 3 interfaces, including RVIs (irb.N on ELS switches).
-#
-# `name` and `unit` are SEPARATE fields, because that is how Junos and
-# junos_l3_interfaces model a logical interface: irb unit 10, not "irb.10".
-# Writing the dotted form in `name` and omitting `unit` configures irb unit 0 -
-# a real interface, the wrong one, and no error.
-#
-# baseline_l3_interfaces:
-#   - name: irb
-#     unit: 10
-#     ipv4_cidr: x.x.x.x/24
+# No baseline_l3_interfaces. These are pure layer 2 - the gateway for both VLANs
+# is the HSRP address on R1/R2, and fxp0 (management) is out of scope for
+# automation as noted above. An irb here would be a second gateway competing
+# with the routers' HSRP.
 baseline_l3_interfaces: []
 
 baseline_ntp_servers:
-  - x.x.x.x
-  - x.x.x.x
+  - 10.10.50.10
 baseline_syslog_servers:
-  - x.x.x.x
+  - 10.10.50.10
 
-# LLDP on, so the lldp_neighbors getter can map the lab's topology off the
-# devices themselves. On Junos this is per-interface configuration (`protocols
-# lldp interface all`), unlike IOS's single `lldp run`.
+# Per-interface on Junos, unlike IOS's single `lldp run` - junos_baseline enables
+# the protocol globally and then names each port. Worth having: the LLDP
+# neighbour map is how napalm_facts reads this topology off the devices, and it
+# is the one check that catches a miscabled uplink.
 baseline_lldp_enabled: true

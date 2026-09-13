@@ -1,24 +1,29 @@
 ---
-# Palo Alto firewall settings, consumed by the panos_baseline role. See
-# ../../../NAPALM.md.
+# PA1 - the perimeter firewall, consumed by panos_baseline. See ../../../NAPALM.md.
 #
-# HOW THIS PLATFORM DIFFERS from everything else in this inventory, because all
-# three points change how the role is written:
+# EDGE PLACEMENT, not inter-VLAN gateway. ethernet1/1 faces the outside world,
+# ethernet1/2 faces the transit segment shared with R1 and R2, and inter-VLAN
+# routing happens on those routers rather than here. The consequence to be
+# conscious of: this firewall sees north-south traffic only. Traffic between
+# VLAN 10 and VLAN 20 never passes a security rule. Moving the routers' VLAN
+# subinterfaces onto ethernet1/2 as subinterfaces-with-zones is what would change
+# that, and it is a deliberate topology decision rather than a config tweak.
+#
+# HOW THIS PLATFORM DIFFERS from everything else in this inventory:
 #
 #   1. No Ansible connection plugin. paloaltonetworks.panos modules run on the
-#      controller and talk to the firewall's XML API through pan-os-python,
-#      taking the provider dict below. Same shape as napalm_provider, and the
-#      reason the palo_alto group sets ansible_connection: local.
+#      controller and talk to the XML API through pan-os-python, taking the
+#      provider dict below - which is why the palo_alto group sets
+#      ansible_connection: local.
 #   2. Candidate configuration, like Junos. Nothing a module writes is live
-#      until a commit, so panos_baseline ends with an explicit commit task -
-#      and a run that fails before it leaves the firewall unchanged in
-#      operation, with the edits sitting in the candidate.
-#   3. API key, not a password. Generated once from admin credentials and used
-#      thereafter, which keeps the admin password out of the automation path.
+#      until a commit, so panos_baseline ends with an explicit commit task that
+#      is OPT-IN (-e panos_commit=true). A run that stops early leaves the
+#      firewall unchanged in operation with the edits staged.
+#   3. API key, not a password - generated once from admin credentials, so the
+#      admin password never enters the automation path.
 
 # Consumed by every panos_* module. Mirrors napalm_provider's role for the
-# Cisco/Juniper gear - one dict defined once rather than four arguments per
-# task.
+# Cisco/Juniper gear - one dict defined once rather than four arguments per task.
 panos_provider:
   ip_address: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
   api_key: "{{ panos_api_key }}"
@@ -28,78 +33,114 @@ panos_provider:
 # traceback - the same treatment radius_key gets in ../l2_switches/vars.yml.
 panos_api_key: "{{ vault_panos_api_key | default('') }}"
 
-# Virtual system. "vsys1" is the only one present until vsys are explicitly
-# created, so it is the right default and also the first thing to change if this
-# ever runs against a multi-vsys firewall - security rules written into the
-# wrong vsys are rules that never match anything.
+# "vsys1" is the only vsys a FortiGate-sized firewall has until vsys are
+# explicitly enabled, so it is the right default and also the first thing to
+# change if this ever runs against a multi-vsys box - rules written into the
+# wrong vsys are rules nobody can find.
 panos_vsys: vsys1
-
-# Virtual router that static routes are written into. "default" is what a
-# factory-fresh PAN-OS ships with.
 panos_virtual_router: default
 
-# --- Intended configuration -------------------------------------------------
-# Placeholders, per the committed-file convention - see ../ios_switches/vars.yml.
+# --- system -------------------------------------------------------------------
 
-baseline_timezone: ""
+baseline_timezone: US/Eastern
 baseline_ntp_servers:
-  - x.x.x.x
+  - 10.10.50.10
 baseline_syslog_servers:
-  - x.x.x.x
+  - 10.10.50.10
 
-# Security zones. Created before interfaces are assigned to them, because
-# PAN-OS rejects an interface referencing a zone that does not exist.
+# --- zones and interfaces -----------------------------------------------------
+# Zones first: PAN-OS rejects an interface referencing a zone that does not
+# exist, which is why panos_baseline's task order is a dependency rather than a
+# preference.
+baseline_zones:
+  - name: untrust
+    mode: layer3
+    interfaces: [ethernet1/1]
+  - name: trust
+    mode: layer3
+    interfaces: [ethernet1/2]
+
+# ethernet1/1 sits on VMware's VMnet8 NAT network, whose addressing comes from
+# ../../../lab/topology.yaml: 192.168.231.0/24, gateway .2, DHCP pool .128-.254.
+# .60 is static and below that pool so the firewall's outside address never moves
+# on a lease change - the same reasoning that file gives for the automation host
+# at .50.
 #
-# baseline_zones:
-#   - name: trust
-#     mode: layer3
-#     interfaces: [ethernet1/2]
-#   - name: untrust
-#     mode: layer3
-#     interfaces: [ethernet1/1]
-baseline_zones: []
+# ethernet1/2 is the transit segment to R1/R2. /29 rather than /30 because three
+# addresses live on it: .1 here, .2 on R1, .3 on R2 - plus .4, the HSRP virtual
+# address that the static routes below point at.
+baseline_interfaces:
+  - name: ethernet1/1
+    ipv4_cidr: 192.168.231.60/24
+    zone: untrust
+    comment: outside - VMnet8
+  - name: ethernet1/2
+    ipv4_cidr: 10.0.1.1/29
+    zone: trust
+    comment: transit to R1/R2
 
-# Layer 3 interfaces.
+# --- objects and policy -------------------------------------------------------
+# Address objects before rules: PAN-OS rejects a rule naming an object that does
+# not exist.
+baseline_address_objects:
+  - name: LAN_USERS
+    value: 10.0.10.0/24
+    description: VLAN 10 users
+  - name: LAN_SERVERS
+    value: 10.0.20.0/24
+    description: VLAN 20 servers
+  - name: LAB_MGMT
+    value: 10.10.50.0/24
+    description: management segment
+
+# Opt-in per run (-e push_security_rules=true), because policy decides what
+# traffic passes - the same stance the STIG side takes on trunk ports and the vty
+# ACL. Order matters on a firewall: PAN-OS evaluates top to bottom and this list
+# IS the order.
 #
-# baseline_interfaces:
-#   - name: ethernet1/2
-#     ipv4_cidr: x.x.x.x/24
-#     zone: trust
-#     comment: inside
-baseline_interfaces: []
+# service defaults to application-default in the role rather than `any`, and
+# log_end to true - a permit rule nobody logs is a rule nobody can audit, the
+# same argument the STIG side makes for log-input on the vty ACL's trailing deny.
+baseline_security_rules:
+  - name: users-to-internet
+    source_zone: [trust]
+    destination_zone: [untrust]
+    source_ip: [LAN_USERS]
+    destination_ip: [any]
+    application: [web-browsing, ssl, dns]
+    action: allow
+  - name: servers-to-internet
+    source_zone: [trust]
+    destination_zone: [untrust]
+    source_ip: [LAN_SERVERS]
+    destination_ip: [any]
+    application: [ssl, dns, ntp]
+    action: allow
 
-# Address objects, defined before any rule references them.
+# --- routing ------------------------------------------------------------------
+# Default out to VMware's NAT gateway, and both inside subnets via the routers'
+# HSRP virtual address.
 #
-# baseline_address_objects:
-#   - name: LAN_USERS
-#     value: x.x.x.x/24
-#     description: user subnet
-baseline_address_objects: []
+# That VIP is the whole reason HSRP runs on the transit segment as well as on the
+# VLANs: the firewall keeps ONE route per inside subnet pointing at a next hop
+# that survives losing either router. The alternative - two routes with path
+# monitoring, or ECMP - is more firewall state to get right and less of it
+# expressible through panos_baseline.
+baseline_static_routes:
+  - name: default
+    destination: 0.0.0.0/0
+    nexthop: 192.168.231.2
+    interface: ethernet1/1
+  - name: lan-users
+    destination: 10.0.10.0/24
+    nexthop: 10.0.1.4
+    interface: ethernet1/2
+  - name: lan-servers
+    destination: 10.0.20.0/24
+    nexthop: 10.0.1.4
+    interface: ethernet1/2
 
-# Security rules. Order matters on a firewall - PAN-OS evaluates top to bottom -
-# so these are pushed in list order and the list IS the policy order.
-#
-# baseline_security_rules:
-#   - name: users-to-internet
-#     source_zone: [trust]
-#     destination_zone: [untrust]
-#     source_ip: [LAN_USERS]
-#     destination_ip: [any]
-#     application: [web-browsing, ssl]
-#     service: [application-default]
-#     action: allow
-baseline_security_rules: []
-
-# Static routes, written into panos_virtual_router above.
-#
-# baseline_static_routes:
-#   - name: default
-#     destination: 0.0.0.0/0
-#     nexthop: x.x.x.x
-#     interface: ethernet1/1
-baseline_static_routes: []
-
-# Port the preflight play checks - the XML API, not SSH. SSH to a PAN-OS CLI can
-# be open while the API is unreachable or the key is wrong, and the API is the
-# only path anything here uses.
+# Port playbooks/preflight.yml checks - the XML API, not SSH. A PAN-OS CLI can
+# answer on 22 while the API is unreachable or the key is wrong, and the API is
+# the only path anything here uses.
 preflight_port: 443

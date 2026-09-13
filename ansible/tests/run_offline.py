@@ -106,16 +106,24 @@ def scenarios(workdir):
 
     return [
         # The regression test for the bug that reported every unreachable device
-        # as READY, because `is succeeded` is true for a skipped task. Inventory
-        # ships x.x.x.x placeholders, so nothing can answer. Mutation-tested:
-        # remove the `.skipped` guards in roles/preflight and this fails.
-        dict(name="preflight reports nothing ready against placeholder addresses",
+        # as READY, because `is succeeded` is true for a skipped task.
+        # Mutation-tested: remove the `.skipped` guards in roles/preflight and
+        # this fails.
+        #
+        # Every host is pointed at 192.0.2.1 - TEST-NET-1, unroutable by RFC
+        # 5737 - rather than relying on the inventory's own addresses. Those are
+        # real 10.10.50.x lab addresses now, and on a host whose network happens
+        # to route 10/8 somewhere (a container in a cluster, say) a port check
+        # SUCCEEDS and this test silently stops testing anything. Asserting on
+        # row content rather than a "0/12" count also keeps it from breaking
+        # every time a device is added to the lab.
+        dict(name="preflight reports nothing ready when nothing can answer",
              playbook="preflight.yml",
              extra={**common, "napalm_username": "stub", "napalm_password": "stub",
-                    "preflight_timeout": 1},
-             must_contain=["0/12 ready", "UNREACHABLE on port 830",
-                           "UNREACHABLE on port 443", "NOT READY"],
-             must_not_contain=["12/12 ready", "READY  |"]),
+                    "preflight_timeout": 1, "ansible_host": "192.0.2.1"},
+             must_contain=["UNREACHABLE on port 830", "UNREACHABLE on port 443",
+                           "UNREACHABLE on port 22", "NOT READY"],
+             must_not_contain=["|  READY  |"]),
 
         dict(name="napalm_facts collects and summarises a device",
              playbook="napalm_facts.yml", limit="SW1", extra=cisco(),
@@ -194,6 +202,63 @@ def scenarios(workdir):
              playbook="napalm_push.yml", limit="SW1",
              extra=cisco(napalm_config_template="example_ios.j2", napalm_commit=True),
              must_contain=["SW1 committed"], must_not_contain=["Dry run"]),
+
+        # Renders R1's subinterfaces and HSRP. The exact-line assertions are the
+        # regression test for a `{#-` whitespace-control bug that welded
+        # "description", "encapsulation dot1Q 10" and "ip address ..." into a
+        # single line - a config a router would reject, from a template whose
+        # output contained every string anyone would have grepped for.
+        dict(name="router_on_a_stick renders one command per line for R1",
+             playbook="napalm_push.yml", limit="R1",
+             extra={**common, "napalm_username": "stub", "napalm_password": "stub",
+                    "napalm_config_template": "router_on_a_stick.j2",
+                    "vault_hsrp_auth_key": "labkey123"},
+             file_lines={out + "/reports/diffs/R1_candidate.cfg": [
+                 "interface GigabitEthernet0/2.10",
+                 "encapsulation dot1Q 10",
+                 "ip address 10.0.10.2 255.255.255.0",
+                 "standby 10 ip 10.0.10.1",
+                 "standby 10 priority 110",
+                 "standby 10 preempt",
+                 "standby version 2",
+                 "interface GigabitEthernet0/2.20",
+                 "encapsulation dot1Q 20",
+                 "ip address 10.0.20.2 255.255.255.0",
+                 "standby 1 ip 10.0.1.4",
+             ]}),
+
+        # R2 must differ from R1 in exactly three ways: its address in each VLAN,
+        # its HSRP priority, and which switch it trunks to. Equal priorities
+        # would elect by IP address instead - which works, is silent, and is not
+        # what the design says.
+        dict(name="R2 renders as the standby half of the pair",
+             playbook="napalm_push.yml", limit="R2",
+             extra={**common, "napalm_username": "stub", "napalm_password": "stub",
+                    "napalm_config_template": "router_on_a_stick.j2",
+                    "vault_hsrp_auth_key": "labkey123"},
+             file_lines={out + "/reports/diffs/R2_candidate.cfg": [
+                 "ip address 10.0.10.3 255.255.255.0",
+                 "ip address 10.0.20.3 255.255.255.0",
+                 "standby 10 priority 100",
+                 "standby 20 priority 100",
+                 "description trunk to SW2 - VLAN subinterfaces below",
+             ]},
+             file_lines_absent={out + "/reports/diffs/R2_candidate.cfg": [
+                 "standby 10 priority 110",
+                 "ip address 10.0.10.2 255.255.255.0",
+             ]}),
+
+        # An unset HSRP key must omit authentication entirely rather than send an
+        # empty or placeholder key-string, which IOS would take literally.
+        dict(name="HSRP authentication is omitted when no key is vaulted",
+             playbook="napalm_push.yml", limit="R1",
+             extra={**common, "napalm_username": "stub", "napalm_password": "stub",
+                    "napalm_config_template": "router_on_a_stick.j2",
+                    "vault_hsrp_auth_key": "CHANGE_ME"},
+             file_lines_absent={out + "/reports/diffs/R1_candidate.cfg": [
+                 "standby 10 authentication md5 key-string CHANGE_ME",
+                 "standby 10 authentication md5 key-string",
+             ]}),
 
         dict(name="cisco_baseline assembles every domain for switches and a router",
              playbook="cisco_baseline.yml", extra=cisco(ansible_connection="local",
@@ -280,6 +345,25 @@ def run(scenario, workdir, stub_path, verbose):
     for path in scenario.get("writes", []):
         if not pathlib.Path(path).exists():
             problems.append(f"never written: {path}")
+
+    # Exact-line assertions on a rendered file. Needed because a template bug can
+    # produce a file that contains every expected substring while being useless:
+    # Jinja's `{#-` whitespace control welded three config commands onto one line
+    # here, which a substring check passes and a router rejects.
+    for path, expected in (scenario.get("file_lines") or {}).items():
+        if not pathlib.Path(path).exists():
+            problems.append(f"never written: {path}")
+            continue
+        lines = [line.strip() for line in pathlib.Path(path).read_text().splitlines()]
+        for line in expected:
+            if line not in lines:
+                problems.append(f"{pathlib.Path(path).name}: no line reading {line!r}")
+    for path, unexpected in (scenario.get("file_lines_absent") or {}).items():
+        if pathlib.Path(path).exists():
+            lines = [line.strip() for line in pathlib.Path(path).read_text().splitlines()]
+            for line in unexpected:
+                if line in lines:
+                    problems.append(f"{pathlib.Path(path).name}: unwanted line {line!r}")
 
     if problems and verbose:
         print(output)

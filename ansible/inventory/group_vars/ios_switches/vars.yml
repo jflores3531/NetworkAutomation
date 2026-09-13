@@ -1,74 +1,98 @@
 ---
-# Intended configuration for the new lab's Cisco IOS/IOS-XE switches, consumed
-# by the cisco_baseline role. See ../../../NAPALM.md.
+# SW1 and SW2 - the distribution pair (IOSvL2), consumed by cisco_baseline.
 #
-# Every value is a committed-file placeholder - x.x.x.x for addresses, [] and
-# "" for everything site-specific - same convention as ../../hosts.yml and
-# ../../../../inventory.yaml.example. The role skips any feature whose var is
-# empty, so a play run against this file as it stands configures less than it
-# should rather than configuring something wrong.
+# PURE LAYER 2 BY DESIGN. Every gateway address lives on R1/R2; the only L3 on
+# these switches is the management SVI below. That is not a simplification, it
+# is playing to the image: IOSvL2's routing is the thinnest part of it, and
+# keeping the switches L2 means nothing here depends on the part that is thin.
 #
-# Variables here are `baseline_*` so they cannot collide with the STIG roles'
-# own ntp_servers/syslog_servers/native_vlan/etc. The two toolchains share an
-# inventory file, not a variable namespace.
+# Per-switch values (management address, which router it trunks to) are in
+# ../../host_vars/SW1.yml and SW2.yml.
+#
+# Topology (see ../../../NAPALM.md):
+#
+#   R1 ──Gi0/0── SW1 ══Gi0/2 trunk══ SW2 ──Gi0/0── R2
+#                 │  └─Gi0/3─┐        │  └─Gi0/3─┐
+#                Gi0/1      Gi0/1    Gi0/1      Gi0/3
+#                JSW1       JSW2     JSW1       JSW2      (each JSW dual-homed)
 
-# ios_domain? IOS needs a domain name before it will generate RSA keys for
-# SSH. Empty skips the task entirely.
-baseline_domain_name: ""
+baseline_domain_name: lab.local
 
-# VLANs to create, pushed with the cisco.ios.ios_vlans RESOURCE module
-# (state: merged) rather than raw ios_config lines - a state-based module
-# compares parsed device state instead of literal config strings, which is
-# what makes it idempotent without the string-matching traps documented all
-# over ../../../README.md (`storm-control broadcast level 40.00`,
-# `spanning-tree portfast edge`, three-space ACL alignment).
-#
-# baseline_vlans:
-#   - vlan_id: 10
-#     name: USERS
-#   - vlan_id: 20
-#     name: VOICE
-baseline_vlans: []
+# VLAN 999 is both the native VLAN on every trunk and where disabled ports are
+# parked, which is why it is not 1 and not either data VLAN. The STIG side of
+# this repo keeps `native_vlan` and `unused_vlan` as separate IDs because
+# V-220696 makes an access port sharing the native VLAN a finding; this lab has
+# no disabled-port requirement yet, so one ID serves both - change it the moment
+# that stops being true.
+baseline_vlans:
+  - vlan_id: 10
+    name: USERS
+  - vlan_id: 20
+    name: SERVERS
+  - vlan_id: 99
+    name: MGMT
+  - vlan_id: 999
+    name: NATIVE_UNUSED
 
-# Access ports, pushed with ios_l2_interfaces + ios_interfaces.
+# Every port on these switches is a trunk except the one management port, because
+# hosts connect to the Juniper access switches rather than here. Uplink to the
+# router is per-switch (host_vars); these three are common to both.
 #
-# baseline_access_ports:
-#   - name: GigabitEthernet0/2
-#     vlan: 10
-#     description: user port
-baseline_access_ports: []
+# allowed_vlans deliberately lists only what each link must carry - 99 included
+# on the inter-switch link so a management SVI stays reachable if one uplink to
+# the management segment fails.
+#
+# Named separately from baseline_trunk_ports because each switch adds its own
+# router uplink (Gi0/0 to R1 or R2) in host_vars, composing the two:
+#
+#   baseline_trunk_ports: "{{ ios_switch_common_trunks + [router_uplink] }}"
+#
+# host_vars would otherwise have to repeat all four entries to add one, and a
+# list that exists in two places disagrees about a port eventually.
+ios_switch_common_trunks:
+  - name: GigabitEthernet0/1
+    description: trunk to JSW1
+    allowed_vlans: [10, 20]
+    native_vlan: 999
+  - name: GigabitEthernet0/3
+    description: trunk to JSW2
+    allowed_vlans: [10, 20]
+    native_vlan: 999
+  - name: GigabitEthernet0/2
+    description: inter-switch trunk
+    allowed_vlans: [10, 20, 99]
+    native_vlan: 999
 
-# Trunk ports. allowed_vlans/native_vlan are what ios_l2_interfaces expects,
-# so the shape here matches the module's rather than being translated in a
-# task.
-#
-# baseline_trunk_ports:
-#   - name: GigabitEthernet0/1
-#     description: uplink to R1
-#     allowed_vlans: [10, 20]
-#     native_vlan: 999
-baseline_trunk_ports: []
+# Group-level fallback: a switch added without host_vars still gets the common
+# trunks rather than silently getting none, which is what the role default ([])
+# would give it.
+baseline_trunk_ports: "{{ ios_switch_common_trunks }}"
 
-# Layer 3 / SVI addressing, pushed with ios_l3_interfaces. ipv4_cidr, in the
-# form the module takes - address plus prefix length in one string. The role
-# refuses a placeholder address rather than sending it.
+# The management port: an access port in VLAN 99, physically patched to the
+# management switch alongside the automation host.
 #
-# baseline_l3_interfaces:
-#   - name: Vlan10
-#     ipv4_cidr: x.x.x.x/24
+# IOSvL2 has no fxp0 and no dedicated management port - every interface is a
+# switchport - so this is as out-of-band as the platform allows: a separate
+# broadcast domain on a separate physical link. A bad trunk push cannot take it
+# down, which is the property that matters, but it is not architecturally OOB
+# the way the Juniper switches' fxp0 and the firewall's management port are.
+baseline_access_ports:
+  - name: GigabitEthernet0/7
+    vlan: 99
+    description: management to MgmtSw
+
+# The management SVI - the only L3 interface on these switches, and the address
+# the controller reaches them at. Per-switch, in host_vars.
 baseline_l3_interfaces: []
 
-# NTP (ios_ntp_global) and syslog (ios_logging_global) - the two things worth
-# having on a device before anything else, because without them nothing that
-# happens next has a trustworthy timestamp or anywhere to land.
-baseline_ntp_servers:
-  - x.x.x.x
-  - x.x.x.x
-baseline_syslog_servers:
-  - x.x.x.x
+# No baseline_static_routes and no baseline_ospf. An SVI for management needs no
+# `ip routing` and no route: the controller is on the same segment. Leaving both
+# unset means cisco_baseline skips those tasks entirely rather than configuring
+# routing on a switch that should not have any.
 
-# LLDP globally on, so napalm_facts' lldp_neighbors getter has something to
-# report and the lab's topology can be read off the devices rather than off a
-# diagram. CDP would also work on all-Cisco, but LLDP is the one the Fortinet
-# gear will also speak.
+baseline_ntp_servers:
+  - 10.10.50.10
+baseline_syslog_servers:
+  - 10.10.50.10
+
 baseline_lldp_enabled: true

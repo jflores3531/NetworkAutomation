@@ -21,11 +21,12 @@ What *has* been done — every playbook and role executed end to end against stu
 modules returning realistic device data, on the controller, with these results:
 
 - all 14 playbooks pass `--syntax-check`
-- `ansible/tests/run_offline.py` drives all of it as 19 scenarios and asserts on
+- `ansible/tests/run_offline.py` drives all of it as 22 scenarios and asserts on
   what each run printed and wrote, not just its exit code — every one of the
   bugs below exited 0 while being wrong. The suite is mutation-tested: breaking
   the fix again fails it
-- `preflight` reports per-device readiness across 12 devices without aborting,
+- `preflight` reports per-device readiness across the whole inventory without
+  aborting,
   and distinguishes unreachable / port-open-login-failed / NETCONF-not-enabled —
   each branch verified by pointing it at a local listener
 - `napalm_facts` collects 9 getters, merges them, and writes per-device JSON
@@ -72,9 +73,8 @@ A separate review of the whole branch turned up fourteen issues, all fixed here.
 The ones worth knowing about, because each would have cost a lab session:
 
 - **Validation asserted `vendor: Cisco` against the Juniper switches.** The
-  expectation was a role-wide default, so all three would have failed
-  validation - and failed the last step of `multivendor_site.yml` - for being
-  Juniper. Vendor is now set per driver group, and unset means "do not check"
+  expectation was a role-wide default, so both would have failed validation -
+  and failed the last step of `multivendor_site.yml` - for being Juniper. Vendor is now set per driver group, and unset means "do not check"
   rather than "assume Cisco". The suite gained a regression test that reads the
   rendered intent, which is what the old validate stub could not do.
 - **A health check with no counters available reported "0 over the threshold".**
@@ -167,6 +167,78 @@ state, so it reports `changed` honestly. Neither can be fooled by whitespace.
 What NAPALM's config path cannot do is manage a VLAN — its unit is a
 configuration file. So it gets the reads and the diffs, and the resource
 modules get the writes.
+
+## The lab this describes
+
+Seven nodes: six network devices plus the automation host. Firewall at the
+perimeter, a redundant router pair below it as the internal gateway, switches
+pure layer 2.
+
+```
+                        VMnet8 / outside
+                              │ ethernet1/1 → zone untrust
+                    ┌────────────────────┐
+                    │   PA1   PAN-OS     │   edge
+                    └────────────────────┘
+                              │ ethernet1/2 → zone trust  10.0.1.1/29
+                        [ TransitSw ]   unmanaged, 0 RAM
+                          │          │
+                 ┌────────────┐  ┌────────────┐
+                 │  R1  IOSv  │  │  R2  IOSv  │  Gi0/1  .2      .3
+                 │  HSRP actv │  │  HSRP stby │  transit VIP .4
+                 └────────────┘  └────────────┘
+                    │ Gi0/2          │ Gi0/2     trunks (10,20 · native 999)
+                 ┌────────────┐  ┌────────────┐
+                 │  SW1 IOSvL2│══│  SW2 IOSvL2│  pure L2
+                 └────────────┘  └────────────┘
+                   │      └────────┐   │     │
+                   │   ┌───────────┼───┘     │
+              ┌──────────┐     ┌──────────┐  │
+              │   JSW1   │─────│   JSW2   │──┘  dual-homed, STP blocks one
+              │  USERS   │     │ SERVERS  │
+              └──────────┘     └──────────┘
+```
+
+| | Address |
+|---|---|
+| Management | 10.10.50.0/24 — automation .10, R1 .11, SW1 .12, SW2 .13, JSW1 .14, JSW2 .15, PA1 .16, R2 .17 |
+| Transit (PA1 ↔ routers) | 10.0.1.0/29 — PA1 .1, R1 .2, R2 .3, **HSRP VIP .4** |
+| VLAN 10 USERS | 10.0.10.0/24 — R1 .2, R2 .3, **HSRP VIP .1** |
+| VLAN 20 SERVERS | 10.0.20.0/24 — R1 .2, R2 .3, **HSRP VIP .1** |
+| VLAN 99 MGMT | the management segment; SW1/SW2 reach it via an access port + SVI |
+| VLAN 999 | native on every trunk, and the unused-port VLAN |
+| Outside | PA1 `ethernet1/1` 192.168.231.60/24 via .2 (VMware NAT, per `../lab/topology.yaml`) |
+
+Inventory carries these addresses for real rather than as `x.x.x.x`, unlike the
+STIG groups — they describe one GNS3 lab on one workstation, and
+`../lab/topology.yaml` already commits the same management segment. A real
+site's addressing still belongs only in gitignored files.
+
+Why the topology is shaped this way, in automation terms: **every Cisco device
+exercises a different half of `cisco_baseline`.** The routers carry every L3
+interface, static route and the OSPF process; the switches carry VLANs, trunks
+and one management SVI and no routing at all. That is what the
+`ios_routers`/`ios_switches` split was built for. The Cisco↔Juniper trunks are
+where native-VLAN and allowed-VLAN modelling differs between platforms, and
+LLDP across that seam is what `napalm_facts` reads the topology back from.
+
+Two things sit outside the resource modules, both on the routers:
+`encapsulation dot1Q` (no module in `cisco.ios` covers it, and
+`ios_l3_interfaces` will address a subinterface without it — an interface with
+an IP that forwards nothing) and HSRP (a module exists in recent `cisco.ios`,
+but the schema needs confirming against the installed version first). Both go
+through `napalm_config_push` with `templates/router_on_a_stick.j2`, which gets
+the device-computed diff and depends on no unverified module:
+
+```bash
+ansible-playbook playbooks/napalm_push.yml --limit R1 \
+    -e napalm_config_template=router_on_a_stick.j2      # diff only
+ansible-playbook playbooks/napalm_push.yml --limit R1 \
+    -e napalm_config_template=router_on_a_stick.j2 -e napalm_commit=true
+```
+
+One router at a time. Pushing HSRP to both at once, with a mistake in it, takes
+out the gateway for every VLAN simultaneously.
 
 ## Layout
 
@@ -294,7 +366,7 @@ the problem completely.
 ## Validating offline
 
 ```bash
-python3 tests/run_offline.py          # 19 scenarios, no devices, no collections
+python3 tests/run_offline.py          # 22 scenarios, no devices, no collections
 python3 tests/run_offline.py -v       # ansible output for anything that fails
 python3 tests/stub_devices.py /tmp/s  # just write the stubs, to poke at by hand
 ```

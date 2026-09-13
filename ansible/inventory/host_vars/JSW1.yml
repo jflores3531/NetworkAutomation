@@ -1,0 +1,27 @@
+---
+# JSW1 - Juniper access switch serving the USERS VLAN.
+
+# `vlan` is a VLAN NAME, not an ID - see the note in
+# ../group_vars/juniper_switches/vars.yml on why the Juniper and Cisco groups
+# differ here rather than sharing a shape.
+baseline_access_ports:
+  - name: ge-0/0/2
+    vlan: USERS
+    description: user port
+  - name: ge-0/0/3
+    vlan: USERS
+    description: user port
+  - name: ge-0/0/4
+    vlan: USERS
+    description: user port
+  - name: ge-0/0/5
+    vlan: USERS
+    description: user port
+
+# Both uplinks, not just the forwarding one. STP blocks one of the two, but
+# "blocked" is a forwarding state - the interface is still up, and an uplink
+# that is genuinely down is exactly what this check exists to notice, since the
+# topology keeps working on the survivor and nothing else complains.
+napalm_expected_up_interfaces:
+  - ge-0/0/0
+  - ge-0/0/1

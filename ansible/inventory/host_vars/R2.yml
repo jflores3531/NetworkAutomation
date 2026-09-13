@@ -1,0 +1,34 @@
+---
+# R2 - HSRP standby for both VLANs and for the transit group, trunked to SW2.
+#
+# The standby half of the pair. Default priority (100) against R1's 110, so R1
+# is active whenever it is healthy and R2 takes over when it is not.
+
+# Transit link to the firewall. See the note in
+# ../group_vars/ios_routers/vars.yml on why this is a resource-module interface
+# while the VLAN subinterfaces are not.
+baseline_l3_interfaces:
+  - name: GigabitEthernet0/1
+    ipv4_cidr: 10.0.1.3/29
+
+# Address this router takes inside each VLAN subnet - the last octet appended to
+# each entry's subnet_prefix in router_vlans. R1 is .2, R2 is .3, and the VIP
+# is .1, so the three are readable at a glance on the device.
+router_host_octet: 3
+
+# Left at the HSRP default. preempt is still true so that if R2 ever becomes
+# active and is then itself restarted, the pair converges on R1 rather than
+# staying wherever the last failure left it.
+hsrp_priority: 100
+hsrp_preempt: true
+
+# Downlink neighbour, for the interface description the template renders and for
+# the LLDP map napalm_facts collects.
+uplink_switch: SW2
+
+# Both physical links must be up for this router to be able to take over - a
+# standby whose downlink is dead is not redundancy, and this is the check that
+# says so before you find out the hard way.
+napalm_expected_up_interfaces:
+  - GigabitEthernet0/1
+  - GigabitEthernet0/2

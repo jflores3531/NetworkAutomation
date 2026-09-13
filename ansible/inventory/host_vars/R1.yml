@@ -1,0 +1,34 @@
+---
+# R1 - HSRP active for both VLANs and for the transit group, trunked to SW1.
+#
+# Priorities are set here rather than in group_vars because "which router is
+# active" is the one thing that must differ between the pair, and a copy-paste
+# that left both at the same priority would elect by IP address instead - which
+# works, is silent, and is not what anyone intended.
+
+# Transit link to the firewall. See the note in
+# ../group_vars/ios_routers/vars.yml on why this is a resource-module interface
+# while the VLAN subinterfaces are not.
+baseline_l3_interfaces:
+  - name: GigabitEthernet0/1
+    ipv4_cidr: 10.0.1.2/29
+
+# Address this router takes inside each VLAN subnet - the last octet appended to
+# each entry's subnet_prefix in router_vlans. R1 is .2, R2 is .3, and the VIP
+# is .1, so the three are readable at a glance on the device.
+router_host_octet: 2
+
+# Higher than R2's, with preempt, so R1 takes the active role back after a
+# reboot rather than leaving the pair inverted until someone notices.
+hsrp_priority: 110
+hsrp_preempt: true
+
+# Downlink neighbour, for the interface description the template renders and for
+# the LLDP map napalm_facts collects.
+uplink_switch: SW1
+
+# Both physical links must be up for this router to be doing its job - the
+# transit side and the trunk down to SW1. napalm_validate asserts it.
+napalm_expected_up_interfaces:
+  - GigabitEthernet0/1
+  - GigabitEthernet0/2

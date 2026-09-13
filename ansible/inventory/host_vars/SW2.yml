@@ -1,0 +1,22 @@
+---
+# SW2 - distribution switch, trunked up to R2.
+
+# Management SVI. Reached over the Gi0/7 access port in VLAN 99, which is
+# patched to the management switch - see ../group_vars/ios_switches/vars.yml on
+# why this is as out-of-band as IOSvL2 gets.
+baseline_l3_interfaces:
+  - name: Vlan99
+    ipv4_cidr: 10.10.50.13/24
+
+# The router uplink. Appended to the group's trunk list rather than replacing it:
+# the three trunks in group_vars are common to both switches, this one is not.
+baseline_trunk_ports: "{{ ios_switch_common_trunks + [router_uplink] }}"
+router_uplink:
+  name: GigabitEthernet0/0
+  description: trunk to R2
+  allowed_vlans: [10, 20]
+  native_vlan: 999
+
+napalm_expected_up_interfaces:
+  - GigabitEthernet0/0
+  - GigabitEthernet0/2

@@ -1,0 +1,15 @@
+---
+# Secrets for the ios_routers group. Copy to vault.yml, fill in, THEN encrypt
+# before committing anything:
+#
+#   ansible-vault encrypt inventory/group_vars/ios_routers/vault.yml
+#
+# vault.yml is gitignored (see ../../../../.gitignore) - this .example is the
+# only tracked version.
+
+# HSRP authentication key, shared by R1 and R2. Without it anything on a VLAN
+# can claim the gateway address by advertising a higher priority; with it, a
+# rogue speaker is ignored. The router_on_a_stick template omits HSRP
+# authentication entirely rather than sending an empty key, so leaving this
+# unset gets you working-but-unauthenticated HSRP, not a broken push.
+vault_hsrp_auth_key: CHANGE_ME

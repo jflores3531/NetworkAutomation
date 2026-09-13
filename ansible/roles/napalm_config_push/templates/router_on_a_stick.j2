@@ -1,0 +1,81 @@
+{#
+  R1/R2: VLAN subinterfaces and HSRP - the part of this topology that resource
+  modules cannot express.
+
+  Why a template rather than cisco_baseline:
+
+    `encapsulation dot1Q <vlan>` has no module in cisco.ios. ios_l3_interfaces
+    will happily address GigabitEthernet0/2.10 without it, leaving a
+    subinterface that holds an IP and passes no traffic - a failure that looks
+    like a cabling problem.
+
+    HSRP does have a resource module in recent cisco.ios, but the name and
+    schema need confirming against the version actually installed before a
+    config push depends on them. Guessing a schema is what the
+    nxos_logging_global history in ../../../README.md cost this project once.
+    Promote this to that module after `ansible-galaxy collection list cisco.ios`
+    on the lab host says which version is there.
+
+  Everything renders from inventory (group_vars/ios_routers + host_vars/R1|R2),
+  so this file holds no addressing of its own.
+
+    ansible-playbook playbooks/napalm_push.yml --limit R1 \
+        -e napalm_config_template=router_on_a_stick.j2
+    # read the device's own diff, then:
+    ansible-playbook playbooks/napalm_push.yml --limit R1 \
+        -e napalm_config_template=router_on_a_stick.j2 -e napalm_commit=true
+
+  Run ONE ROUTER AT A TIME. Pushing HSRP to both at once, with a mistake in it,
+  takes out the gateway for every VLAN simultaneously; done one at a time the
+  other router is still forwarding while you check.
+#}
+interface {{ router_trunk_interface }}
+ description trunk to {{ uplink_switch }} - VLAN subinterfaces below
+ no ip address
+ no shutdown
+!
+{% for vlan in router_vlans %}
+interface {{ router_trunk_interface }}.{{ vlan.vlan_id }}
+ description {{ vlan.name }} gateway - HSRP group {{ vlan.hsrp_group }}
+{# encapsulation before the address: without it the subinterface holds an IP
+    and forwards nothing, which is the whole reason this template exists. #}
+ encapsulation dot1Q {{ vlan.vlan_id }}
+{# Dotted mask taken straight from inventory rather than converted from a
+    prefix length. The conversion filter (ansible.utils.ipaddr) would add a
+    collection plus netaddr as render-time dependencies, and a template that
+    cannot render without them cannot be exercised by tests/run_offline.py -
+    which would mean this file first rendered against a live router. The dotted
+    form is also what IOS itself takes, so inventory reads like the command. #}
+ ip address {{ vlan.subnet_prefix }}.{{ router_host_octet }} {{ vlan.netmask }}
+ standby version 2
+ standby {{ vlan.hsrp_group }} ip {{ vlan.hsrp_vip }}
+ standby {{ vlan.hsrp_group }} priority {{ hsrp_priority }}
+{% if hsrp_preempt | default(false) %}
+ standby {{ vlan.hsrp_group }} preempt
+{% endif %}
+{% if hsrp_auth_key | default('') | length > 0 and hsrp_auth_key != 'CHANGE_ME' %}
+ standby {{ vlan.hsrp_group }} authentication md5 key-string {{ hsrp_auth_key }}
+{% endif %}
+ no shutdown
+!
+{% endfor %}
+{# HSRP on the transit segment as well, so the firewall keeps one static route
+    per inside subnet pointing at a next hop that survives losing either router.
+    The interface address itself is set by cisco_baseline through
+    ios_l3_interfaces - only the HSRP part belongs here. #}
+interface {{ transit_interface }}
+ description transit to PA1 - HSRP group {{ transit_hsrp_group }}
+ standby version 2
+ standby {{ transit_hsrp_group }} ip {{ transit_hsrp_vip }}
+ standby {{ transit_hsrp_group }} priority {{ hsrp_priority }}
+{% if hsrp_preempt | default(false) %}
+ standby {{ transit_hsrp_group }} preempt
+{% endif %}
+{% if hsrp_auth_key | default('') | length > 0 and hsrp_auth_key != 'CHANGE_ME' %}
+ standby {{ transit_hsrp_group }} authentication md5 key-string {{ hsrp_auth_key }}
+{% endif %}
+!
+{# standby version 2 on every group deliberately: HSRPv1 and v2 do not
+    interoperate, so a pair split across versions elects two actives and both
+    answer for the VIP. Setting it explicitly on each interface means the pair
+    cannot drift apart through one device defaulting differently. #}

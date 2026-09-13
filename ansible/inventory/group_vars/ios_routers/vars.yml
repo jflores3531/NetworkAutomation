@@ -1,48 +1,125 @@
 ---
-# Intended configuration for the new lab's Cisco IOS routers, consumed by the
-# cisco_baseline role. Placeholders for the same reason as the switch group -
-# see ../ios_switches/vars.yml.
+# R1 and R2 - the redundant internal gateway pair (IOSv), below the firewall.
+# Consumed by cisco_baseline for what resource modules cover, and by the
+# router_on_a_stick template in roles/napalm_config_push for what they do not.
 #
-# Separate group from ios_switches because the routing vars below have no
-# meaning on an access switch, and because ios_l2_interfaces (VLAN/trunk
-# config) has none on a router. One group per role-in-the-network keeps both
-# halves of cisco_baseline honest without per-host conditionals.
-
-baseline_domain_name: ""
-
-# Routed interfaces and subinterfaces, pushed with ios_l3_interfaces. ipv4_cidr,
-# in the form the module takes - address plus prefix length in one string.
+# Per-router values (transit address, HSRP priority, which switch it trunks to)
+# live in ../../host_vars/R1.yml and R2.yml. This file holds what both share.
 #
-# baseline_l3_interfaces:
-#   - name: GigabitEthernet0/0.100
-#     ipv4_cidr: x.x.x.x/24
+# Topology (see ../../../NAPALM.md):
+#
+#   PA1 e1/2 .1 ── TransitSw ── Gi0/1 .2 R1 ──Gi0/2 trunk── SW1
+#                            └─ Gi0/1 .3 R2 ──Gi0/2 trunk── SW2
+#
+#   VLAN 10  10.0.10.0/24  hosts' gateway = HSRP VIP .1
+#   VLAN 20  10.0.20.0/24  hosts' gateway = HSRP VIP .1
+#   transit  10.0.1.0/29   PA1's next hop inside = HSRP VIP .4
+
+baseline_domain_name: lab.local
+
+# --- what cisco_baseline configures -----------------------------------------
+
+# The transit link to the firewall. A physical routed interface, so
+# ios_l3_interfaces handles it directly - unlike the VLAN subinterfaces, which
+# need `encapsulation dot1Q` and have no resource module (see below).
+#
+# The address itself is per-router, in host_vars.
 baseline_l3_interfaces: []
 
-# Static routes, pushed with the ios_static_routes resource module.
-#
-# baseline_static_routes:
-#   - dest: x.x.x.x/24
-#     next_hop: x.x.x.x
-baseline_static_routes: []
+# Default route out, via the firewall's trust interface. The only static route
+# these routers need: everything internal is directly connected or learned from
+# the other router over OSPF.
+baseline_static_routes:
+  - dest: 0.0.0.0/0
+    next_hop: 10.0.1.1
 
-# OSPFv2, pushed with ios_ospfv2. Empty process_id skips the task - routing
-# protocol config is the one place where a half-rendered intent is worse than
-# no intent at all, so the role requires both the process and at least one
-# network statement before it sends anything.
+# OSPF between R1 and R2, and the reason it is here rather than omitted: if a
+# router's own downlink to its switch fails while the router stays up, OSPF is
+# what lets it reach the VLANs through its neighbour. Without a second router
+# this had no peer and the task was dead weight - the redundant pair is what
+# makes it mean something.
 #
-# baseline_ospf:
-#   process_id: 1
-#   router_id: x.x.x.x
-#   networks:
-#     - address: x.x.x.x
-#       wildcard_bits: 0.0.0.255
-#       area: 0
-baseline_ospf: {}
+# Area 0 only. Both VLAN subnets and the transit segment are advertised, so
+# either router can forward for either VLAN.
+baseline_ospf:
+  process_id: 1
+  networks:
+    - address: 10.0.10.0
+      wildcard_bits: 0.0.0.255
+      area: 0
+    - address: 10.0.20.0
+      wildcard_bits: 0.0.0.255
+      area: 0
+    - address: 10.0.1.0
+      wildcard_bits: 0.0.0.7
+      area: 0
 
 baseline_ntp_servers:
-  - x.x.x.x
-  - x.x.x.x
+  - 10.10.50.10
 baseline_syslog_servers:
-  - x.x.x.x
+  - 10.10.50.10
 
 baseline_lldp_enabled: true
+
+# No baseline_vlans / baseline_access_ports / baseline_trunk_ports. These are
+# routers: the VLAN-facing side is subinterfaces, not switchports, and
+# ios_l2_interfaces has nothing to configure on them. That asymmetry with
+# ../ios_switches/vars.yml is why the two groups exist separately.
+
+# --- what the template configures, and why -----------------------------------
+# Router-on-a-stick plus HSRP is the one part of this topology that resource
+# modules cannot express:
+#
+#   `encapsulation dot1Q <vlan>` - no module in cisco.ios covers it, and
+#   ios_l3_interfaces will happily address Gi0/2.10 without it, leaving a
+#   subinterface that has an IP and passes no traffic
+#
+#   HSRP - recent cisco.ios ships a resource module for it, but the name and
+#   schema need confirming against the installed version before a config push
+#   relies on them. Guessing a schema is what the nxos_logging_global history
+#   in ../../../README.md cost this project once.
+#
+# So both go through roles/napalm_config_push with templates/router_on_a_stick.j2,
+# which gets the device-computed diff and needs no unverified module:
+#
+#   ansible-playbook playbooks/napalm_push.yml --limit R1 \
+#       -e napalm_config_template=router_on_a_stick.j2
+#   ...read the diff, then add -e napalm_commit=true
+#
+# Promote HSRP to ios_hsrp_interfaces once `ansible-galaxy collection list
+# cisco.ios` on the lab host says which version is installed and its docs
+# confirm the schema.
+
+# Trunk interface carrying both VLANs up from the switch.
+router_trunk_interface: GigabitEthernet0/2
+
+# The VLANs each router is a gateway for, with the HSRP virtual address hosts
+# point at. Both routers serve both VLANs; which one is active is decided by
+# hsrp_priority in host_vars.
+router_vlans:
+  - vlan_id: 10
+    name: USERS
+    subnet_prefix: 10.0.10
+    netmask: 255.255.255.0
+    hsrp_group: 10
+    hsrp_vip: 10.0.10.1
+  - vlan_id: 20
+    name: SERVERS
+    subnet_prefix: 10.0.20
+    netmask: 255.255.255.0
+    hsrp_group: 20
+    hsrp_vip: 10.0.20.1
+
+# HSRP on the transit segment too, so the firewall keeps ONE static route to the
+# inside networks pointing at a stable next hop. Without this PA1 would need two
+# routes with path monitoring or ECMP, which is more firewall config to get
+# right and less automatable through panos_baseline.
+transit_interface: GigabitEthernet0/1
+transit_hsrp_group: 1
+transit_hsrp_vip: 10.0.1.4
+
+# Authentication for HSRP hellos. Not optional in spirit: an unauthenticated
+# group lets anything on the VLAN claim the gateway address. Vaulted, and the
+# template skips HSRP authentication entirely rather than sending an empty key
+# if it is unset.
+hsrp_auth_key: "{{ vault_hsrp_auth_key | default('') }}"
