@@ -98,3 +98,8 @@ baseline_security_rules: []
 #     nexthop: x.x.x.x
 #     interface: ethernet1/1
 baseline_static_routes: []
+
+# Port the preflight play checks - the XML API, not SSH. SSH to a PAN-OS CLI can
+# be open while the API is unreachable or the key is wrong, and the API is the
+# only path anything here uses.
+preflight_port: 443

@@ -1,0 +1,208 @@
+---
+# Readiness check for the whole multi-vendor lab: is every device reachable, is
+# every platform prerequisite in place, and do the credentials work - per device,
+# without stopping at the first failure.
+#
+# Run this first, every session. It exists because the failures it catches all
+# look like something else when they surface later:
+#
+#   - a Juniper switch without `set system services netconf ssh` fails like bad
+#     credentials, while CLI SSH keeps working
+#   - a missing napalm driver fails on the controller, so every device in the
+#     play looks broken at once
+#   - a wrong Palo Alto API key fails at the first write, after the reads have
+#     all succeeded and made things look fine
+#   - NX-OS with `feature nxapi` off fails only if someone switched the driver
+#     from nxos_ssh to nxos
+#
+# Every check tolerates its own failure and records a status instead. The
+# summary at the end is the output that matters.
+
+# --- controller-side prerequisites, once --------------------------------------
+# Checked once rather than per host: these either work for the whole run or for
+# none of it, and reporting the same missing library ten times buries it.
+
+- name: Check controller prerequisites
+  delegate_to: localhost
+  run_once: true
+  block:
+    - name: Confirm the napalm library is importable
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - import napalm; print(napalm.__version__)
+      register: preflight_napalm
+      changed_when: false
+      ignore_errors: true
+
+    - name: Confirm each driver in use can be loaded
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - import napalm; napalm.get_network_driver('{{ item }}')
+      register: preflight_drivers
+      changed_when: false
+      ignore_errors: true
+      loop: >-
+        {{ ansible_play_hosts_all
+           | map('extract', hostvars, 'napalm_dev_os')
+           | select('defined') | unique | list }}
+      # Drivers are loaded by name at runtime, so a typo'd or uninstalled one
+      # (napalm-panos is a separate package - see ../../NAPALM.md) is not
+      # discovered until a task actually runs. This surfaces it up front.
+
+    - name: Report controller prerequisites
+      ansible.builtin.debug:
+        msg: >-
+          controller: napalm
+          {{ preflight_napalm.stdout | default('NOT IMPORTABLE - pip install -r requirements.txt') }}
+          | python {{ ansible_playbook_python }}
+          | drivers ok:
+          {{ preflight_drivers.results | default([]) | selectattr('rc', 'defined')
+             | selectattr('rc', 'equalto', 0) | map(attribute='item') | join(', ') | default('none', true) }}
+          | drivers FAILED:
+          {{ preflight_drivers.results | default([]) | selectattr('rc', 'defined')
+             | rejectattr('rc', 'equalto', 0) | map(attribute='item') | join(', ') | default('none', true) }}
+
+# --- per-device checks --------------------------------------------------------
+
+- name: Check the management port is open
+  ansible.builtin.wait_for:
+    host: "{{ preflight_address }}"
+    port: "{{ preflight_port }}"
+    timeout: "{{ preflight_timeout }}"
+  vars:
+    preflight_address: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+  delegate_to: localhost
+  register: preflight_port_check
+  ignore_errors: true
+
+# Junos only, and only when 830 was shut: the answer to "is NETCONF enabled"
+# is exactly the difference between these two ports, and knowing which one
+# answered turns an unhelpful timeout into a one-line fix.
+- name: Distinguish "NETCONF not enabled" from "switch unreachable"
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+    port: 22
+    timeout: "{{ preflight_timeout }}"
+  delegate_to: localhost
+  register: preflight_ssh_fallback
+  ignore_errors: true
+  when:
+    - napalm_dev_os | default('') == 'junos'
+    - preflight_port_check is failed
+
+- name: Attempt a NAPALM login
+  napalm.ansible.napalm_get_facts:
+    provider: "{{ napalm_provider }}"
+    filter: facts
+  register: preflight_napalm_login
+  ignore_errors: true
+  delegate_to: localhost
+  when:
+    - preflight_login | bool
+    - napalm_dev_os is defined
+    - preflight_port_check is succeeded
+
+- name: Attempt a Palo Alto API call
+  paloaltonetworks.panos.panos_facts:
+    provider: "{{ panos_provider }}"
+    gather_subset:
+      - system
+  register: preflight_panos_login
+  ignore_errors: true
+  when:
+    - preflight_login | bool
+    - inventory_hostname in groups['palo_alto'] | default([])
+    - preflight_port_check is succeeded
+
+# --- one status line per device ------------------------------------------------
+
+- name: Record this device's readiness
+  ansible.builtin.set_fact:
+    # `| bool` on every one of these is load bearing, not decoration. A var
+    # defined in a vars block renders to a STRING - "False" for a failed check -
+    # and a non-empty string is truthy in Jinja, so without it this expression
+    # returns READY for every device including the unreachable ones. Found by
+    # running the play against twelve placeholder addresses and getting
+    # "12/12 ready".
+    preflight_status: >-
+      {{ 'READY' if login_ok | bool
+         else 'PORT OPEN, LOGIN FAILED' if port_ok | bool
+         else 'NETCONF CLOSED (ssh 22 answers - run: set system services netconf ssh)'
+           if netconf_missing | bool
+         else 'UNREACHABLE on port ' ~ preflight_port }}
+    preflight_detail: >-
+      {{ napalm_identity if napalm_identity | length > 0
+         else panos_identity if panos_identity | length > 0
+         else (preflight_napalm_login.msg | default(preflight_panos_login.msg | default('')))
+              | truncate(160, true) }}
+  vars:
+    port_ok: "{{ preflight_port_check is succeeded }}"
+    # `is succeeded` is TRUE for a SKIPPED task - a skipped result simply has no
+    # `failed` key - so every one of these also tests that the task actually ran.
+    # Without that, a device whose checks were all skipped reads as a device whose
+    # checks all passed, which is the same class of false pass as the `| bool`
+    # problem above and would be just as invisible.
+    netconf_missing: >-
+      {{ preflight_ssh_fallback is defined
+         and not (preflight_ssh_fallback.skipped | default(false))
+         and preflight_ssh_fallback is succeeded }}
+    login_ok: >-
+      {{ (preflight_napalm_login is defined
+          and not (preflight_napalm_login.skipped | default(false))
+          and preflight_napalm_login is succeeded
+          and preflight_napalm_login.ansible_facts is defined)
+         or (preflight_panos_login is defined
+             and not (preflight_panos_login.skipped | default(false))
+             and preflight_panos_login is succeeded) }}
+    napalm_identity: >-
+      {{ (preflight_napalm_login.ansible_facts.napalm_facts.vendor | default('') ~ ' ' ~
+          preflight_napalm_login.ansible_facts.napalm_facts.model | default('') ~ ' os ' ~
+          preflight_napalm_login.ansible_facts.napalm_facts.os_version | default(''))
+         if (preflight_napalm_login is defined
+             and preflight_napalm_login.ansible_facts is defined) else '' }}
+    panos_identity: >-
+      {{ ('Palo Alto ' ~ preflight_panos_login.ansible_facts.ansible_net_model | default('') ~
+           ' PAN-OS ' ~ preflight_panos_login.ansible_facts.ansible_net_version | default(''))
+         if (preflight_panos_login is defined
+             and preflight_panos_login.ansible_facts is defined) else '' }}
+
+- name: Report the fleet
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['PREFLIGHT - ' ~ (statuses | select('equalto', 'READY') | list | length)
+          ~ '/' ~ (ansible_play_hosts_all | length) ~ ' ready',
+          '-' * 72]
+         + lines
+         + ['-' * 72]
+         + ([] if not_ready | length == 0
+            else ['NOT READY: ' ~ not_ready | join(', ')]) }}
+  vars:
+    # map(attribute=..., default=...) rather than map('extract', hostvars, 'key'):
+    # extract RAISES for a host that never recorded a status, inside a filter
+    # where `| default()` cannot catch it, and the whole summary is lost with it.
+    # A host is missing a status exactly when something went wrong for it, which
+    # is when this report matters most - so a missing one has to read as
+    # "NO RESULT", not take the report down.
+    hv: "{{ ansible_play_hosts_all | map('extract', hostvars) | list }}"
+    statuses: "{{ hv | map(attribute='preflight_status', default='NO RESULT') | list }}"
+    lines: >-
+      {{ ansible_play_hosts_all
+         | zip(statuses, hv | map(attribute='preflight_detail', default='') | list)
+         | map('join', '  |  ') | list }}
+    not_ready: >-
+      {{ ansible_play_hosts_all | zip(statuses)
+         | rejectattr(1, 'equalto', 'READY') | map(attribute=0) | list }}
+  run_once: true
+
+- name: Fail if any device is not ready
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} is not ready: {{ preflight_status }}
+      {{ preflight_detail }}
+  when:
+    - preflight_fail_on_not_ready | bool
+    - preflight_status != 'READY'

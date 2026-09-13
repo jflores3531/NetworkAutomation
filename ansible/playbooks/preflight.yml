@@ -1,0 +1,45 @@
+---
+# Run this first, every session, before anything else in this directory.
+#
+#   ansible-playbook playbooks/preflight.yml --ask-vault-pass
+#   ansible-playbook playbooks/preflight.yml --ask-vault-pass --limit juniper_switches
+#
+# One line per device: reachable, credentials good, and what answered. Nothing is
+# configured and nothing is written. It never stops at the first failure - the
+# output is a survey of all ten devices, which is the thing worth having before a
+# change window rather than after.
+#
+# As a gate ahead of another playbook (fails if any device is not ready):
+#
+#   ansible-playbook playbooks/preflight.yml -e preflight_fail_on_not_ready=true
+#
+# Why a whole play for this: every failure it catches surfaces later disguised as
+# something else. A Juniper switch missing `set system services netconf ssh`
+# looks like bad credentials while CLI SSH still works; a missing NAPALM driver
+# fails on the controller so all ten devices look broken at once; a wrong Palo
+# Alto API key passes every read and fails at the first write. See ../NAPALM.md.
+#
+# connection: local for the whole play - the port checks run from the controller
+# and the login attempts use NAPALM/pan-os-python, neither of which goes through
+# an Ansible connection plugin.
+- name: Check every device is reachable and every prerequisite is in place
+  hosts: napalm_devices:palo_alto
+  gather_facts: false
+  # Controller-only. The keyword AND the vars are both needed - an inventory
+  # ansible_connection outranks a play keyword, so the keyword alone leaves
+  # undelegated tasks loading each group's network_cli/netconf plugin. See
+  # "Why these plays set both connection: local and ansible_connection" in
+  # ../NAPALM.md.
+  connection: local
+  vars:
+    ansible_connection: local
+    ansible_become: false
+  vars_prompt:
+    - name: napalm_username
+      prompt: "Device username"
+      private: false
+    - name: napalm_password
+      prompt: "Device password"
+      private: true
+  roles:
+    - preflight

@@ -13,7 +13,15 @@
 - name: Check operational health through NAPALM
   hosts: napalm_devices
   gather_facts: false
+  # Controller-only. The keyword AND the vars are both needed - an inventory
+  # ansible_connection outranks a play keyword, so the keyword alone leaves
+  # undelegated tasks loading each group's network_cli/netconf plugin. See
+  # "Why these plays set both connection: local and ansible_connection" in
+  # ../NAPALM.md.
   connection: local
+  vars:
+    ansible_connection: local
+    ansible_become: false
   vars_prompt:
     - name: napalm_username
       prompt: "Device username"

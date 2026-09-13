@@ -38,3 +38,9 @@ napalm_getters:
 napalm_optional_args: {}
 
 napalm_expected_up_interfaces: []
+
+# Port the preflight play checks. 830 is NETCONF; 22 is the CLI. The preflight
+# role checks 22 as well when 830 is shut, because the difference between the two
+# is the whole diagnosis: both closed means the switch is unreachable, 22 open and
+# 830 closed means `set system services netconf ssh` was never run.
+preflight_port: 830

@@ -20,7 +20,10 @@ say so plainly (see the "confirmed working live" sections in
 What *has* been done — every playbook and role executed end to end against stub
 modules returning realistic device data, on the controller, with these results:
 
-- all 13 playbooks pass `--syntax-check`
+- all 14 playbooks pass `--syntax-check`
+- `preflight` reports per-device readiness across 12 devices without aborting,
+  and distinguishes unreachable / port-open-login-failed / NETCONF-not-enabled —
+  each branch verified by pointing it at a local listener
 - `napalm_facts` collects 9 getters, merges them, and writes per-device JSON
 - an unsupported getter is tolerated, named in the run output, and costs only
   itself — verified by making the stub refuse two of them
@@ -35,6 +38,24 @@ modules returning realistic device data, on the controller, with these results:
 - `cisco_baseline`, `junos_baseline` and `panos_baseline` assemble every module
   argument correctly from inventory, and their opt-in gates (firewall policy,
   PAN-OS commit) stay shut unless set
+
+Running it rather than reading it is what found the two bugs worth recording,
+both of which were **silent false passes** — the worst kind for a readiness
+check:
+
+- **Every device reported `READY` while all twelve were unreachable.** A
+  boolean computed in a `vars:` block renders as the *string* `"False"`, and a
+  non-empty string is truthy in Jinja, so the status expression always took its
+  first branch. Every one of those conditionals now ends in `| bool`.
+- **A skipped check counted as a passed check.** `is succeeded` is true for a
+  *skipped* task, because a skipped result has no `failed` key — so a device
+  whose login attempt never ran read identically to one that logged in. Each
+  test now also asserts the task actually ran.
+
+Both would have survived any amount of review of the YAML; only 12 placeholder
+addresses and a `0/12 ready` expectation caught them. A third bug, in the plays
+rather than a role, is written up under "Why these plays set both
+`connection: local` and `ansible_connection`" below.
 
 What that does **not** prove: that a single module argument is spelled the way
 the installed collection expects, or that any device accepts what is sent. The
@@ -113,6 +134,7 @@ modules get the writes.
       palo_alto/vars.yml              provider, vsys, intended config
       palo_alto/vault.yml.example     API key template
 
+    roles/preflight                   reachability + prerequisites, per device
     roles/napalm_facts                multi-vendor fact collection -> JSON
     roles/napalm_healthcheck          interfaces, counters, environment
     roles/napalm_backup               config backup, latest + archive, diffed
@@ -137,6 +159,22 @@ Groups are organised **by driver**, not by role-in-the-network, so that one
     fortinet            (parked)
 
 ## Playbooks
+
+Start here, every session. One line per device: reachable, credentials good,
+and what answered — and it never stops at the first failure, because the point
+is a survey of all ten devices rather than the first bad one:
+
+```bash
+ansible-playbook playbooks/preflight.yml --ask-vault-pass
+ansible-playbook playbooks/preflight.yml -e preflight_fail_on_not_ready=true   # as a gate
+```
+
+It exists because every failure it catches surfaces later disguised as
+something else: a Juniper switch missing `set system services netconf ssh`
+looks like bad credentials while CLI SSH keeps working (so it checks 830, then
+22, and says which answered); a missing NAPALM driver fails on the controller,
+making all ten devices look broken at once; a wrong Palo Alto API key passes
+every read and fails at the first write.
 
 Read-only, safe against everything, `napalm_devices` fleet-wide:
 
@@ -180,6 +218,32 @@ The config playbooks target the **new lab's** groups only. The STIG-managed
 switches converge through their own roles, and two toolchains pushing at the
 same devices is how they end up fighting over the same lines. Read-only plays
 cover everything, deliberately.
+
+### Why these plays set both `connection: local` and `ansible_connection`
+
+Every NAPALM playbook carries both:
+
+```yaml
+  connection: local
+  vars:
+    ansible_connection: local
+    ansible_become: false
+```
+
+which looks redundant and is not. The `napalm_*` modules run on the controller,
+so these plays should never touch a device's connection plugin — but inventory
+sets `ansible_connection` per group (`network_cli` for the Cisco gear,
+`netconf` for Juniper), and **an inventory variable outranks a play keyword**.
+With only the keyword, every undelegated task in the play — `set_fact`,
+`debug`, `assert` — still loads that group's connection plugin and its `become`
+settings. Play vars outrank inventory group vars, so the `vars:` block is what
+actually makes the play controller-only.
+
+This was found by running the preflight play, not by reading: it failed on
+`the connection plugin 'ansible.netcommon.netconf' was not found` at a
+`set_fact` task, in a play that connects to nothing. Earlier test runs had
+passed `-e ansible_connection=local`, which is extra-vars precedence and hid
+the problem completely.
 
 ## Safety, per platform
 

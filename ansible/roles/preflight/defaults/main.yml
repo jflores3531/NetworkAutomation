@@ -1,0 +1,21 @@
+---
+# Management port checked per device. Overridden per group where the platform
+# listens somewhere else - 830 for NETCONF on Junos, 443 for the Palo Alto XML
+# API - in inventory/group_vars/napalm_junos|palo_alto/vars.yml.
+preflight_port: 22
+
+# Seconds to wait for the port. Short on purpose: this play exists to tell you
+# quickly which of ten devices are not ready, and a long timeout per unreachable
+# device turns that into a coffee break.
+preflight_timeout: 10
+
+# Whether to attempt a real login after the port check. Leave true - an open
+# port proves almost nothing, and the failure this play most needs to catch
+# before a change window is "the credentials or the driver are wrong", which
+# only a login finds.
+preflight_login: true
+
+# Set true to make the play fail if any device is not ready, for use as a gate
+# ahead of another playbook. Default reports and exits 0, because the whole
+# point is to survey every device rather than stop at the first bad one.
+preflight_fail_on_not_ready: false
