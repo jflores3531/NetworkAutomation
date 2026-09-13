@@ -11,14 +11,43 @@ file, and **changes none of them**. The STIG groups (`l2_switches`,
 groups below, which added variables to them and altered nothing they already
 had. See [`README.md`](README.md) for that toolchain.
 
-## Status: validated offline, never run against hardware
+## Status: Juniper confirmed live, everything else offline only
 
-**Nothing here has touched a real device.** This repository's convention is to
-say so plainly (see the "confirmed working live" sections in
-[`README.md`](README.md), each of which names the device and date), so:
+This repository's convention is to name the device and the date (see the
+"confirmed working live" sections in [`README.md`](README.md)), so:
 
-What *has* been done — every playbook and role executed end to end against stub
-modules returning realistic device data, on the controller, with these results:
+### Confirmed live — JSW1, 2026-09-13
+
+vJunos 26.2R1.7, from the lab's Python 3.12 controller (ansible-core 2.21.4,
+`napalm.napalm` 0.9.13, `junipernetworks.junos` 11.1.1):
+
+- **`junos_baseline` applied**, `changed=6`, and an immediate `--check -D`
+  re-run reported `changed=0` across all 15 tasks. Both `junos_hostname` and
+  `junos_ntp_global` committed, so those schemas are settled.
+- **`napalm_facts` collected all ten junos getters**, `unsupported_getters: []`.
+- **`napalm_validate` reported COMPLIES**, returning `compliance_report` as a
+  top-level key.
+
+Three things had to be fixed before any of that could start, and the first is
+the one worth remembering: **there is no `napalm.ansible` collection on
+Galaxy.** NAPALM's is `napalm.napalm`. Every role called the wrong name, and
+the offline stubs registered the same wrong name — so the suite passed while no
+real run could ever have begun. The full list is in "Verify on first contact"
+below, and the lesson is in what a stub cannot tell you: it will happily
+implement a collection that does not exist.
+
+### Not yet run against hardware
+
+Everything Cisco (`cisco_baseline`, and the `router_on_a_stick` template with
+its HSRP), everything Palo Alto (`panos_baseline`, the config export in the
+backup play), and `napalm_backup`, `napalm_healthcheck`, `napalm_push`,
+`junos_safe_push` and `preflight` on any real device. JSW2 is bootstrapped and
+answers NETCONF, but the roles have only been run against JSW1.
+
+### What offline validation covers
+
+Every playbook and role executed end to end against stub modules returning
+realistic device data, with these results:
 
 - all 14 playbooks pass `--syntax-check`
 - `ansible/tests/run_offline.py` drives all of it as 22 scenarios and asserts on
@@ -26,8 +55,8 @@ modules returning realistic device data, on the controller, with these results:
   bugs below exited 0 while being wrong. The suite is mutation-tested: breaking
   the fix again fails it
 - `preflight` reports per-device readiness across the whole inventory without
-  aborting,
-  and distinguishes unreachable / port-open-login-failed / NETCONF-not-enabled —
+  aborting, and distinguishes unreachable / port-open-login-failed /
+  NETCONF-not-enabled —
   each branch verified by pointing it at a local listener
 - `napalm_facts` collects 9 getters, merges them, and writes per-device JSON
 - an unsupported getter is tolerated, named in the run output, and costs only
@@ -533,6 +562,9 @@ ansible-core 2.21.4, `napalm.napalm` 0.9.13, `junipernetworks.junos` 11.1.1):
    `panos_export` and `panos_commit_firewall` are all used with their common
    arguments; confirm against the installed collection's docs before the first
    real commit.
+   `panos_export` specifically: the backup play fails if the exported file is
+   under 1 KB rather than trusting that something was written, so a wrong
+   argument there surfaces as a failed play rather than an empty backup.
 5. **`--check` behaviour on Junos — SETTLED, and not what this said.** Each
    task really is a device operation: load the candidate, return the switch's
    own `show | compare`, roll back. JSW1's commit log confirmed that a failed
@@ -555,8 +587,6 @@ Also found on first contact, and not on the original list:
   Every module still works through redirects, which are removed after
   2028-04-01, so each run prints a deprecation warning per task. Moving the
   Junos roles to `juniper.device.*` names is follow-up work, not a fault today.
-6. **`panos_export`'s output.** The backup play fails if the exported file is
-   under 1 KB rather than trusting that something was written.
 
 ### Then
 
