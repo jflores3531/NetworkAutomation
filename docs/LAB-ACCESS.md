@@ -110,6 +110,46 @@ python lab/rebuild_lab.py --topology lab/topology_multivendor.yaml --only JSW1
 `--only` skips node creation and the end-to-end pings, so it is the cheap way
 to retry a slow device without re-pushing four Cisco boxes first.
 
+### Stopping a Juniper switch without breaking it
+
+Check the node's **On close** setting before you stop one. GNS3's default,
+`power_off`, gives qemu 3 seconds and then kills it, so Junos never shuts
+down. The vJunos template now uses `shutdown_signal` (see `lab/images.yaml`):
+the ACPI power button makes the image halt cleanly, telling the inner Junos to
+`halt -p` first. A stop then takes a minute or two instead of seconds, which is
+the point.
+
+A node created before that change keeps `power_off`. Fix it once through the
+API while the node is stopped:
+
+```
+curl -X PUT http://192.168.33.130/v2/projects/<project-id>/nodes/<node-id> \
+  -H 'Content-Type: application/json' \
+  -d '{"properties": {"on_close": "shutdown_signal"}}'
+```
+
+What an unclean stop looks like on the next boot: minutes of fsck on the
+console (`UNEXPECTED SOFT UPDATE INCONSISTENCY`, `SALVAGE? yes`), then a CLI
+where every command fails with
+`error: schema: action: unresolved function 'mgd_...'` and
+`remote side unexpectedly closed connection`. That is disk damage, not a switch
+that is still booting, and waiting does not fix it.
+
+### Recovering a Juniper switch with a damaged disk
+
+Each node's disk is a small linked-clone overlay on the shared base image, so
+a damaged switch can be reset to factory state without touching the image:
+
+1. Stop the node. A hard stop is fine, since it is already broken.
+2. On the GNS3 VM, move the overlay aside (keep it rather than deleting it):
+   `mv /opt/gns3/projects/<project-id>/project-files/qemu/<node-id>/hda_disk.qcow2{,.broken}`
+3. Start the node. GNS3 creates a fresh overlay from the base image.
+4. Once it has booted, rerun `--only <name>`: a factory-fresh switch is exactly
+   what the bootstrap expects.
+
+This loses the switch's configuration, which the bootstrap recreates. It does
+not lose anything else, because nothing else lives on these switches.
+
 Device login is `admin`; the password is whatever was passed as `SSH_PASSWORD`
 when the lab was built. It is not stored in the repo.
 

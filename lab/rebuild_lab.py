@@ -788,6 +788,28 @@ def junos_wait_ready(console, password, timeout=900):
     raise RebuildError('Junos CLI never became stable enough to configure')
 
 
+# Junos echoes the command then returns a prompt ending in > or #.
+#
+# NOT anchored to end-of-buffer, unlike the IOS prompt. A freshly booted vJunos
+# whose fxp0 has no DHCP server prints
+#   Auto Image Upgrade: DHCP INET6 Client State Reset : fxp0.0
+# every couple of seconds forever, so there is almost always chatter sitting
+# after the prompt and an anchored match never fires - the switch looks hung
+# while it is sitting there perfectly idle. Accepting a prompt followed by a
+# newline is what makes this work; `delete chassis auto-image-upgrade` in the
+# config then stops the noise for good.
+#
+# \r*, not \r?. While that chatter is running, Junos redraws the prompt line:
+# it pads it with spaces and ends it with THREE carriage returns, 'root#' +
+# spaces + '\r\r\r\n'. A single optional \r never matches that, so the prompt
+# sat in the buffer unrecognised and the run died on "no prompt back after
+# 'set system domain-name lab.local' within 60s" (2026-09-13). The first two
+# commands only passed because their prompt happened to be the last byte
+# received before the chatter arrived. tests/test_junos_console_prompt.py holds
+# the real bytes.
+JUNOS_CLI_PROMPT = r'[\r\n][\w.-]*@?[\w.-]*[>#][ \t]*\r*(\n|$)'
+
+
 def configure_junos_device(name, node, spec, gns3_host, username, password):
     """Push one Junos device's set-commands over its console and commit.
 
@@ -798,17 +820,7 @@ def configure_junos_device(name, node, spec, gns3_host, username, password):
     """
     step(f'{name}: base config')
     console = Console(gns3_host, node['console'])
-    # Junos echoes the command then returns a prompt ending in > or #.
-    #
-    # NOT anchored to end-of-buffer, unlike the IOS prompt. A freshly booted
-    # vJunos whose fxp0 has no DHCP server prints
-    #   Auto Image Upgrade: DHCP INET6 Client State Reset : fxp0.0
-    # every couple of seconds forever, so there is almost always chatter
-    # sitting after the prompt and an anchored match never fires - the switch
-    # looks hung while it is sitting there perfectly idle. Accepting a prompt
-    # followed by a newline is what makes this work; `delete chassis
-    # auto-image-upgrade` in the config then stops the noise for good.
-    cli_prompt = r'[\r\n][\w.-]*@?[\w.-]*[>#][ \t]*(\r?\n|$)'
+    cli_prompt = JUNOS_CLI_PROMPT
 
     def run_synced(command, timeout=60):
         console.send(command)

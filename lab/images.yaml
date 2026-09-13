@@ -37,6 +37,20 @@ templates:
     # VM-VEX is the product string vJunos checks for; without it the image
     # decides it is on unsupported hardware and refuses to come up.
     options: "-serial mon:stdio -nographic -smbios type=1,product=VM-VEX -cpu host"
+    # STOPPING A NODE MUST NOT PULL THE PLUG. GNS3's default, power_off, sends
+    # qemu SIGTERM and kills it 3 seconds later - Junos never hears about it.
+    # That is what broke JSW1 on 2026-09-13: the next boot spent minutes in
+    # fsck ("UNEXPECTED SOFT UPDATE INCONSISTENCY", SALVAGE? yes), and the
+    # repaired disk came up with mgd failing every CLI command with
+    # "schema: action: unresolved function 'mgd_...'". Only resetting the
+    # node's overlay recovered it.
+    #
+    # shutdown_signal sends an ACPI power button instead. The image already
+    # handles that properly: acpid runs `shutdown -h now`, and the halt runlevel
+    # (rc0.d/K20junos-vcp) tells the inner Junos to `halt -p` and waits up to
+    # 120s for it before forcing a quit. GNS3 also waits 120s here before it
+    # kills the process, so a stop takes a minute or two rather than seconds.
+    on_close: shutdown_signal
     category: switch
     symbol: ":/symbols/multilayer_switch.svg"
     # THE OFF-BY-ONE THAT MISCABLES THE WHOLE LAB. Adapter 0 is fxp0, the
@@ -56,6 +70,12 @@ templates:
       # the way the three below were - Juniper's portal is the provenance, and
       # this hash is an integrity baseline for re-checking the same file later
       # (after an scp, or on a rebuild). It is not independent verification.
+      #
+      # The copy on the GNS3 server does NOT match these two numbers, and that
+      # is expected: the AMD patches are written into the qcow2, which changes
+      # both its hash and its size. As patched on 2026-09-13 it is
+      #   md5 bfe21f9c422f03657e62630b1001e018, 4645453824 bytes.
+      # A server copy matching NEITHER pair is the one to distrust.
       - filename: vJunos-switch-26.2R1.7.qcow2
         md5: e07ff39ee1e12ce749bbb999d3224e86
         filesize: 4645126144
