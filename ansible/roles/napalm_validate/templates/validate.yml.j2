@@ -11,9 +11,19 @@
 # from the same inventory variables the config roles push, so "is the device
 # configured the way inventory says" is one question asked against one source
 # of truth - not a second set of literals to keep in step.
+#
+# Every section is conditional, and an undeclared expectation is omitted rather
+# than defaulted. That matters most for vendor: this role runs across Cisco and
+# Juniper, and a default of "Cisco" would report every Juniper switch
+# non-compliant for being a Juniper switch.
+{% set sections = [] %}
+{% if napalm_expected_vendor | length > 0 %}
+{% set _ = sections.append('vendor') %}
 - get_facts:
     vendor: {{ napalm_expected_vendor }}
+{% endif %}
 {% if napalm_expected_up_interfaces | length > 0 %}
+{% set _ = sections.append('interfaces') %}
 
 - get_interfaces:
 {% for iface in napalm_expected_up_interfaces %}
@@ -23,6 +33,7 @@
 {% endfor %}
 {% endif %}
 {% if napalm_expected_ntp_servers | length > 0 and 'x.x.x.x' not in napalm_expected_ntp_servers %}
+{% set _ = sections.append('ntp') %}
 
 - get_ntp_servers:
 {% if napalm_validate_strict %}
@@ -31,4 +42,9 @@
 {% for server in napalm_expected_ntp_servers %}
     {{ server }}: {}
 {% endfor %}
+{% endif %}
+{% if sections | length == 0 %}
+# Nothing declared for this device. An explicit empty list, because a file of
+# comments alone parses as null and napalm_validate has nothing to iterate.
+[]
 {% endif %}

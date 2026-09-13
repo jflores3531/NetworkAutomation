@@ -44,3 +44,8 @@ napalm_expected_up_interfaces: []
 # is the whole diagnosis: both closed means the switch is unreachable, 22 open and
 # 830 closed means `set system services netconf ssh` was never run.
 preflight_port: 830
+
+# Vendor string napalm_validate asserts against the facts getter. Set per driver
+# group rather than once in the role: Junos reports Juniper - NOT Cisco, which is what the
+# napalm_validate role used to default to for every platform.
+napalm_expected_vendor: Juniper

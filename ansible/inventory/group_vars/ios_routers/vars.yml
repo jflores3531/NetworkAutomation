@@ -10,12 +10,12 @@
 
 baseline_domain_name: ""
 
-# Routed interfaces and subinterfaces, pushed with ios_l3_interfaces.
+# Routed interfaces and subinterfaces, pushed with ios_l3_interfaces. ipv4_cidr,
+# in the form the module takes - address plus prefix length in one string.
 #
 # baseline_l3_interfaces:
 #   - name: GigabitEthernet0/0.100
-#     ipv4_address: x.x.x.x
-#     ipv4_netmask: 255.255.255.0
+#     ipv4_cidr: x.x.x.x/24
 baseline_l3_interfaces: []
 
 # Static routes, pushed with the ios_static_routes resource module.

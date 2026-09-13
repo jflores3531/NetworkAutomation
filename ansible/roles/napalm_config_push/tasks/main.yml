@@ -59,6 +59,35 @@
       {{ napalm_config_file if napalm_config_file | length > 0
          else napalm_diff_dir ~ '/' ~ inventory_hostname ~ '_candidate.cfg' }}
 
+# A template whose every value was empty renders to blank lines and comments,
+# and an empty candidate is not a no-op: with replace_config it REPLACES the
+# running config with nothing. Checked before the module rather than trusted,
+# because the shipped placeholders (x.x.x.x, [], "") are exactly the state that
+# renders empty - this project's own defaults are the likeliest cause.
+- name: Confirm the rendered config is not empty
+  ansible.builtin.stat:
+    path: "{{ napalm_push_source }}"
+  register: napalm_push_stat
+  delegate_to: localhost
+
+- name: Refuse an empty candidate
+  ansible.builtin.assert:
+    that:
+      - napalm_push_stat.stat.exists
+      - napalm_push_stat.stat.size > 0
+      - rendered_lines | length > 0
+    fail_msg: >-
+      {{ napalm_push_source }} rendered nothing usable
+      ({{ napalm_push_stat.stat.size | default(0) }} bytes). Refusing to send it:
+      with replace_config that is a request to erase the device's configuration,
+      and with a merge it is a pointless round trip. Check that the group_vars
+      this template reads are filled in rather than still placeholders.
+  vars:
+    rendered_lines: >-
+      {{ (lookup('file', napalm_push_source, errors='ignore') | default('', true))
+         .splitlines() | map('trim') | reject('match', '^[!#]') | reject('equalto', '') | list }}
+  delegate_to: localhost
+
 - name: "{{ 'Apply' if napalm_commit | bool else 'Diff (dry run, nothing committed)' }} config on {{ inventory_hostname }}"
   napalm.ansible.napalm_install_config:
     provider: "{{ napalm_provider }}"

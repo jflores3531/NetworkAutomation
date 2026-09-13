@@ -142,7 +142,9 @@ CANNED = {
     "optics": {},
     "environment": {
         "cpu": {"0": {"%usage": 17.5}, "1": {"%usage": 91.0}},
-        "memory": {"available_ram": 1048576, "used_ram": 3145728},
+        # available_ram is TOTAL installed RAM in NAPALM, not free RAM:
+        # 3 GiB used of 4 GiB installed = 75%.
+        "memory": {"available_ram": 4194304, "used_ram": 3145728},
         "temperature": {"chassis": {"temperature": 41.0, "is_alert": False, "is_critical": False},
                         "inlet": {"temperature": 78.0, "is_alert": True, "is_critical": False}},
         "power": {"PSU1": {"status": True, "capacity": 715.0, "output": 100.0},
@@ -165,22 +167,48 @@ print(json.dumps({"changed": False,
 
 NAPALM_VALIDATE = '''#!/usr/bin/python
 # WANT_JSON
-"""Stub napalm_validate. STUB_COMPLIES=false reports non-compliance, so the
-role's fail path is exercised rather than assumed."""
+"""Stub napalm_validate.
+
+It READS the rendered validation file and compares the vendor it declares
+against the vendor this stub's device reports, rather than returning a fixed
+verdict. That is deliberate: the role shipped with a role-wide default of
+vendor "Cisco", which asserted "Cisco" against the Juniper switches and would
+have failed every one of them on a first live run. A stub that ignored the
+intent file could never catch that, and did not.
+
+STUB_VENDOR sets what the device claims (default Cisco), so a Juniper scenario
+points it at Juniper. STUB_COMPLIES=false forces non-compliance to exercise the
+role's fail path.
+"""
 import json
 import os
+import re
 import sys
 
 with open(sys.argv[1]) as fh:
-    json.load(fh)
-complies = os.environ.get("STUB_COMPLIES", "true") == "true"
-print(json.dumps({"changed": False, "compliance_report": {
-    "complies": complies,
-    "get_facts": {"complies": complies, "missing": [], "extra": [],
-                  "present": {"vendor": {"complies": complies, "nested": False,
-                                         "actual_value": "Cisco"}}},
-    "skipped": [],
-}}))
+    params = json.load(fh)
+
+device_vendor = os.environ.get("STUB_VENDOR", "Cisco")
+declared = None
+path = params.get("validation_file")
+if path and os.path.exists(path):
+    with open(path) as fh:
+        match = re.search(r"^\s+vendor:\s*(\S+)", fh.read(), re.M)
+    if match:
+        declared = match.group(1)
+
+vendor_ok = declared is None or declared == device_vendor
+complies = vendor_ok and os.environ.get("STUB_COMPLIES", "true") == "true"
+
+report = {"complies": complies, "skipped": []}
+if declared is not None:
+    report["get_facts"] = {
+        "complies": vendor_ok, "missing": [], "extra": [],
+        "present": {"vendor": {"complies": vendor_ok, "nested": False,
+                               "actual_value": device_vendor,
+                               "expected_value": declared}},
+    }
+print(json.dumps({"changed": False, "compliance_report": report}))
 '''
 
 NAPALM_INSTALL_CONFIG = '''#!/usr/bin/python

@@ -48,8 +48,14 @@ baseline_trunk_ports: []
 
 # Layer 3 interfaces, including RVIs (irb.N on ELS switches).
 #
+# `name` and `unit` are SEPARATE fields, because that is how Junos and
+# junos_l3_interfaces model a logical interface: irb unit 10, not "irb.10".
+# Writing the dotted form in `name` and omitting `unit` configures irb unit 0 -
+# a real interface, the wrong one, and no error.
+#
 # baseline_l3_interfaces:
-#   - name: irb.10
+#   - name: irb
+#     unit: 10
 #     ipv4_cidr: x.x.x.x/24
 baseline_l3_interfaces: []
 

@@ -37,3 +37,7 @@ napalm_getters:
 #   napalm_expected_up_interfaces:
 #     - GigabitEthernet0/1
 napalm_expected_up_interfaces: []
+
+# Vendor string napalm_validate asserts against the facts getter. Set per driver
+# group rather than once in the role: IOS and IOS-XE both report Cisco.
+napalm_expected_vendor: Cisco

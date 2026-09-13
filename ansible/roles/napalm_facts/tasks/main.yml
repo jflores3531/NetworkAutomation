@@ -84,6 +84,22 @@
       | {{ napalm_collected.napalm_facts.interface_list | default([]) | length }} interfaces
   when: napalm_collected.napalm_facts is defined
 
+# Every getter failing means the device was not read at all - wrong credentials,
+# wrong driver, an unreachable host - and the play would otherwise exit 0 having
+# overwritten a previous good facts file with "data": {}. A gather that collected
+# nothing is a failure, not an empty device.
+- name: Fail if nothing was collected
+  ansible.builtin.assert:
+    that:
+      - napalm_collected | default({}) | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }}: every getter failed
+      ({{ napalm_unsupported | join(', ') }}). Not writing a facts file over a
+      previous one. First failure was:
+      {{ (napalm_gathered.results | selectattr('failed', 'defined')
+          | selectattr('failed') | map(attribute='msg') | first)
+         | default('no message returned') }}
+
 - name: Ensure the facts directory exists
   ansible.builtin.file:
     path: "{{ napalm_facts_dir }}"

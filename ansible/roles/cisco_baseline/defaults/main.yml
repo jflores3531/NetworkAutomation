@@ -24,9 +24,16 @@ baseline_lldp_enabled: false
 # fleet's naming is not always something automation should overwrite.
 baseline_set_hostname: true
 
-# Resource modules take a state. `merged` adds and updates what is declared and
-# leaves everything else alone; `overridden`/`replaced` remove config that is
-# not declared. Merged by default for the same reason napalm_config_push
-# defaults to a merge - nothing in this project should be able to delete
-# configuration nobody listed.
+# State for the VLAN task ONLY - it is not a role-wide switch, and the narrow
+# scope is deliberate rather than an oversight.
+#
+# `merged` adds and updates what is declared and leaves the rest alone;
+# `overridden`/`replaced` delete whatever is not declared. On a VLAN database
+# that is a reasonable thing to want (an authoritative VLAN list), which is why
+# the option exists here at all. On the interface tasks it would mean wiping the
+# description, mode and addressing of every port this inventory does not
+# mention - including uplinks - so those pass `merged` literally and ignore this.
+#
+# If an authoritative interface list is ever wanted, it should be a separate,
+# explicitly named variable rather than this one quietly gaining reach.
 baseline_state: merged

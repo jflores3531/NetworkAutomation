@@ -57,7 +57,9 @@
       ansible.builtin.debug:
         msg: >-
           controller: napalm
-          {{ preflight_napalm.stdout | default('NOT IMPORTABLE - pip install -r requirements.txt') }}
+          {{ preflight_napalm.stdout | default('', true)
+             if preflight_napalm is succeeded and preflight_napalm.stdout | default('') | length > 0
+             else 'NOT IMPORTABLE - pip install -r requirements.txt' }}
           | python {{ ansible_playbook_python }}
           | drivers ok:
           {{ preflight_drivers.results | default([]) | selectattr('rc', 'defined')
@@ -134,6 +136,8 @@
     # skipped-task problem below, not this.
     preflight_status: >-
       {{ 'READY' if login_ok | bool
+         else 'PORT OPEN (login not attempted, preflight_login=false)'
+           if port_ok | bool and not preflight_login | bool
          else 'PORT OPEN, LOGIN FAILED' if port_ok | bool
          else 'NETCONF CLOSED (ssh 22 answers - run: set system services netconf ssh)'
            if netconf_missing | bool
@@ -201,11 +205,19 @@
       {{ ansible_play_hosts_all
          | zip(statuses, hv | map(attribute='preflight_detail', default='') | list)
          | map('join', '  |  ') | list }}
+    # Devices whose login was deliberately skipped are neither ready nor a
+    # problem, so they are listed in the table but kept out of NOT READY.
     not_ready: >-
       {{ ansible_play_hosts_all | zip(statuses)
-         | rejectattr(1, 'equalto', 'READY') | map(attribute=0) | list }}
+         | rejectattr(1, 'equalto', 'READY')
+         | rejectattr(1, 'search', 'login not attempted')
+         | map(attribute=0) | list }}
   run_once: true
 
+# preflight_login=false is an explicit instruction not to log in, so a reachable
+# device is as ready as this play was asked to determine. Failing it there would
+# make the gate unusable in exactly the case it is chosen for - checking
+# reachability across a fleet without authenticating to any of it.
 - name: Fail if any device is not ready
   ansible.builtin.fail:
     msg: >-
@@ -214,3 +226,4 @@
   when:
     - preflight_fail_on_not_ready | bool
     - preflight_status != 'READY'
+    - not (preflight_status is search('login not attempted'))

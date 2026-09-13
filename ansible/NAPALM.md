@@ -21,7 +21,7 @@ What *has* been done — every playbook and role executed end to end against stu
 modules returning realistic device data, on the controller, with these results:
 
 - all 14 playbooks pass `--syntax-check`
-- `ansible/tests/run_offline.py` drives all of it as 15 scenarios and asserts on
+- `ansible/tests/run_offline.py` drives all of it as 19 scenarios and asserts on
   what each run printed and wrote, not just its exit code — every one of the
   bugs below exited 0 while being wrong. The suite is mutation-tested: breaking
   the fix again fails it
@@ -65,6 +65,43 @@ removing `| bool` does not, and on ansible-core 2.19 a vars-block boolean comes
 back as a real `bool`. So truthiness was never the cause here. The `| bool`
 guards stay, for a narrower reason than originally claimed: this project runs a
 mix of ansible-core versions, and on older ones that coercion is real.
+
+### What a review pass then found
+
+A separate review of the whole branch turned up fourteen issues, all fixed here.
+The ones worth knowing about, because each would have cost a lab session:
+
+- **Validation asserted `vendor: Cisco` against the Juniper switches.** The
+  expectation was a role-wide default, so all three would have failed
+  validation - and failed the last step of `multivendor_site.yml` - for being
+  Juniper. Vendor is now set per driver group, and unset means "do not check"
+  rather than "assume Cisco". The suite gained a regression test that reads the
+  rendered intent, which is what the old validate stub could not do.
+- **A health check with no counters available reported "0 over the threshold".**
+  Silence read as good news. Both optional getters now carry an availability
+  flag through the report, the saved JSON and the gate.
+- **RAM was under-reported.** NAPALM's `available_ram` is *total installed* RAM,
+  not free RAM, so dividing by `available + used` treated total as free: 3 GiB
+  used of 4 GiB read as 43% instead of 75%.
+- **The `--fail` gate ignored CPU, temperature and PSU findings**, and
+  `napalm_cpu_threshold`/`napalm_memory_threshold` were referenced nowhere. A
+  device with a dead power supply and a pegged control plane passed the check
+  whose entire purpose is "do not start pushing config to a device that is
+  already unhappy".
+- **`napalm_config_push` would push an empty candidate**, which with
+  `replace_config: true` is a request to erase a device's configuration - and
+  the shipped placeholders are exactly the state that renders empty.
+- **A gather where every getter failed exited 0** and overwrote a good facts
+  file with `"data": {}`.
+- **Committed examples did not match what the roles consume**: `ipv4_address` +
+  `ipv4_netmask` where the role needs `ipv4_cidr`, and a Junos RVI written
+  `name: irb.10` with no `unit`, which silently configures `irb` unit 0 - a real
+  interface, the wrong one, no error.
+- **A Nexus added to `nxos_lab`, as `hosts.yml` tells you to,** inherited no
+  connection variables and died on an undefined one. The vars moved to the
+  parent group.
+- **`preflight_login=false` made every reachable device report NOT READY**, so
+  the flag was unusable in the one case it exists for.
 
 What that does **not** prove: that a single module argument is spelled the way
 the installed collection expects, or that any device accepts what is sent. The
@@ -257,7 +294,7 @@ the problem completely.
 ## Validating offline
 
 ```bash
-python3 tests/run_offline.py          # 15 scenarios, no devices, no collections
+python3 tests/run_offline.py          # 19 scenarios, no devices, no collections
 python3 tests/run_offline.py -v       # ansible output for anything that fails
 python3 tests/stub_devices.py /tmp/s  # just write the stubs, to poke at by hand
 ```

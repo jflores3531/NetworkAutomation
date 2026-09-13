@@ -6,13 +6,18 @@
 # sending `show interfaces`, `show processes cpu`, `show environment` and so on
 # and parsing each platform's output - which is why it carries per-platform
 # command tables and parsers that have each been wrong at least once. The
-# getters below return the same structure from IOS and NX-OS, so the checks
-# themselves are platform-independent and there is nothing to parse.
+# getters below return the same structure from IOS, NX-OS and Junos, so the
+# checks themselves are platform-independent and there is nothing to parse.
 #
 # Getters are requested separately and tolerated individually: environment and
 # interfaces_counters are the two most commonly missing from a driver (and
 # meaningless on a virtual image with no PSU to read), and losing the whole
 # check to one gap would be the wrong trade.
+#
+# Whether each getter ANSWERED is tracked and reported, not just what it said.
+# "0 interfaces over the error threshold" and "error counters were never read"
+# are different statements, and a health check that conflates them reports a
+# clean fleet it never looked at.
 
 - name: Gather interface state
   napalm.ansible.napalm_get_facts:
@@ -37,6 +42,16 @@
   ignore_errors: true
   delegate_to: localhost
 
+- name: Record which getters answered
+  ansible.builtin.set_fact:
+    # `is succeeded` alone is not enough: it is also true for a SKIPPED task.
+    hc_counters_available: >-
+      {{ hc_counters is succeeded
+         and hc_counters.ansible_facts is defined }}
+    hc_environment_available: >-
+      {{ hc_environment is succeeded
+         and hc_environment.ansible_facts is defined }}
+
 # Enabled but down - i.e. a port someone meant to be forwarding that is not.
 # An administratively shut port is not a finding: it is a decision, and this
 # repo's V-220641a/V-220690 work exists precisely because shut ports are
@@ -50,48 +65,45 @@
          | rejectattr('value.is_up')
          | map(attribute='key') | list }}
 
-- name: Identify interfaces with significant error or discard counters
+- name: Start with no counter findings
   ansible.builtin.set_fact:
-    hc_error_interfaces: >-
-      {{ hc_counters.ansible_facts.napalm_interfaces_counters
-         | default({}) | dict2items
-         | selectattr('value.rx_errors', 'defined')
-         | selectattr('value.rx_errors', 'gt', napalm_error_threshold | int)
-         | map(attribute='key') | list }}
-  when: hc_counters is succeeded
+    hc_error_interfaces: []
 
-- name: Report interface findings
-  ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }}:
-      {{ hc_down_interfaces | length }} enabled-but-down
-      {{ '(' ~ (hc_down_interfaces | join(', ')) ~ ')' if hc_down_interfaces | length > 0 else '' }}
-      | {{ hc_error_interfaces | default([]) | length }} over the
-      {{ napalm_error_threshold }}-error threshold
-      {{ '(' ~ (hc_error_interfaces | join(', ')) ~ ')' if hc_error_interfaces | default([]) | length > 0 else '' }}
+# All four counters rather than rx_errors alone, because the threshold is about
+# errors AND discards: a transmit-side error and a dropped queue are different
+# faults from a receive error, and a port quietly discarding traffic is the one
+# most likely to be blamed on something else. Summed per interface so a port with
+# 40 of each is reported rather than passing four separate times.
+- name: Identify interfaces over the error and discard threshold
+  ansible.builtin.set_fact:
+    hc_error_interfaces: "{{ hc_error_interfaces + [item.key] }}"
+  loop: "{{ hc_counters.ansible_facts.napalm_interfaces_counters | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - hc_counters_available | bool
+    - ((item.value.rx_errors | default(0) | int)
+       + (item.value.tx_errors | default(0) | int)
+       + (item.value.rx_discards | default(0) | int)
+       + (item.value.tx_discards | default(0) | int)) > (napalm_error_threshold | int)
 
-- name: Report environment findings
-  ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }}:
-      CPU {{ hc_cpu }}%
-      | RAM {{ hc_memory_pct }}%
-      | temperature alerts: {{ hc_temp_alerts | join(', ') if hc_temp_alerts | length > 0 else 'none' }}
-      | power/fan faults: {{ hc_hardware_faults | join(', ') if hc_hardware_faults | length > 0 else 'none' }}
-  vars:
-    env: "{{ hc_environment.ansible_facts.napalm_environment | default({}) }}"
-    # CPU is keyed per core, so the highest core is the honest number to
-    # report - an average hides one pegged core, which is the case that
-    # matters on a control plane.
+- name: Evaluate the environment readings
+  ansible.builtin.set_fact:
+    # CPU is keyed per core, so the highest core is the honest number to report -
+    # an average hides one pegged core, which is the case that matters on a
+    # control plane.
     hc_cpu: >-
       {{ (env.cpu | default({}) | dict2items | map(attribute='value')
           | map(attribute='%usage', default=0) | list | max | default(0)) | round(1) }}
+    # used_ram / available_ram, because NAPALM's `available_ram` is TOTAL
+    # installed RAM rather than free RAM - a naming trap. Dividing by
+    # (available + used) treats total as free, double-counts the total and
+    # under-reports every device: 3 GB used of 4 GB installed reads as 43%
+    # rather than 75%, which is the difference between a finding and a shrug.
     hc_memory_pct: >-
       {{ ((env.memory.used_ram | default(0) | float)
-          / ((env.memory.available_ram | default(0) | float) + (env.memory.used_ram | default(0) | float))
-          * 100) | round(1)
-         if (env.memory.available_ram | default(0) | float)
-            + (env.memory.used_ram | default(0) | float) > 0 else 0 }}
+           / (env.memory.available_ram | float) * 100) | round(1)
+         if (env.memory.available_ram | default(0) | float) > 0 else 0 }}
     hc_temp_alerts: >-
       {{ env.temperature | default({}) | dict2items
          | selectattr('value.is_alert', 'defined') | selectattr('value.is_alert')
@@ -102,16 +114,41 @@
          | selectattr('value.status', 'defined')
          | rejectattr('value.status')
          | map(attribute='key') | list }}
-  when: hc_environment is succeeded
+  vars:
+    env: "{{ hc_environment.ansible_facts.napalm_environment | default({}) }}"
+  when: hc_environment_available | bool
+
+- name: Report interface findings
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ hc_down_interfaces | length }} enabled-but-down
+      {{ '(' ~ (hc_down_interfaces | join(', ')) ~ ')' if hc_down_interfaces | length > 0 else '' }}
+      | {{ (hc_error_interfaces | length | string ~ ' over the '
+            ~ napalm_error_threshold | string ~ '-error/discard threshold'
+            ~ (' (' ~ (hc_error_interfaces | join(', ')) ~ ')'
+               if hc_error_interfaces | length > 0 else ''))
+           if hc_counters_available | bool
+           else 'error counters NOT READ - this driver has no interfaces_counters getter' }}
+
+- name: Report environment findings
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      CPU {{ hc_cpu }}%{{ ' OVER THRESHOLD' if (hc_cpu | float) > (napalm_cpu_threshold | int) else '' }}
+      | RAM {{ hc_memory_pct }}%{{ ' OVER THRESHOLD' if (hc_memory_pct | float) > (napalm_memory_threshold | int) else '' }}
+      | temperature alerts: {{ hc_temp_alerts | join(', ') if hc_temp_alerts | length > 0 else 'none' }}
+      | power/fan faults: {{ hc_hardware_faults | join(', ') if hc_hardware_faults | length > 0 else 'none' }}
+  when: hc_environment_available | bool
 
 - name: Note where the environment getter is unavailable
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }} ({{ napalm_dev_os }}) has no usable environment
-      getter - CPU, RAM, temperature, power and fan state were not checked.
+      getter - CPU, RAM, temperature, power and fan state were NOT checked.
       Expected on virtual images; on real hardware it means this driver cannot
       see the chassis and scripts/health_check.py is the fallback.
-  when: hc_environment is not succeeded
+  when: not hc_environment_available | bool
 
 - name: Ensure the health report directory exists
   ansible.builtin.file:
@@ -128,21 +165,40 @@
            'device': inventory_hostname,
            'driver': napalm_dev_os,
            'enabled_but_down': hc_down_interfaces,
-           'over_error_threshold': hc_error_interfaces | default([]),
+           'counters_available': hc_counters_available | bool,
+           'over_error_threshold': hc_error_interfaces,
            'error_threshold': napalm_error_threshold,
+           'environment_available': hc_environment_available | bool,
+           'cpu_max_pct': hc_cpu | default(none),
+           'memory_used_pct': hc_memory_pct | default(none),
+           'temperature_alerts': hc_temp_alerts | default([]),
+           'power_fan_faults': hc_hardware_faults | default([]),
            'environment': hc_environment.ansible_facts.napalm_environment | default({}),
-           'environment_available': hc_environment is succeeded,
          } | to_nice_json }}
     dest: "{{ napalm_healthcheck_report_dir }}/{{ inventory_hostname }}.json"
     mode: "0640"
   delegate_to: localhost
 
+# Every finding the role can produce, not just the interface ones. A gate that
+# passed a device with a failed PSU and a pegged control plane would be worse
+# than no gate, since its whole purpose is "do not start pushing config to a
+# device that is already unhappy" - and this is also what makes
+# napalm_cpu_threshold and napalm_memory_threshold mean anything.
 - name: Fail on findings
   ansible.builtin.fail:
     msg: >-
       {{ inventory_hostname }} has health findings:
-      down {{ hc_down_interfaces | join(', ') }}
-      errors {{ hc_error_interfaces | default([]) | join(', ') }}
+      {{ 'down: ' ~ (hc_down_interfaces | join(', ')) ~ ' ' if hc_down_interfaces | length > 0 else '' }}
+      {{ 'errors: ' ~ (hc_error_interfaces | join(', ')) ~ ' ' if hc_error_interfaces | length > 0 else '' }}
+      {{ 'temperature: ' ~ (hc_temp_alerts | join(', ')) ~ ' ' if hc_temp_alerts | default([]) | length > 0 else '' }}
+      {{ 'power/fan: ' ~ (hc_hardware_faults | join(', ')) ~ ' ' if hc_hardware_faults | default([]) | length > 0 else '' }}
+      {{ 'CPU ' ~ hc_cpu ~ '% ' if (hc_cpu | default(0) | float) > (napalm_cpu_threshold | int) else '' }}
+      {{ 'RAM ' ~ hc_memory_pct ~ '%' if (hc_memory_pct | default(0) | float) > (napalm_memory_threshold | int) else '' }}
   when:
     - napalm_healthcheck_fail | bool
-    - (hc_down_interfaces | length > 0) or (hc_error_interfaces | default([]) | length > 0)
+    - (hc_down_interfaces | length > 0)
+      or (hc_error_interfaces | length > 0)
+      or (hc_temp_alerts | default([]) | length > 0)
+      or (hc_hardware_faults | default([]) | length > 0)
+      or ((hc_cpu | default(0) | float) > (napalm_cpu_threshold | int))
+      or ((hc_memory_pct | default(0) | float) > (napalm_memory_threshold | int))

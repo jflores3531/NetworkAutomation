@@ -129,11 +129,27 @@ def scenarios(workdir):
         dict(name="napalm_healthcheck finds the down port, errors, hot inlet and dead PSU",
              playbook="napalm_healthcheck.yml", limit="SW1", extra=cisco(),
              must_contain=["1 enabled-but-down", "GigabitEthernet0/2",
-                           "CPU 91.0%", "temperature alerts: inlet",
+                           "CPU 91.0%", "RAM 75.0%", "temperature alerts: inlet",
                            "power/fan faults: PSU2"],
              # GigabitEthernet0/3 is shut, which is a decision rather than a
              # finding - see the role's note on V-220641a.
              must_not_contain=["GigabitEthernet0/3"]),
+
+        dict(name="an unavailable counters getter is reported, not counted as clean",
+             playbook="napalm_healthcheck.yml", limit="SW1", extra=cisco(),
+             env={"STUB_UNSUPPORTED": "interfaces_counters,environment"},
+             must_contain=["error counters NOT READ",
+                           "has no usable environment getter"],
+             must_not_contain=["over the 100-error/discard threshold", "CPU "]),
+
+        dict(name="napalm_healthcheck gate fails on an environment finding alone",
+             playbook="napalm_healthcheck.yml", limit="SW1",
+             extra=cisco(napalm_healthcheck_fail=True, napalm_error_threshold=999999),
+             expect_rc=2,
+             # No interface passes the raised threshold, so a gate that only
+             # looked at interfaces would pass this device despite PSU2, the
+             # inlet alert and a pegged core.
+             must_contain=["power/fan: PSU2", "temperature: inlet", "CPU 91.0%"]),
 
         dict(name="napalm_backup writes a backup and notices running != startup",
              playbook="napalm_backup.yml", limit="SW1", extra=cisco(),
@@ -149,6 +165,24 @@ def scenarios(workdir):
              playbook="napalm_validate.yml", limit="SW1", extra=cisco(),
              env={"STUB_COMPLIES": "false"}, expect_rc=2,
              must_contain=["DOES NOT COMPLY", "does not match declared state"]),
+
+        # The regression test for a role-wide vendor default of "Cisco", which
+        # asserted Cisco against the Juniper switches. The stub compares the
+        # rendered intent against the vendor the device claims, so a wrong
+        # expectation fails here rather than on a first live run.
+        dict(name="napalm_validate expects Juniper on a Juniper switch",
+             playbook="napalm_validate.yml", limit="JSW1",
+             extra={**JUNOS_VARS, **common, "napalm_username": "stub",
+                    "napalm_password": "stub"},
+             env={"STUB_VENDOR": "Juniper"},
+             must_contain=["JSW1: COMPLIES"]),
+
+        dict(name="napalm_validate catches a wrong vendor expectation",
+             playbook="napalm_validate.yml", limit="JSW1",
+             extra={**JUNOS_VARS, **common, "napalm_username": "stub",
+                    "napalm_password": "stub", "napalm_expected_vendor": "Cisco"},
+             env={"STUB_VENDOR": "Juniper"}, expect_rc=2,
+             must_contain=["DOES NOT COMPLY", "expected_value"]),
 
         dict(name="napalm_push dry run commits nothing",
              playbook="napalm_push.yml", limit="SW1",

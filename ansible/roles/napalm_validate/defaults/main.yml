@@ -13,10 +13,12 @@ napalm_expected_up_interfaces: []
 # rather than a second copy that can drift out of step with it.
 napalm_expected_ntp_servers: "{{ baseline_ntp_servers | default([]) }}"
 
-# Expected vendor string from the facts getter. "Cisco" on every device this
-# role currently runs against; here as a var because the point of NAPALM in
-# this project is that the next platform should not need a new role.
-napalm_expected_vendor: Cisco
+# Expected vendor string from the facts getter. EMPTY here on purpose - it is
+# set per driver group (inventory/group_vars/napalm_ios|napalm_nxos|napalm_junos),
+# because this role runs across both Cisco and Juniper and a role-wide default
+# of "Cisco" reported every Juniper switch non-compliant for being a Juniper
+# switch. An unset vendor omits the check rather than inventing an expectation.
+napalm_expected_vendor: ""
 
 # strict mode makes a section fail on anything present that was not declared -
 # e.g. a third NTP server nobody asked for. Off by default: strict on a

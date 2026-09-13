@@ -37,6 +37,13 @@
     state: enabled
   loop: "{{ ['lldp'] if baseline_lldp_enabled | bool else [] }}"
 
+# No domain-name task here, unlike ios.yml. NX-OS splits what IOS calls
+# `ip domain-name` into `ip domain-name` under a VRF context plus
+# `ip domain-lookup`, and which VRF it belongs in (management vs default) is a
+# site decision this role has no basis to make. baseline_domain_name is
+# therefore IGNORED for NX-OS hosts rather than guessed at - stated here because
+# a variable that is set and silently does nothing is worse than one that is
+# documented as out of scope.
 - name: Configure VLANs
   cisco.nxos.nxos_vlans:
     config: "{{ baseline_vlans }}"

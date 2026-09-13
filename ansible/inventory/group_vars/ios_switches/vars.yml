@@ -49,12 +49,13 @@ baseline_access_ports: []
 #     native_vlan: 999
 baseline_trunk_ports: []
 
-# Layer 3 / SVI addressing, pushed with ios_l3_interfaces.
+# Layer 3 / SVI addressing, pushed with ios_l3_interfaces. ipv4_cidr, in the
+# form the module takes - address plus prefix length in one string. The role
+# refuses a placeholder address rather than sending it.
 #
 # baseline_l3_interfaces:
 #   - name: Vlan10
-#     ipv4_address: x.x.x.x
-#     ipv4_netmask: 255.255.255.0
+#     ipv4_cidr: x.x.x.x/24
 baseline_l3_interfaces: []
 
 # NTP (ios_ntp_global) and syslog (ios_logging_global) - the two things worth
