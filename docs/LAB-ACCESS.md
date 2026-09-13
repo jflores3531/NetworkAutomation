@@ -84,15 +84,20 @@ Option A is the one to use if you do not want to think about it again.
 | SW2 | `10.10.50.13` | IOSvL2 | pure L2, management SVI on VLAN 99 |
 | PC10 | - | VPCS | `10.0.10.100`, VLAN 10, console only |
 | PC20 | - | VPCS | `10.0.20.100`, VLAN 20, console only |
-| JSW1 / JSW2 | `.14` / `.15` | vJunos | nodes exist and are cabled, but **stopped and unconfigured** - see below |
+| JSW1 | `10.10.50.14` | vJunos | fxp0 addressed, SSH and NETCONF (830) up - see below |
+| JSW2 | `.15` | vJunos | node exists and is cabled, but **stopped and unconfigured** (RAM) |
 | PA1 | `.16` | PAN-OS | not built - no image |
 
 ### The Juniper switches
 
 The image works: patched for AMD (see `lab/images.yaml`) it boots to a real
-Junos CLI - `JUNOS 26.2R1.7`, model `ex9214`. What is not finished is driving
-its console unattended, so `JSW1`/`JSW2` are built and cabled but left stopped,
-with their bootstrap config commented out in `lab/topology_multivendor.yaml`.
+Junos CLI - `JUNOS 26.2R1.7`, model `ex9214`. `rebuild_lab.py` bootstraps
+`JSW1` over its console with nobody watching: hostname, root and `admin`
+passwords, SSH, NETCONF, and fxp0 at `10.10.50.14`, behind a `commit check`.
+Afterwards NETCONF answers from the controller on 830 and on 22.
+
+`JSW2` has the same config waiting, commented out in
+`lab/topology_multivendor.yaml`. The only reason it is not running is memory.
 
 Two practical constraints:
 

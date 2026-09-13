@@ -17,12 +17,14 @@
 #   VLAN 20     10.0.20.0/24    VIP .1  R1 .2  R2 .3   (SERVERS)
 #   transit     10.0.1.0/29     PA1 .1  R1 .2  R2 .3  VIP .4
 #
-# NOT BUILT YET, and both are recorded here as comments rather than omitted
-# silently, because "why is the diagram bigger than the lab" is the first
-# question the next person asks:
+# NOT FULLY BUILT YET. Both gaps are recorded here as comments rather than
+# left out silently, because "why is the diagram bigger than the lab" is the
+# first question the next person asks:
 #
-#   JSW1/JSW2 (vJunos-switch) - the image needs an AMD patch to boot on this
-#     host (see lab/images.yaml). MgmtSw ports 5 and 6 are held for them.
+#   JSW2 (vJunos-switch) - node and cabling exist, bootstrap commented out.
+#     Only RAM is stopping it: JSW1 is built and reachable over NETCONF, and
+#     JSW2 is the same config with .15 instead of .14. See the devices:
+#     section.
 #   PA1 (PAN-OS)  - no image. Licensed, and nobody has downloaded it. Without
 #     it there is no untrust zone and no default route off the lab. The transit
 #     segment is still built and addressed, so HSRP group 1 forms between the
@@ -452,52 +454,63 @@ devices:
       - exec-timeout 5 0
       - exit
 
-  # JSW1 / JSW2 ARE PARKED - the nodes and their cabling above are real and
-  # get built, but the console bootstrap below is commented out so a full
-  # rebuild finishes green instead of dying on a device that is not ready.
+  # JUNIPER SWITCHES. JSW1 is built by this script with nobody at the console
+  # (first done 2026-09-13): 10 set-commands, commit check, commit, and then
+  # NETCONF answers on 830 and 22 from the controller.
   #
-  # WHY, precisely. vJunos boots to a usable CLI (proven: JUNOS 26.2R1.7,
-  # model ex9214, after the two AMD patches in lab/images.yaml), but driving
-  # its console unattended is not reliable yet. Two traps found the hard way,
-  # both now handled in rebuild_lab.py, and at least one more that is not:
+  # Each of these looked like "the console driver is not ready" and was
+  # something else, which is why they are written down:
   #
-  #   * the '---(more NN%)---' pager. Inside it, single keys are commands:
-  #     's' means save-to-file, so 'set cli screen-length 0' typed at a pager
-  #     becomes a save with the filename "et cli screen-length 0", and every
-  #     command after it disappears. Paging must be disabled BEFORE anything
-  #     that pages, and the driver has to be able to escape a pager it finds.
-  #   * ZTP. With fxp0 on a segment that has no DHCP server, Junos prints
-  #     'Auto Image Upgrade: DHCP INET6 Client State Reset' every couple of
-  #     seconds forever, so the prompt is almost never the last thing in the
-  #     buffer. 'delete chassis auto-image-upgrade' stops it - but that is
-  #     config, and config needs the console to work first.
+  #   * the '---(more NN%)---' pager. Inside it single keys are commands: 's'
+  #     means save-to-file, so 'set cli screen-length 0' typed at a pager
+  #     becomes a save to a file named "et cli screen-length 0". Paging is
+  #     disabled before anything that pages, and the driver escapes a pager
+  #     it finds.
+  #   * ZTP chatter. With no DHCP server on fxp0, Junos prints 'Auto Image
+  #     Upgrade: ...' every few seconds, redrawing the prompt line with three
+  #     carriage returns. The prompt pattern has to allow that - see
+  #     JUNOS_CLI_PROMPT in rebuild_lab.py.
+  #   * a corrupted disk. GNS3's default power_off stop kills the VM, and the
+  #     next boot gives a CLI where mgd fails every command ("schema: action:
+  #     unresolved function"). That is damage, not a slow boot - see the stop
+  #     and recovery notes in docs/LAB-ACCESS.md.
+  #   * the factory DHCP client on fxp0, which refuses a static address at
+  #     commit check. Deleted first, below.
   #
-  # To finish by hand once a switch has booted (~10 min), and then move these
-  # blocks back under devices::
+  # A switch takes ~10 minutes to boot; --only retries one without re-pushing
+  # the Cisco boxes:
   #
   #     python lab/rebuild_lab.py --topology lab/topology_multivendor.yaml --only JSW1
   #
-  # RAM: 5 GB each, and their RSS grows past that. Two of them alongside the
-  # Cisco lab took this 24 GB GNS3 VM to 178 MB free. Run ONE at a time until
-  # the VM is bigger.
+  # JSW2 STAYS COMMENTED OUT because of RAM, not because anything is broken.
+  # Each vJunos wants 5 GB and its RSS grows past that; both of them next to
+  # the Cisco lab took the 24 GB GNS3 VM to 178 MB free. On this 32 GB host,
+  # even one pushes Windows to ~0.5 GB available. Un-comment it, and its ping
+  # in verify_pings, once there is memory for it.
   #
-  # JSW1:
-  #   platform: junos
-  #   config:
-  #     - set system host-name JSW1
-  #     - set system domain-name lab.local
-  #     # Answered interactively by the console driver - Junos will not take a
-  #     # password as an argument on this command.
-  #     - set system root-authentication plain-text-password
-  #     - set system login user {username} class super-user
-  #     - set system login user {username} authentication plain-text-password
-  #     - set system services ssh
-  #     # THE PRECONDITION: every path this project has into a Junos box
-  #     # speaks NETCONF. Without it SSH to the CLI still works, which makes
-  #     # the failure look like bad credentials rather than a missing service.
-  #     - set system services netconf ssh
-  #     - set interfaces fxp0 unit 0 family inet address 10.10.50.14/24
-  #     - delete chassis auto-image-upgrade
+  JSW1:
+    platform: junos
+    config:
+      - set system host-name JSW1
+      - set system domain-name lab.local
+      # Answered interactively by the console driver - Junos will not take a
+      # password as an argument on this command.
+      - set system root-authentication plain-text-password
+      - set system login user {username} class super-user
+      - set system login user {username} authentication plain-text-password
+      - set system services ssh
+      # THE PRECONDITION: every path this project has into a Junos box
+      # speaks NETCONF. Without it SSH to the CLI still works, which makes
+      # the failure look like bad credentials rather than a missing service.
+      - set system services netconf ssh
+      # The factory config runs a DHCP client on fxp0, and Junos refuses a
+      # static address alongside it at commit check:
+      #   'dhcp' Incompatible with interface assigned with address
+      # Deleting a statement that is already gone only warns, so a re-run
+      # of this block stays harmless.
+      - delete interfaces fxp0 unit 0 family inet dhcp
+      - set interfaces fxp0 unit 0 family inet address 10.10.50.14/24
+      - delete chassis auto-image-upgrade
   # JSW2:
   #   platform: junos
   #   config:
@@ -508,6 +521,7 @@ devices:
   #     - set system login user {username} authentication plain-text-password
   #     - set system services ssh
   #     - set system services netconf ssh
+  #     - delete interfaces fxp0 unit 0 family inet dhcp
   #     - set interfaces fxp0 unit 0 family inet address 10.10.50.15/24
   #     - delete chassis auto-image-upgrade
 
@@ -553,11 +567,11 @@ verify_pings:
   - from: R1
     to: 10.0.1.3
     why: transit segment is live between the routers (HSRP group 1 can form)
-  # Re-enable alongside the JSW blocks above, once their fxp0 is addressed.
-  # Left out rather than left failing, so a green --verify means something.
-  # - from: NetworkAutomation-1
-  #   to: 10.10.50.14
-  #   why: controller reaches JSW1 fxp0 (Ansible cannot run until this works)
+  - from: NetworkAutomation-1
+    to: 10.10.50.14
+    why: controller reaches JSW1 fxp0 (Ansible cannot run until this works)
+  # Re-enable alongside the JSW2 block above. Left out rather than left
+  # failing, so a green --verify means something.
   # - from: NetworkAutomation-1
   #   to: 10.10.50.15
   #   why: controller reaches JSW2 fxp0
