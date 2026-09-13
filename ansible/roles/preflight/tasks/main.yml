@@ -122,12 +122,16 @@
 
 - name: Record this device's readiness
   ansible.builtin.set_fact:
-    # `| bool` on every one of these is load bearing, not decoration. A var
-    # defined in a vars block renders to a STRING - "False" for a failed check -
-    # and a non-empty string is truthy in Jinja, so without it this expression
-    # returns READY for every device including the unreachable ones. Found by
-    # running the play against twelve placeholder addresses and getting
-    # "12/12 ready".
+    # `| bool` here is version portability, not the fix for anything observed.
+    # On older ansible-core a var defined in a vars block renders to a STRING -
+    # "False" for a failed check - and a non-empty string is truthy in Jinja, so
+    # every branch below would collapse to the first one. Confirmed NOT to
+    # happen on ansible-core 2.19, which returns a real bool; kept because this
+    # project runs a mix of versions (2.13 on the STIG host, >=2.15 here - see
+    # ../../NAPALM.md) and removing it makes correctness depend on which.
+    #
+    # The bug that actually made every unreachable device report READY was the
+    # skipped-task problem below, not this.
     preflight_status: >-
       {{ 'READY' if login_ok | bool
          else 'PORT OPEN, LOGIN FAILED' if port_ok | bool
@@ -141,11 +145,15 @@
               | truncate(160, true) }}
   vars:
     port_ok: "{{ preflight_port_check is succeeded }}"
-    # `is succeeded` is TRUE for a SKIPPED task - a skipped result simply has no
-    # `failed` key - so every one of these also tests that the task actually ran.
-    # Without that, a device whose checks were all skipped reads as a device whose
-    # checks all passed, which is the same class of false pass as the `| bool`
-    # problem above and would be just as invisible.
+    # THIS is what made the play report READY for twelve unreachable devices.
+    # `is succeeded` is TRUE for a SKIPPED task, because a skipped result simply
+    # has no `failed` key - and every check here is skipped when the port check
+    # fails, so "nothing ran" read identically to "everything passed". Each test
+    # now also asserts the task actually ran.
+    #
+    # Verified by mutation: remove the `.skipped` guards and
+    # ../../tests/run_offline.py fails on "0/12 ready". Removing the `| bool`
+    # above does not, which is how the comment there came to be corrected.
     netconf_missing: >-
       {{ preflight_ssh_fallback is defined
          and not (preflight_ssh_fallback.skipped | default(false))

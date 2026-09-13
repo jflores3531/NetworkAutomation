@@ -21,6 +21,10 @@ What *has* been done — every playbook and role executed end to end against stu
 modules returning realistic device data, on the controller, with these results:
 
 - all 14 playbooks pass `--syntax-check`
+- `ansible/tests/run_offline.py` drives all of it as 15 scenarios and asserts on
+  what each run printed and wrote, not just its exit code — every one of the
+  bugs below exited 0 while being wrong. The suite is mutation-tested: breaking
+  the fix again fails it
 - `preflight` reports per-device readiness across 12 devices without aborting,
   and distinguishes unreachable / port-open-login-failed / NETCONF-not-enabled —
   each branch verified by pointing it at a local listener
@@ -39,23 +43,28 @@ modules returning realistic device data, on the controller, with these results:
   argument correctly from inventory, and their opt-in gates (firewall policy,
   PAN-OS commit) stay shut unless set
 
-Running it rather than reading it is what found the two bugs worth recording,
-both of which were **silent false passes** — the worst kind for a readiness
-check:
+Running it rather than reading it is what found the bug worth recording, which
+was a **silent false pass** — the worst kind for a readiness check:
 
-- **Every device reported `READY` while all twelve were unreachable.** A
-  boolean computed in a `vars:` block renders as the *string* `"False"`, and a
-  non-empty string is truthy in Jinja, so the status expression always took its
-  first branch. Every one of those conditionals now ends in `| bool`.
-- **A skipped check counted as a passed check.** `is succeeded` is true for a
-  *skipped* task, because a skipped result has no `failed` key — so a device
-  whose login attempt never ran read identically to one that logged in. Each
-  test now also asserts the task actually ran.
+**Every device reported `READY` while all twelve were unreachable.**
+`is succeeded` is true for a *skipped* task, because a skipped result carries no
+`failed` key. Every check in the role is skipped when the port check fails, so
+"nothing ran" read identically to "everything passed". Each test now also
+asserts that the task actually ran.
 
-Both would have survived any amount of review of the YAML; only 12 placeholder
-addresses and a `0/12 ready` expectation caught them. A third bug, in the plays
-rather than a role, is written up under "Why these plays set both
+It would have survived any amount of review of the YAML; only twelve
+placeholder addresses and a `0/12 ready` expectation caught it. A second bug,
+in the plays rather than a role, is written up under "Why these plays set both
 `connection: local` and `ansible_connection`" below.
+
+**A correction, since this file is the record.** That failure was first written
+up here as two bugs, the second being Jinja truthiness — a boolean built in a
+`vars:` block rendering as the string `"False"`, which is truthy. Mutation
+testing says otherwise: removing the `.skipped` guards fails the suite, while
+removing `| bool` does not, and on ansible-core 2.19 a vars-block boolean comes
+back as a real `bool`. So truthiness was never the cause here. The `| bool`
+guards stay, for a narrower reason than originally claimed: this project runs a
+mix of ansible-core versions, and on older ones that coercion is real.
 
 What that does **not** prove: that a single module argument is spelled the way
 the installed collection expects, or that any device accepts what is sent. The
@@ -244,6 +253,32 @@ This was found by running the preflight play, not by reading: it failed on
 `set_fact` task, in a play that connects to nothing. Earlier test runs had
 passed `-e ansible_connection=local`, which is extra-vars precedence and hid
 the problem completely.
+
+## Validating offline
+
+```bash
+python3 tests/run_offline.py          # 15 scenarios, no devices, no collections
+python3 tests/run_offline.py -v       # ansible output for anything that fails
+python3 tests/stub_devices.py /tmp/s  # just write the stubs, to poke at by hand
+```
+
+`tests/stub_devices.py` replaces every module the multi-vendor roles and
+playbooks call with a script that accepts any arguments and returns plausible
+data — the NAPALM getters come back shaped to exercise the interesting branches
+rather than to describe a healthy device (a port enabled but down, one CPU core
+pegged and one idle, a failed PSU, running ≠ startup). The module list is
+discovered from the task files, so a new module gets a stub without editing
+anything.
+
+`tests/run_offline.py` then drives the real playbooks against those stubs and
+asserts on what each run printed and wrote. Exit codes alone are not enough:
+both bugs in the status section above exited 0 while being wrong. It skips
+cleanly when `ansible-playbook` is not installed, like the suites in
+[`../tests/`](../tests/).
+
+What this cannot tell you is whether a device accepts what is sent, or whether a
+module argument is spelled the way the installed collection expects — stubs
+accept everything. That is what the lab is for.
 
 ## Safety, per platform
 
