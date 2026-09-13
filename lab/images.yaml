@@ -1,0 +1,75 @@
+# lab/images.yaml
+# QEMU template definitions for the appliance images the lab needs but cannot
+# recreate. rebuild_lab.py deliberately refuses to invent templates (a disk
+# image is the one thing a script cannot conjure); this file plus
+# register_templates.py closes that gap for images that ARE already on the
+# server, so "I downloaded the qcow2" turns into a working template in one
+# command instead of a click-through in the GNS3 GUI.
+#
+# Parameters are transcribed from the published GNS3 appliance definition for
+# each image, not guessed - a vJunos-switch booted with the wrong disk
+# interface or without the VM-VEX smbios string hangs before it ever prints a
+# prompt, and that failure looks identical to a bad image.
+#
+# md5 is here so a download can be proved genuine before it is imported. An
+# image pulled from anywhere other than Juniper's own portal is the usual way
+# people end up debugging a tampered or truncated qcow2 for an afternoon.
+
+templates:
+  # JSW1 / JSW2 in the seven-node topology.
+  #
+  # Downloaded from https://support.juniper.net/support/downloads/?p=vjunos
+  # vJunos-switch is free, but the portal requires a (free) Juniper account
+  # and EULA acceptance, so the file has to be fetched by a human and placed
+  # on the GNS3 server - see register_templates.py --help for the upload path.
+  "vJunos-switch":
+    template_type: qemu
+    platform: x86_64
+    ram: 5120           # per instance; two of these is 10 GB before anything else boots
+    cpus: 4
+    adapters: 11
+    adapter_type: virtio-net-pci
+    console_type: telnet
+    hda_disk_interface: virtio
+    # KVM is required, not optional - the GNS3 VM reports "KVM support
+    # available: True" on its console when nested virtualisation is on.
+    kvm: require
+    # VM-VEX is the product string vJunos checks for; without it the image
+    # decides it is on unsupported hardware and refuses to come up.
+    options: "-serial mon:stdio -nographic -smbios type=1,product=VM-VEX -cpu host"
+    category: switch
+    symbol: ":/symbols/multilayer_switch.svg"
+    # THE OFF-BY-ONE THAT MISCABLES THE WHOLE LAB. Adapter 0 is fxp0, the
+    # out-of-band management port - ge-0/0/0 is adapter 1, not adapter 0. Left
+    # unset, GNS3 labels the ports Ethernet0..Ethernet10 and a link drawn to
+    # "Ethernet0" thinking it is ge-0/0/0 lands on management instead: the
+    # trunk silently never comes up, and fxp0 ends up in a VLAN.
+    # {port0} is zero-based and applies to the ports AFTER the first, so these
+    # two together give fxp0, ge-0/0/0, ge-0/0/1, ... exactly as Junos names them.
+    first_port_name: fxp0
+    port_name_format: "ge-0/0/{port0}"
+    # Any one of these filenames satisfies the template; the first one found
+    # on the server wins. Sizes/checksums as published for each release.
+    images:
+      # 26.2R1.7 is the copy actually in this lab. Its md5 was computed from
+      # the downloaded file, NOT taken from a published appliance definition
+      # the way the three below were - Juniper's portal is the provenance, and
+      # this hash is an integrity baseline for re-checking the same file later
+      # (after an scp, or on a rebuild). It is not independent verification.
+      - filename: vJunos-switch-26.2R1.7.qcow2
+        md5: e07ff39ee1e12ce749bbb999d3224e86
+        filesize: 4645126144
+      - filename: vjunos-switch-23.1R1.8.qcow2
+        md5: 21ab960610e852c82e51460e13e55cca
+        filesize: 3960668160
+      - filename: vJunos-switch-23.2R1.14.qcow2
+        md5: 256039b658a8ddce0b955d4cb8fb3048
+        filesize: 3966631936
+      - filename: vJunos-switch-24.4R1.9.qcow2
+        md5: 53c38c4af2ad220a3d8308dafdcc661e
+        filesize: 4035444736
+
+# PA1 (PAN-OS VM-Series) is intentionally absent. Its template parameters have
+# not been verified against a published appliance definition yet, and guessing
+# them here would produce exactly the silent-hang failure this file exists to
+# prevent. Add it the same way once the numbers are confirmed.
