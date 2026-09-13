@@ -1,0 +1,14 @@
+---
+# Defaults for the standalone-FortiSwitch baseline. See
+# inventory/group_vars/fortiswitch/vars.yml for the FortiLink caveat - a
+# FortiSwitch managed by the FortiGate is configured through the FortiGate's
+# switch-controller modules and this role does not apply to it at all.
+
+baseline_ntp_servers: []
+baseline_syslog_servers: []
+baseline_vlans: []
+baseline_access_ports: []
+baseline_trunk_ports: []
+baseline_interfaces: []
+
+baseline_set_hostname: true

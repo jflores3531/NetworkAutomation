@@ -1,0 +1,81 @@
+---
+# FortiGate firewall settings, consumed by the fortigate_baseline role. See
+# ../../../NAPALM.md for why this group is driven by fortinet.fortios rather
+# than NAPALM (short version: NAPALM has no FortiOS driver, and Fortinet's own
+# collection is a first-class REST API client, not a workaround).
+
+# VDOM every module call is scoped to. "root" is the single VDOM a FortiGate
+# has until VDOMs are explicitly enabled, so it is the right default and also
+# the value to change first if this ever runs against a multi-VDOM box -
+# sending policy into the wrong VDOM is how a firewall ends up with rules
+# nobody can find.
+fortios_vdom: root
+
+# API token, from the vaulted file next to this one. Token auth rather than
+# admin username/password because a FortiGate API token can be scoped to a
+# read/write profile and a trusted source subnet, which a full admin login
+# cannot - and because it keeps this project's "credentials never live in a
+# committed file" rule intact with one vaulted value instead of two.
+#
+# default('') so a vault.yml predating this key is a clear assert in the role
+# rather than an undefined-variable traceback - same treatment radius_key gets
+# in ../l2_switches/vars.yml.
+fortios_access_token: "{{ vault_fortios_access_token | default('') }}"
+
+# --- Intended configuration -------------------------------------------------
+# Placeholders, per the committed-file convention - see ../ios_switches/vars.yml.
+
+baseline_timezone: ""          # FortiOS timezone index, e.g. "12" for US/Eastern
+baseline_admin_timeout: 10     # minutes of idle before an admin session is dropped
+
+baseline_ntp_servers:
+  - x.x.x.x
+baseline_syslog_servers:
+  - x.x.x.x
+
+# Interfaces, pushed with fortios_system_interface.
+#
+# baseline_interfaces:
+#   - name: port2
+#     ip: "x.x.x.x 255.255.255.0"
+#     allowaccess: "ping https ssh"
+#     description: inside
+baseline_interfaces: []
+
+# Firewall address objects, pushed with fortios_firewall_address. Defined
+# before any policy that references them - a FortiGate rejects a policy naming
+# an address object that does not exist, so the role's task order is load
+# bearing, not cosmetic.
+#
+# baseline_firewall_addresses:
+#   - name: LAN_USERS
+#     subnet: "x.x.x.x 255.255.255.0"
+baseline_firewall_addresses: []
+
+# Firewall policies, pushed with fortios_firewall_policy.
+#
+# policyid is explicit rather than auto-assigned: the module matches on it, so
+# a policy without one either duplicates on every run or silently rewrites
+# whichever policy FortiOS happened to number the same.
+#
+# baseline_firewall_policies:
+#   - policyid: 10
+#     name: users_to_internet
+#     srcintf: port2
+#     dstintf: port1
+#     srcaddr: LAN_USERS
+#     dstaddr: all
+#     service: HTTPS
+#     action: accept
+#     nat: enable
+baseline_firewall_policies: []
+
+# Static routes, pushed with fortios_router_static. seq_num is this module's
+# match key for the same reason policyid is above.
+#
+# baseline_static_routes:
+#   - seq_num: 1
+#     dst: "x.x.x.x 255.255.255.0"
+#     gateway: x.x.x.x
+#     device: port1
+baseline_static_routes: []

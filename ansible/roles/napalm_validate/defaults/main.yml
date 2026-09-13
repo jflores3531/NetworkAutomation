@@ -1,0 +1,32 @@
+---
+# What to assert about a device. Each block is skipped when its var is empty,
+# so a device with nothing declared produces an empty-but-valid validation
+# file and a trivially compliant report - not a false pass, because the report
+# names exactly what was checked.
+
+# Interfaces that must be up and enabled. Normally set per group/host in
+# inventory (napalm_expected_up_interfaces in group_vars/napalm_ios).
+napalm_expected_up_interfaces: []
+
+# NTP servers the device must have configured. Defaults to the baseline intent
+# for this group, so validation checks the same list cisco_baseline pushes
+# rather than a second copy that can drift out of step with it.
+napalm_expected_ntp_servers: "{{ baseline_ntp_servers | default([]) }}"
+
+# Expected vendor string from the facts getter. "Cisco" on every device this
+# role currently runs against; here as a var because the point of NAPALM in
+# this project is that the next platform should not need a new role.
+napalm_expected_vendor: Cisco
+
+# strict mode makes a section fail on anything present that was not declared -
+# e.g. a third NTP server nobody asked for. Off by default: strict on a
+# partially-declared lab reports failures for config that is simply not
+# described yet, and a validation suite that cries wolf gets ignored, which
+# costs more than the extra server it would have caught.
+napalm_validate_strict: false
+
+# By default a non-compliant device fails the play. Set false to collect
+# reports across a fleet without the first bad device stopping the run.
+napalm_validate_fail_on_noncompliance: true
+
+napalm_validate_report_dir: "{{ napalm_report_dir }}/compliance"

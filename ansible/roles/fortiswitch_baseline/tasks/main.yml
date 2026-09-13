@@ -1,0 +1,106 @@
+---
+# Standalone FortiSwitch baseline with fortinet.fortiswitch.
+#
+# Same reason as the FortiGate role for not being NAPALM: no FortiOS driver
+# exists. Different collection from the FortiGate though - fortinet.fortiswitch
+# is its own certified collection with its own httpapi plugin, because
+# FortiSwitchOS is a different API from FortiOS, not a subset of it.
+#
+# PRECONDITION: these switches must be in standalone mode with their own REST
+# API reachable. Under FortiLink the FortiGate owns their configuration and the
+# local API is largely closed - that case belongs to the FortiGate's
+# fortios_switch_controller_managed_switch module, not here. Confirm which mode
+# the lab runs in before pointing this at anything.
+
+- name: Fail early if credentials are missing
+  ansible.builtin.assert:
+    that:
+      - ansible_user | default('') | length > 0
+      - ansible_user != 'CHANGE_ME'
+      - ansible_password | default('') | length > 0
+      - ansible_password != 'CHANGE_ME'
+    fail_msg: >-
+      The fortiswitch group's credentials are unset or still CHANGE_ME. Fill in
+      inventory/group_vars/fortiswitch/vault.yml (see the .example next to it)
+      and encrypt it with ansible-vault.
+
+- name: Set the hostname from inventory
+  fortinet.fortiswitch.fortiswitch_system_global:
+    system_global:
+      hostname: "{{ inventory_hostname }}"
+  when: baseline_set_hostname | bool
+
+- name: Assemble the NTP server list
+  ansible.builtin.set_fact:
+    fsw_ntp_entries: >-
+      {{ fsw_ntp_entries | default([])
+         + [{'id': (fsw_ntp_entries | default([]) | length) + 1, 'server': item}] }}
+  loop: "{{ baseline_ntp_servers | reject('equalto', 'x.x.x.x') | list }}"
+
+- name: Configure NTP servers
+  fortinet.fortiswitch.fortiswitch_system_ntp:
+    system_ntp:
+      ntpsync: enable
+      server_mode: disable
+      ntpserver: "{{ fsw_ntp_entries }}"
+  when: fsw_ntp_entries | default([]) | length > 0
+
+- name: Configure syslog
+  fortinet.fortiswitch.fortiswitch_log_syslogd_setting:
+    log_syslogd_setting:
+      status: enable
+      server: "{{ (baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list)[0] }}"
+      port: 514
+  when: baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list | length > 0
+
+- name: Configure VLANs
+  fortinet.fortiswitch.fortiswitch_switch_vlan:
+    state: present
+    switch_vlan:
+      id: "{{ item.vlan_id }}"
+      description: "{{ item.name | default(omit) }}"
+  loop: "{{ baseline_vlans }}"
+  loop_control:
+    label: "vlan {{ item.vlan_id }}"
+
+# Access ports: untagged VLAN set, nothing tagged allowed on top. Same end
+# state as IOS `switchport mode access`, expressed the way FortiSwitchOS
+# expresses it - there is no mode keyword, a port is defined by which VLANs it
+# carries.
+- name: Configure access ports
+  fortinet.fortiswitch.fortiswitch_switch_interface:
+    state: present
+    switch_interface:
+      name: "{{ item.name }}"
+      native_vlan: "{{ item.vlan }}"
+      description: "{{ item.description | default(omit) }}"
+  loop: "{{ baseline_access_ports }}"
+  loop_control:
+    label: "{{ item.name }} -> vlan {{ item.vlan }}"
+
+- name: Configure trunk ports
+  fortinet.fortiswitch.fortiswitch_switch_interface:
+    state: present
+    switch_interface:
+      name: "{{ item.name }}"
+      native_vlan: "{{ item.native_vlan | default(omit) }}"
+      allowed_vlans: "{{ item.allowed_vlans | default([]) | map('string') | join(' ') }}"
+      description: "{{ item.description | default(omit) }}"
+  loop: "{{ baseline_trunk_ports }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure management interface addressing
+  fortinet.fortiswitch.fortiswitch_system_interface:
+    state: present
+    system_interface:
+      name: "{{ item.name }}"
+      mode: static
+      ip: "{{ item.ip }}"
+      allowaccess: "{{ item.allowaccess | default('ping') }}"
+  loop: "{{ baseline_interfaces }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.ip }}"
+  when: item.ip is not search('x\.x\.x\.x')
+  # Same defaulting stance as the FortiGate role: allowaccess falls back to
+  # ping alone, so a mistyped key cannot silently open management services.

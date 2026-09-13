@@ -1,0 +1,29 @@
+---
+# Multi-vendor fact collection through NAPALM.
+#
+#   ansible-playbook playbooks/napalm_facts.yml
+#   ansible-playbook playbooks/napalm_facts.yml --limit SW1
+#
+# Read-only, so it targets every NAPALM-driven device including the STIG lab
+# switches (l2_switches and nxos_switches are children of napalm_ios/
+# napalm_nxos - see ../inventory/hosts.yml). The config-pushing playbooks
+# deliberately do not: they target only the new lab's groups.
+#
+# connection: local because the napalm_* modules connect from the controller
+# using napalm_provider rather than through an Ansible connection plugin. The
+# same hosts still carry ansible_connection: network_cli for the
+# cisco.ios/cisco.nxos resource modules used by cisco_baseline.yml - one
+# inventory, two transports, picked per playbook.
+- name: Gather facts from every NAPALM-driven device
+  hosts: napalm_devices
+  gather_facts: false
+  connection: local
+  vars_prompt:
+    - name: napalm_username
+      prompt: "Device username"
+      private: false
+    - name: napalm_password
+      prompt: "Device password"
+      private: true
+  roles:
+    - napalm_facts

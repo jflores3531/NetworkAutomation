@@ -1,0 +1,41 @@
+---
+# Baseline configuration for Cisco devices with cisco.ios / cisco.nxos
+# RESOURCE modules - the deliberate counterpart to the NAPALM roles.
+#
+# Division of labour between the two, which is the whole design question in
+# this project:
+#
+#   NAPALM        multi-vendor reads (facts, backups, validation) and
+#                 device-computed diffs before a push. One code path per task
+#                 across every platform, structured output, no parsers.
+#
+#   resource      per-feature config that has to be idempotent. They compare
+#   modules       PARSED DEVICE STATE, not literal strings, which is what the
+#                 napalm_install_config path cannot do - it can tell you what
+#                 would change, but its unit is a config file, not a VLAN.
+#
+# So: NAPALM for reading and for diffing, resource modules for writing. Using
+# napalm_install_config to manage a VLAN list would give up idempotency; using
+# ios_config to manage everything is what filled ../../README.md with lines
+# that never matched.
+#
+# These modules reach the device over network_cli (see inventory/hosts.yml), so
+# unlike the NAPALM roles this one runs against the device, not from the
+# controller.
+
+- name: Fail on an unsupported platform
+  ansible.builtin.assert:
+    that:
+      - ansible_network_os in ['cisco.ios.ios', 'cisco.nxos.nxos', 'ios', 'nxos']
+    fail_msg: >-
+      cisco_baseline has no task file for ansible_network_os
+      '{{ ansible_network_os }}'. The Fortinet groups have their own roles
+      (fortigate_baseline / fortiswitch_baseline) - they are not a gap here.
+
+- name: Apply the IOS/IOS-XE baseline
+  ansible.builtin.include_tasks: ios.yml
+  when: ansible_network_os in ['cisco.ios.ios', 'ios']
+
+- name: Apply the NX-OS baseline
+  ansible.builtin.include_tasks: nxos.yml
+  when: ansible_network_os in ['cisco.nxos.nxos', 'nxos']

@@ -1,0 +1,28 @@
+---
+# Baseline configuration for the Palo Alto firewall, with Palo Alto's own
+# certified collection over the XML API.
+#
+# Staging run - every change lands in the firewall's CANDIDATE config and
+# nothing is in force:
+#
+#   ansible-playbook playbooks/panos_baseline.yml --ask-vault-pass
+#
+# Review it in the firewall's commit preview, then commit:
+#
+#   ansible-playbook playbooks/panos_baseline.yml --ask-vault-pass -e panos_commit=true
+#
+# Security policy is opt-in on top of that, because it decides what traffic
+# passes:
+#
+#   ansible-playbook playbooks/panos_baseline.yml --ask-vault-pass \
+#       -e push_security_rules=true -e panos_commit=true
+#
+# Credentials are an API key from the vaulted group_vars (hence
+# --ask-vault-pass, not --ask-pass), and the modules run on the controller
+# against the XML API - there is no SSH and no connection plugin in this path.
+# See ../NAPALM.md for why this platform is not driven through NAPALM.
+- name: Apply the Palo Alto baseline
+  hosts: palo_alto
+  gather_facts: false
+  roles:
+    - panos_baseline

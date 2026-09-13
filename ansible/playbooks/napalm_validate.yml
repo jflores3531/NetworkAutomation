@@ -1,0 +1,30 @@
+---
+# Compliance validation: does each device match what inventory says it should
+# be? NAPALM runs the getters, compares against a rendered intent file, and
+# returns a report naming every difference.
+#
+#   ansible-playbook playbooks/napalm_validate.yml
+#   ansible-playbook playbooks/napalm_validate.yml -e napalm_validate_fail_on_noncompliance=false
+#   ansible-playbook playbooks/napalm_validate.yml -e napalm_validate_strict=true
+#
+# The second form surveys a whole fleet without the first non-compliant device
+# stopping the run. The third additionally fails on configuration that is
+# present but undeclared.
+#
+# This is not the STIG audit. ../roles/stig_audit shells out to the Python
+# audit engine and answers ~65 DISA rules with a STIG Viewer checklist; this
+# answers "is the device what inventory claims", across vendors. Different
+# questions, and neither report substitutes for the other.
+- name: Validate devices against declared state
+  hosts: napalm_devices
+  gather_facts: false
+  connection: local
+  vars_prompt:
+    - name: napalm_username
+      prompt: "Device username"
+      private: false
+    - name: napalm_password
+      prompt: "Device password"
+      private: true
+  roles:
+    - napalm_validate

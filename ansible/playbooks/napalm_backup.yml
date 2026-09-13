@@ -1,0 +1,72 @@
+---
+# Config backups for every NAPALM-driven device, plus the FortiGate through its
+# own API.
+#
+#   ansible-playbook playbooks/napalm_backup.yml
+#   ansible-playbook playbooks/napalm_backup.yml -D            # print the diff
+#   ansible-playbook playbooks/napalm_backup.yml --limit NX1
+#
+# -D is worth the habit: the latest-copy file is written with the copy module,
+# so a diff against the previous backup comes for free and answers "what
+# changed on this device since yesterday" without a second tool.
+#
+# Output goes to ../backups/ (gitignored). A backup is a verbatim config -
+# addressing, hostnames, password hashes - and this repository is public.
+- name: Back up Cisco device configurations through NAPALM
+  hosts: napalm_devices
+  gather_facts: false
+  connection: local
+  vars_prompt:
+    - name: napalm_username
+      prompt: "Device username"
+      private: false
+    - name: napalm_password
+      prompt: "Device password"
+      private: true
+  roles:
+    - napalm_backup
+
+# Separate play, not a role, because it is three tasks and only ever applies to
+# one platform. The Palo Alto is not under napalm_devices (its NAPALM driver is
+# a community package with thin coverage - see ../inventory/hosts.yml), so its
+# backup comes from the firewall's own config export instead of the NAPALM
+# config getter.
+#
+# The FortiGate equivalent of this play was removed when the Fortinet gear was
+# parked. playbooks/fortinet_baseline.yml still works if that hardware comes
+# back.
+- name: Export the Palo Alto configuration
+  hosts: palo_alto
+  gather_facts: false
+  tasks:
+    - name: Ensure the backup directory exists
+      ansible.builtin.file:
+        path: "{{ napalm_backup_dir }}"
+        state: directory
+        mode: "0750"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Export the running configuration
+      paloaltonetworks.panos.panos_export:
+        provider: "{{ panos_provider }}"
+        category: configuration
+        filename: "{{ napalm_backup_dir }}/{{ inventory_hostname }}.xml"
+      register: panos_export_result
+      # XML, not set-style CLI text, because that is what the firewall's export
+      # is - the authoritative form, and what a restore takes. It is not
+      # diff-friendly the way the NAPALM config getter's output is on the Cisco
+      # and Juniper gear; that is a property of the platform rather than
+      # something worth converting away.
+
+    - name: Confirm something was actually written
+      ansible.builtin.stat:
+        path: "{{ napalm_backup_dir }}/{{ inventory_hostname }}.xml"
+      register: panos_backup_file
+      delegate_to: localhost
+      failed_when: >-
+        not panos_backup_file.stat.exists
+        or panos_backup_file.stat.size < 1024
+      # Refusing a suspiciously small export for the same reason the NAPALM
+      # backup role asserts on an empty running config: a backup that silently
+      # saved nothing is only discovered on the day it is needed.

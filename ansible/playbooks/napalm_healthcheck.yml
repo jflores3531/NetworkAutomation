@@ -1,0 +1,25 @@
+---
+# Operational health across every NAPALM-driven device - the Ansible/NAPALM
+# counterpart to ../../scripts/health_check.py, and the play to run before and
+# after any change window.
+#
+#   ansible-playbook playbooks/napalm_healthcheck.yml
+#   ansible-playbook playbooks/napalm_healthcheck.yml -e napalm_healthcheck_fail=true
+#
+# The second form turns it into a gate: the play fails on any finding, which is
+# how to avoid starting a push against a device that is already unhealthy. The
+# default reports and continues, because a monitoring pass that aborts on the
+# first sick device never surveys the rest of the fleet.
+- name: Check operational health through NAPALM
+  hosts: napalm_devices
+  gather_facts: false
+  connection: local
+  vars_prompt:
+    - name: napalm_username
+      prompt: "Device username"
+      private: false
+    - name: napalm_password
+      prompt: "Device password"
+      private: true
+  roles:
+    - napalm_healthcheck

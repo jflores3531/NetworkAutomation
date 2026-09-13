@@ -1,0 +1,93 @@
+---
+# Diff-before-push config deployment through napalm_install_config.
+#
+# The workflow this role exists for, in order:
+#   1. render intended config per device
+#   2. load it as a candidate and ask the DEVICE for the diff
+#   3. read the diff
+#   4. re-run with -e napalm_commit=true to apply it
+#
+# Step 2 is the part neither ios_config nor Netmiko can do: both decide what to
+# send by comparing strings on the controller. NAPALM hands the candidate to the
+# device and asks it what would change.
+
+- name: Require exactly one config source
+  ansible.builtin.assert:
+    that:
+      - (napalm_config_template | length > 0) != (napalm_config_file | length > 0)
+    fail_msg: >-
+      Set exactly one of napalm_config_template or napalm_config_file. With
+      both set it is ambiguous which one would be pushed, and with neither
+      there is nothing to push.
+  delegate_to: localhost
+
+# A replace is the one operation here that can remove configuration the
+# template never mentioned. Two independent flags, so no single typo'd -e can
+# turn a merge into a replace.
+- name: Require explicit confirmation for a full config replace
+  ansible.builtin.assert:
+    that:
+      - napalm_replace_confirmed | bool
+    fail_msg: >-
+      napalm_replace=true replaces the ENTIRE running config with the rendered
+      file - anything absent from it is removed, including management
+      addressing and vty config. Re-run with -e napalm_replace_confirmed=true
+      once you have console access or an armed `reload in`, and have read the
+      diff from a commit_changes=false run first.
+  when: napalm_replace | bool
+  delegate_to: localhost
+
+- name: Ensure the diff directory exists
+  ansible.builtin.file:
+    path: "{{ napalm_diff_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+
+- name: Render the intended config for {{ inventory_hostname }}
+  ansible.builtin.template:
+    src: "{{ napalm_config_template }}"
+    dest: "{{ napalm_diff_dir }}/{{ inventory_hostname }}_candidate.cfg"
+    mode: "0640"
+  delegate_to: localhost
+  when: napalm_config_template | length > 0
+
+- name: Select the file to push
+  ansible.builtin.set_fact:
+    napalm_push_source: >-
+      {{ napalm_config_file if napalm_config_file | length > 0
+         else napalm_diff_dir ~ '/' ~ inventory_hostname ~ '_candidate.cfg' }}
+
+- name: "{{ 'Apply' if napalm_commit | bool else 'Diff (dry run, nothing committed)' }} config on {{ inventory_hostname }}"
+  napalm.ansible.napalm_install_config:
+    provider: "{{ napalm_provider }}"
+    config_file: "{{ napalm_push_source }}"
+    commit_changes: "{{ napalm_commit | bool }}"
+    replace_config: "{{ napalm_replace | bool }}"
+    get_diffs: true
+    diff_file: "{{ napalm_diff_dir }}/{{ inventory_hostname }}.diff"
+  register: napalm_push
+  delegate_to: localhost
+
+# Printed as well as saved. A diff nobody reads is the same as no diff, and the
+# saved file is what makes a push reviewable after the fact - the audit-trail
+# role audit_logs/audit.log plays for the Python scripts.
+- name: Show the diff
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} {{ 'committed' if napalm_commit | bool else 'would change' }}:
+      {{ napalm_push.diff.prepared | default('(no differences)') }}
+
+- name: Note that nothing was committed
+  ansible.builtin.debug:
+    msg: >-
+      Dry run - the candidate was loaded, diffed and discarded. Re-run with
+      -e napalm_commit=true to apply. Diffs saved under {{ napalm_diff_dir }}.
+  run_once: true
+  when: not napalm_commit | bool
+
+# Startup-config is deliberately NOT written here, matching
+# ../../../docs/DESIGN.md: until a push is saved, a reload reverts the device,
+# which is this project's escape hatch when a push locks you out. Save with
+# scripts/save_config.py after the change has been verified - and only then.

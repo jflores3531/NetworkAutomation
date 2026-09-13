@@ -1,0 +1,32 @@
+---
+# Config source. Exactly one of these, same contract as ../napalm_config_push.
+junos_config_template: ""
+junos_config_file: ""
+
+# Minutes the switch waits for confirmation before rolling the commit back by
+# itself.
+#
+# This is the mechanism the whole role exists for, and it is stronger than
+# anything the Cisco side of this repo has:
+#
+#   - `commit confirmed 5` applies the change and starts a timer ON THE DEVICE
+#   - if the controller never comes back to confirm, Junos restores the previous
+#     configuration when the timer expires
+#   - it needs no connectivity to fire, so it survives the exact failure a
+#     rescue block cannot: a change that locks the controller out
+#
+# ../../README.md makes the same argument for `reload in 5` in the
+# l2s_stig_harden_acl role, with one difference that matters: a reload reverts
+# to the last SAVED config and bounces the box, whereas Junos reverts only this
+# commit and nothing restarts. There is no equivalent caveat about not saving
+# config first - Junos's candidate/commit model makes the safety net free.
+junos_confirm_minutes: 5
+
+# Written into `show system commit` on the device.
+junos_commit_comment: "ansible junos_safe_push"
+
+# Dry run by default: render, load into the candidate, print the device's own
+# `show | compare` diff, roll the candidate back, commit nothing.
+junos_commit: false
+
+junos_diff_dir: "{{ napalm_report_dir }}/diffs"

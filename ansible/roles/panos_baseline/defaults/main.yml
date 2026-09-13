@@ -1,0 +1,38 @@
+---
+# Defaults for the Palo Alto baseline. Real values come from
+# inventory/group_vars/palo_alto/vars.yml; an empty var is a skipped task.
+
+panos_api_key: ""
+panos_vsys: vsys1
+panos_virtual_router: default
+
+baseline_timezone: ""
+baseline_ntp_servers: []
+baseline_syslog_servers: []
+baseline_zones: []
+baseline_interfaces: []
+baseline_address_objects: []
+baseline_security_rules: []
+baseline_static_routes: []
+
+# Security policy is what decides whether traffic passes, so it is opt-in per
+# run rather than part of a general baseline:
+#
+#   ansible-playbook playbooks/panos_baseline.yml -e push_security_rules=true
+#
+# Same stance the STIG side takes on trunk ports and the vty ACL, and the same
+# one the parked FortiGate role took on firewall policy.
+push_security_rules: false
+
+# Whether to commit at the end. PAN-OS holds everything in a candidate
+# configuration until a commit, so with this false the run is effectively a
+# staging pass: every change is visible in the firewall's candidate (and in the
+# web UI's commit preview) and none of it is in force.
+#
+# That makes false a genuinely useful default here in a way it would not be on
+# IOS - there is a native place for a change to sit while a human looks at it.
+panos_commit: false
+
+# A commit can take minutes on a busy firewall. The module polls for the job to
+# finish; this is how long to let it.
+panos_commit_timeout: 600

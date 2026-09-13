@@ -1,0 +1,89 @@
+---
+# Compliance validation through napalm_validate: declare intended state,
+# NAPALM runs the getters and returns a report saying whether the device
+# matches and, where it does not, what it found instead.
+#
+# How this relates to the STIG audit already in this repo: it does not replace
+# it. stig_common.py answers ~65 DISA rules against a device's config text and
+# writes a STIG Viewer checklist, which is a compliance artefact for a specific
+# benchmark. This answers "does the device match what inventory says it should
+# be" across vendors, which is an operational check - the two ask different
+# questions and neither's output substitutes for the other's.
+
+- name: Ensure the report directory exists
+  ansible.builtin.file:
+    path: "{{ napalm_validate_report_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+
+# Rendered per device rather than committed as static files, so the
+# expectations are generated from the same inventory vars cisco_baseline
+# pushes. A committed validation file would be a second copy of the intent,
+# free to drift from the first - and a validation suite that is wrong is worse
+# than none, because it is believed.
+- name: Render the validation file for {{ inventory_hostname }}
+  ansible.builtin.template:
+    src: validate.yml.j2
+    dest: "{{ napalm_validate_report_dir }}/{{ inventory_hostname }}_intent.yml"
+    mode: "0640"
+  delegate_to: localhost
+
+- name: Validate {{ inventory_hostname }} against declared state
+  napalm.ansible.napalm_validate:
+    provider: "{{ napalm_provider }}"
+    validation_file: "{{ napalm_validate_report_dir }}/{{ inventory_hostname }}_intent.yml"
+  register: napalm_validation
+  # Tolerated so the report is written and printed even when the device does
+  # not comply - the failure is raised deliberately at the end of this file
+  # instead, after there is an artefact to read.
+  ignore_errors: true
+  delegate_to: localhost
+
+# The module has returned its report under different keys across versions of
+# napalm-ansible, so both are accepted rather than guessing one. CONFIRM which
+# one the installed collection actually uses on the first live run and simplify
+# this - an expression that silently falls through to {} would report every
+# device compliant, which is the worst possible failure for a validation role.
+- name: Extract the compliance report
+  ansible.builtin.set_fact:
+    napalm_compliance: >-
+      {{ napalm_validation.compliance_report
+         | default(napalm_validation.ansible_facts.napalm_validation_report
+                   | default({}, true), true) }}
+
+- name: Fail if no compliance report came back
+  ansible.builtin.assert:
+    that:
+      - napalm_compliance | length > 0
+      - napalm_compliance.complies is defined
+    fail_msg: >-
+      napalm_validate returned no usable compliance report for
+      {{ inventory_hostname }} (module error: {{ napalm_validation.msg
+      | default('none reported') }}). Treating this as a failure rather than a
+      pass - an empty report is not a compliant device.
+
+- name: Save the compliance report
+  ansible.builtin.copy:
+    content: "{{ napalm_compliance | to_nice_json }}"
+    dest: "{{ napalm_validate_report_dir }}/{{ inventory_hostname }}_report.json"
+    mode: "0640"
+  delegate_to: localhost
+
+- name: Report the verdict
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ 'COMPLIES' if napalm_compliance.complies else 'DOES NOT COMPLY' }}
+      - report at
+      {{ napalm_validate_report_dir }}/{{ inventory_hostname }}_report.json
+
+- name: Fail on non-compliance
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} does not match declared state. Differences:
+      {{ napalm_compliance | to_nice_json }}
+  when:
+    - not napalm_compliance.complies
+    - napalm_validate_fail_on_noncompliance | bool

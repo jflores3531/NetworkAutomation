@@ -1,0 +1,44 @@
+---
+# PARKED - superseded, kept working.
+#
+# The project moved to a Palo Alto firewall in place of the FortiGate
+# (playbooks/panos_baseline.yml) and Juniper switches in place of the
+# FortiSwitches (playbooks/junos_baseline.yml). This playbook is no longer part
+# of playbooks/multivendor_site.yml and has to be invoked directly.
+#
+# Not deleted because it costs nothing to keep and the FortiGate role is the
+# only worked example in this directory of a REST API that models one object per
+# endpoint - worth keeping next to the Palo Alto role, which models a candidate
+# configuration, and the Junos one, which models a commit.
+#
+# Baseline configuration for the Fortinet gear, through Fortinet's own
+# certified collections over the REST API.
+#
+#   ansible-playbook playbooks/fortinet_baseline.yml --ask-vault-pass
+#   ansible-playbook playbooks/fortinet_baseline.yml --ask-vault-pass --limit FGT1
+#   ansible-playbook playbooks/fortinet_baseline.yml --ask-vault-pass -e push_firewall_policy=true
+#
+# No NAPALM here, and not for lack of trying to be consistent: NAPALM has no
+# FortiOS or FortiSwitchOS driver. Fortinet maintains one module per API
+# endpoint in fortinet.fortios / fortinet.fortiswitch, which is a better client
+# than a screen-scraping driver would be even if one existed. See ../NAPALM.md.
+#
+# Credentials come from the vaulted group_vars (an API token for the FortiGate,
+# an admin login for standalone FortiSwitches), hence --ask-vault-pass rather
+# than --ask-pass.
+#
+# Firewall policy is opt-in per run (push_firewall_policy=true). A wrong policy
+# is an outage rather than a failed audit, which is the same reason the STIG
+# side keeps trunk ports and the vty ACL out of its bulk passes.
+
+- name: Apply the FortiGate baseline
+  hosts: fortigate
+  gather_facts: false
+  roles:
+    - fortigate_baseline
+
+- name: Apply the FortiSwitch baseline
+  hosts: fortiswitch
+  gather_facts: false
+  roles:
+    - fortiswitch_baseline

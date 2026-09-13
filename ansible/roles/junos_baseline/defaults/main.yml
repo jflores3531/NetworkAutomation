@@ -1,0 +1,35 @@
+---
+# Defaults for the Junos baseline. Every task is gated on its own var, so an
+# empty value is a skipped feature - the convention used throughout this
+# project.
+
+baseline_domain_name: ""
+baseline_vlans: []
+baseline_access_ports: []
+baseline_trunk_ports: []
+baseline_l3_interfaces: []
+baseline_static_routes: []
+baseline_ntp_servers: []
+baseline_syslog_servers: []
+baseline_lldp_enabled: false
+
+baseline_set_hostname: true
+baseline_state: merged
+
+# Comment recorded in the device's own commit log (`show system commit`) - the
+# audit trail this project otherwise has to keep for itself in audit_logs/.
+# Junos gives it for free, so every task that can carry one does.
+baseline_commit_comment: "ansible junos_baseline"
+
+# NOTE ON TRANSACTIONS, because Junos invites an assumption that is wrong here:
+# these are resource modules, and each one loads and COMMITS its own candidate.
+# So this role is a series of small commits, not one transaction, and a failure
+# half way leaves the earlier commits in place.
+#
+# That is the right trade for a baseline (small, independent, idempotent
+# changes, each individually reversible from `show system rollback`), but it is
+# the wrong trade for anything that can cut the controller off - management
+# addressing, NETCONF itself, the uplink. For those use
+# ../junos_safe_push, which puts one rendered config through a single
+# `commit confirmed` and lets the switch revert it if verification never comes
+# back.

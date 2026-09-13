@@ -1,0 +1,176 @@
+---
+# Palo Alto baseline with paloaltonetworks.panos, Palo Alto's own certified
+# collection, over the firewall's XML API.
+#
+# Why not NAPALM, given this project's NAPALM-first preference: NAPALM *can*
+# reach PAN-OS, but only through napalm-panos - a separate community-maintained
+# package whose getters cover facts, config and interfaces and stop there. It is
+# a reasonable read/backup path and the inventory has a napalm_panos group ready
+# for it (see inventory/hosts.yml), but it models none of what a firewall
+# actually is: zones, address objects, security rules, NAT. Those need this
+# collection, and no amount of preferring one abstraction changes that.
+#
+# Task ORDER is a dependency chain on this platform, not a style choice:
+#   zones -> interfaces (an interface cannot join a zone that does not exist)
+#   address objects -> security rules (a rule cannot name an object that does not
+#   exist)
+#   everything -> commit (nothing above is in force until the commit task runs)
+
+- name: Fail early if the API key is missing
+  ansible.builtin.assert:
+    that:
+      - panos_api_key | length > 0
+      - panos_api_key != 'CHANGE_ME'
+    fail_msg: >-
+      panos_api_key is unset or still CHANGE_ME. Fill in
+      inventory/group_vars/palo_alto/vault.yml (see the .example next to it) and
+      encrypt it with ansible-vault. Refusing to send unauthenticated calls at a
+      firewall.
+
+- name: Read the firewall's facts
+  paloaltonetworks.panos.panos_facts:
+    provider: "{{ panos_provider }}"
+    gather_subset:
+      - system
+  register: panos_system_facts
+
+- name: Report what answered
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ panos_system_facts.ansible_facts.ansible_net_model | default('model unknown') }}
+      PAN-OS {{ panos_system_facts.ansible_facts.ansible_net_version | default('unknown') }}
+      serial {{ panos_system_facts.ansible_facts.ansible_net_serial | default('unknown') }}
+
+# --- system -----------------------------------------------------------------
+
+- name: Configure hostname, timezone and time servers
+  paloaltonetworks.panos.panos_mgtconfig:
+    provider: "{{ panos_provider }}"
+    hostname: "{{ inventory_hostname }}"
+    timezone: "{{ baseline_timezone if baseline_timezone | length > 0 else omit }}"
+    ntp_server_primary: "{{ ntp_hosts[0] | default(omit) }}"
+    ntp_server_secondary: "{{ ntp_hosts[1] | default(omit) }}"
+  vars:
+    ntp_hosts: "{{ baseline_ntp_servers | reject('equalto', 'x.x.x.x') | list }}"
+  # panos_mgtconfig covers management-plane settings in one module, and takes
+  # exactly two NTP servers - there is no list form, which is why this reads
+  # them positionally rather than looping.
+
+- name: Configure the syslog server profile
+  paloaltonetworks.panos.panos_syslog_server:
+    provider: "{{ panos_provider }}"
+    syslog_profile: "{{ inventory_hostname }}-syslog"
+    name: "{{ item }}"
+    server: "{{ item }}"
+    state: present
+  loop: "{{ baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list }}"
+  # A profile alone forwards nothing: PAN-OS sends logs where a log-forwarding
+  # profile or a log setting references this server profile. Creating the
+  # profile is in scope here; deciding which logs go to it is a policy question
+  # this role deliberately does not answer - the same line the SNMPv3 work on
+  # the STIG side draws when it configures auth/priv but polls nothing.
+
+# --- zones and interfaces ---------------------------------------------------
+
+- name: Configure security zones
+  paloaltonetworks.panos.panos_zone:
+    provider: "{{ panos_provider }}"
+    zone: "{{ item.name }}"
+    mode: "{{ item.mode | default('layer3') }}"
+    interface: "{{ item.interfaces | default(omit) }}"
+    vsys: "{{ panos_vsys }}"
+    state: present
+  loop: "{{ baseline_zones }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure layer 3 interfaces
+  paloaltonetworks.panos.panos_interface:
+    provider: "{{ panos_provider }}"
+    if_name: "{{ item.name }}"
+    mode: layer3
+    ip: ["{{ item.ipv4_cidr }}"]
+    zone_name: "{{ item.zone | default(omit) }}"
+    vr_name: "{{ panos_virtual_router }}"
+    comment: "{{ item.comment | default(omit) }}"
+    state: present
+  loop: "{{ baseline_interfaces }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.ipv4_cidr }}"
+  when: item.ipv4_cidr is not search('x\.x\.x\.x')
+  # Refuses the shipped placeholder rather than sending x.x.x.x at an interface,
+  # matching the preflight stance of every other config role here.
+
+# --- objects and policy -----------------------------------------------------
+
+- name: Configure address objects
+  paloaltonetworks.panos.panos_address_object:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    description: "{{ item.description | default(omit) }}"
+    vsys: "{{ panos_vsys }}"
+    state: present
+  loop: "{{ baseline_address_objects }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.value }}"
+  when: item.value is not search('x\.x\.x\.x')
+
+- name: Configure security rules
+  paloaltonetworks.panos.panos_security_rule:
+    provider: "{{ panos_provider }}"
+    rule_name: "{{ item.name }}"
+    source_zone: "{{ item.source_zone }}"
+    destination_zone: "{{ item.destination_zone }}"
+    source_ip: "{{ item.source_ip | default(['any']) }}"
+    destination_ip: "{{ item.destination_ip | default(['any']) }}"
+    application: "{{ item.application | default(['any']) }}"
+    service: "{{ item.service | default(['application-default']) }}"
+    action: "{{ item.action | default('allow') }}"
+    log_end: "{{ item.log_end | default(true) }}"
+    vsys: "{{ panos_vsys }}"
+    state: present
+  loop: "{{ baseline_security_rules }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: push_security_rules | bool
+  # service defaults to application-default rather than `any`: with App-ID
+  # matching an application, allowing it on every port is a materially wider
+  # rule than intended. log_end defaults to true because a permit rule nobody
+  # logs is a rule nobody can audit - the same argument the STIG side makes for
+  # log-input on the vty ACL's trailing deny.
+
+- name: Configure static routes
+  paloaltonetworks.panos.panos_static_route:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    destination: "{{ item.destination }}"
+    nexthop: "{{ item.nexthop }}"
+    interface: "{{ item.interface | default(omit) }}"
+    virtual_router: "{{ panos_virtual_router }}"
+    state: present
+  loop: "{{ baseline_static_routes }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.destination }}"
+  when: item.nexthop is not search('x\.x\.x\.x')
+
+# --- commit -----------------------------------------------------------------
+# Everything above edited the CANDIDATE configuration. Without this task the
+# firewall's running configuration is untouched and the changes sit waiting -
+# which is a legitimate place to leave them (see defaults/main.yml), and is why
+# panos_commit defaults to false rather than true.
+- name: Commit the candidate configuration
+  paloaltonetworks.panos.panos_commit_firewall:
+    provider: "{{ panos_provider }}"
+    description: "ansible panos_baseline"
+    timeout: "{{ panos_commit_timeout }}"
+  when: panos_commit | bool
+
+- name: Note that the changes are staged but not committed
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: changes are in the candidate configuration and
+      NOT in force. Review them in the firewall's commit preview, then re-run
+      with -e panos_commit=true - or commit from the UI.
+  when: not panos_commit | bool

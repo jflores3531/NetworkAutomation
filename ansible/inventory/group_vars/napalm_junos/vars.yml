@@ -1,0 +1,40 @@
+---
+# NAPALM settings for the Juniper switches. See ../../../NAPALM.md.
+
+# NAPALM's junos driver, over NETCONF via junos-eznc (PyEZ). Structured XML in,
+# structured data out - no screen scraping anywhere in this path, which is why
+# the getter list below can be the longest of any group here without a caveat
+# attached to half of it.
+napalm_dev_os: junos
+
+# Every getter the junos driver implements that this project has a use for.
+# Requested one task at a time like the other groups, but for a different
+# reason: not because coverage is doubtful (it is the best of the drivers used
+# here) but so one unexpected gap on an older Junos release costs one task
+# rather than the whole gather.
+napalm_getters:
+  - facts
+  - interfaces
+  - interfaces_ip
+  - lldp_neighbors
+  - arp_table
+  - mac_address_table
+  - ntp_servers
+  - users
+  - environment
+  - optics
+
+# Junos-specific NAPALM connection arguments. Left empty by default; the two
+# worth knowing about:
+#
+#   napalm_optional_args:
+#     port: 830          # if NETCONF is not on the default 830
+#     config_lock: true  # take an exclusive configuration lock for a push
+#
+# config_lock is the Junos equivalent of a change window enforced by the
+# device: with it, a second session cannot commit underneath a push in
+# progress. Off by default because a stale lock blocks every later run, and on
+# a lab of this size a collision is less likely than a forgotten lock.
+napalm_optional_args: {}
+
+napalm_expected_up_interfaces: []

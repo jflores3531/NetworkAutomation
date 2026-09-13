@@ -1,0 +1,35 @@
+---
+# Diff-before-push config deployment through NAPALM.
+#
+# Dry run first - loads the candidate, asks the DEVICE for the diff, prints it,
+# discards it:
+#
+#   ansible-playbook playbooks/napalm_push.yml \
+#       -e napalm_config_template=example_ios.j2 --limit SW1
+#
+# Then, having read the diff:
+#
+#   ansible-playbook playbooks/napalm_push.yml \
+#       -e napalm_config_template=example_ios.j2 -e napalm_commit=true --limit SW1
+#
+# Targets the new lab's Cisco groups only, NOT the STIG-managed switches. Those
+# converge through their own roles, and a second toolchain pushing config at the
+# same devices is how two implementations end up fighting over the same lines.
+# Override with --limit deliberately if that is genuinely what you want.
+#
+# Nothing here writes startup-config. Until scripts/save_config.py runs, a
+# reload reverts the device - see ../../docs/DESIGN.md. That is the recovery
+# path, and this playbook deliberately leaves it open.
+- name: Push configuration through NAPALM with a device-computed diff
+  hosts: ios_switches:ios_routers
+  gather_facts: false
+  connection: local
+  vars_prompt:
+    - name: napalm_username
+      prompt: "Device username"
+      private: false
+    - name: napalm_password
+      prompt: "Device password"
+      private: true
+  roles:
+    - napalm_config_push

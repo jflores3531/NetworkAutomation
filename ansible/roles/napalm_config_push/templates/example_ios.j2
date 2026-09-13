@@ -1,0 +1,31 @@
+{#
+  Worked example of a config template for napalm_config_push - copy this,
+  don't extend it in place.
+
+  Scope note: anything that has a resource module (VLANs, interfaces, static
+  routes, NTP, logging) belongs in the cisco_baseline role instead, where the
+  module compares parsed device state and reports changed honestly. This path
+  is for the cases resource modules do not cover - vendor-specific blocks, a
+  config fragment being standardised across a fleet, or a whole-file restore -
+  and for when the thing you want is the device-computed diff.
+
+  Every value is rendered from inventory, so this file contains no site data
+  and needs no placeholder scrubbing. Deliberate: a template with an address
+  hardcoded in it is a template that pushes one site's addressing to another.
+#}
+hostname {{ inventory_hostname }}
+{% if baseline_domain_name | default('') | length > 0 %}
+ip domain-name {{ baseline_domain_name }}
+{% endif %}
+!
+{% for server in baseline_ntp_servers | default([]) if server != 'x.x.x.x' %}
+ntp server {{ server }}
+{% endfor %}
+!
+{% for server in baseline_syslog_servers | default([]) if server != 'x.x.x.x' %}
+logging host {{ server }}
+{% endfor %}
+!
+{% if baseline_lldp_enabled | default(false) %}
+lldp run
+{% endif %}

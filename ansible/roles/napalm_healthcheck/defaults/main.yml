@@ -1,0 +1,22 @@
+---
+# Thresholds for the NAPALM health check. Values mirror what
+# ../../../scripts/health_check.py reports on so the two toolchains agree about
+# what "unhealthy" means - a device that passes one and fails the other would
+# make both untrustworthy.
+
+# Interface error/discard counters above this are reported. Not zero: a link
+# that has ever flapped carries a few, and a check that fires on every device
+# is a check that gets ignored.
+napalm_error_threshold: 100
+
+# Percent. NAPALM's environment getter returns CPU per core and RAM in bytes.
+napalm_cpu_threshold: 80
+napalm_memory_threshold: 90
+
+# By default the check reports and the play continues, because this is a
+# monitoring pass rather than a gate. Set true to fail the play on any finding
+# - useful as a pre-change sanity check, i.e. do not start pushing config to a
+# device that is already unhappy.
+napalm_healthcheck_fail: false
+
+napalm_healthcheck_report_dir: "{{ napalm_report_dir }}/health"

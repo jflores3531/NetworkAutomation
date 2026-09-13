@@ -1,0 +1,32 @@
+---
+# Every baseline_* var defaults to empty here, and every task in this role is
+# gated on its own var being non-empty. That is the same "an empty value means
+# skip that feature" convention the STIG roles use, and it is what lets one
+# role serve switches and routers from one file: a router has no VLANs, a
+# switch has no OSPF, and neither needs a conditional naming the other.
+#
+# Real values live in inventory/group_vars/ios_switches|ios_routers/vars.yml.
+
+baseline_domain_name: ""
+baseline_vlans: []
+baseline_access_ports: []
+baseline_trunk_ports: []
+baseline_l3_interfaces: []
+baseline_static_routes: []
+baseline_ospf: {}
+baseline_ntp_servers: []
+baseline_syslog_servers: []
+baseline_lldp_enabled: false
+
+# Set the device hostname from inventory_hostname. On by default because a
+# device whose hostname disagrees with the inventory name it is reached by is
+# how the wrong box gets configured - but it is a var because an existing
+# fleet's naming is not always something automation should overwrite.
+baseline_set_hostname: true
+
+# Resource modules take a state. `merged` adds and updates what is declared and
+# leaves everything else alone; `overridden`/`replaced` remove config that is
+# not declared. Merged by default for the same reason napalm_config_push
+# defaults to a merge - nothing in this project should be able to delete
+# configuration nobody listed.
+baseline_state: merged

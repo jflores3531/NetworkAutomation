@@ -1,0 +1,93 @@
+---
+# Config backup for every NAPALM-driven platform through one getter.
+#
+# Why this is worth having next to scripts/backup_config.py: that script runs
+# `show running-config` (plus `show vlan brief`) over Netmiko and saves the
+# text. This asks NAPALM's `config` getter, which returns running, startup and
+# candidate as separate keys on every driver that supports them - so the
+# running-vs-startup comparison below is the same code on IOS and NX-OS
+# instead of two parsers.
+#
+# What lands here is a verbatim copy of a device's configuration: real
+# addressing, real hostnames, password hashes. backups/ is gitignored at the
+# repository root and must stay that way - the same rule ../../../README.md
+# states for captures/.
+
+- name: Retrieve the configuration
+  napalm.ansible.napalm_get_facts:
+    provider: "{{ napalm_provider }}"
+    filter: config
+  register: napalm_config_result
+  delegate_to: localhost
+
+- name: Fail if the driver returned no running configuration
+  ansible.builtin.assert:
+    that:
+      - napalm_config_result.ansible_facts.napalm_config.running is defined
+      - napalm_config_result.ansible_facts.napalm_config.running | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }} returned an empty running config. Refusing to
+      write it - an empty backup that overwrites a good one is worse than no
+      backup, which is the same reason capture.py refuses a truncated capture.
+  # A backup that silently saved nothing is the failure mode worth being loud
+  # about: it is only discovered on the day it is needed.
+
+- name: Ensure the backup directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "{{ napalm_backup_latest_dir }}"
+    - "{{ napalm_backup_archive_dir }}"
+  delegate_to: localhost
+  run_once: true
+
+# copy's own change detection is the diff engine here - no separate compare
+# step, and `ansible-playbook -D` prints the actual configuration diff against
+# the previous backup for free. That covers what scripts/config_diff.py does
+# for the Python path, without a second file format.
+- name: Save the running config as {{ inventory_hostname }}'s latest backup
+  ansible.builtin.copy:
+    content: "{{ napalm_config_result.ansible_facts.napalm_config.running }}"
+    dest: "{{ napalm_backup_latest_dir }}/{{ inventory_hostname }}.cfg"
+    mode: "0640"
+  register: napalm_backup_latest
+  delegate_to: localhost
+
+- name: Archive a timestamped copy
+  ansible.builtin.copy:
+    content: "{{ napalm_config_result.ansible_facts.napalm_config.running }}"
+    dest: >-
+      {{ napalm_backup_archive_dir }}/{{ inventory_hostname }}_{{
+         lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}.cfg
+    mode: "0640"
+  delegate_to: localhost
+  when: napalm_backup_latest is changed or napalm_backup_archive_always | bool
+
+- name: Save startup-config too
+  ansible.builtin.copy:
+    content: "{{ napalm_config_result.ansible_facts.napalm_config.startup }}"
+    dest: "{{ napalm_backup_latest_dir }}/{{ inventory_hostname }}_startup.cfg"
+    mode: "0640"
+  delegate_to: localhost
+  when:
+    - napalm_backup_startup | bool
+    - napalm_config_result.ansible_facts.napalm_config.startup | default('') | length > 0
+
+# This project deliberately never writes startup-config during a push (see
+# ../../../docs/DESIGN.md) precisely so a reload is a recovery path, which
+# means running != startup is the NORMAL state after a harden pass and not a
+# finding. It is still worth printing: it is the one signal that says "a
+# reload right now would revert what was just pushed", and that is the fact
+# you want before scheduling one - or before assuming a reload will save you.
+- name: Note whether running and startup differ
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: running-config differs from startup-config.
+      Expected if a push has not been followed by save_config.py - a reload
+      would revert to the saved version.
+  when:
+    - napalm_config_result.ansible_facts.napalm_config.startup | default('') | length > 0
+    - napalm_config_result.ansible_facts.napalm_config.running
+      != napalm_config_result.ansible_facts.napalm_config.startup

@@ -1,0 +1,16 @@
+---
+# Secrets for the fortiswitch group. Copy to vault.yml, fill in real values,
+# THEN encrypt before committing anything:
+#
+#   ansible-vault encrypt inventory/group_vars/fortiswitch/vault.yml
+#
+# vault.yml is gitignored (see ../../../../.gitignore) - this .example is the
+# only tracked version. Never commit the real file in plaintext.
+
+# Admin account the httpapi connection logs in with. Standalone FortiSwitch
+# REST auth has no API-token equivalent to the FortiGate's, so this is a real
+# admin credential - give it its own account rather than reusing a person's,
+# so a rotation is not a coordination exercise and audit logs say which
+# sessions were automation.
+vault_fortiswitch_username: CHANGE_ME
+vault_fortiswitch_password: CHANGE_ME

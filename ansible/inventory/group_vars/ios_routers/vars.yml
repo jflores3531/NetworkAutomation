@@ -1,0 +1,48 @@
+---
+# Intended configuration for the new lab's Cisco IOS routers, consumed by the
+# cisco_baseline role. Placeholders for the same reason as the switch group -
+# see ../ios_switches/vars.yml.
+#
+# Separate group from ios_switches because the routing vars below have no
+# meaning on an access switch, and because ios_l2_interfaces (VLAN/trunk
+# config) has none on a router. One group per role-in-the-network keeps both
+# halves of cisco_baseline honest without per-host conditionals.
+
+baseline_domain_name: ""
+
+# Routed interfaces and subinterfaces, pushed with ios_l3_interfaces.
+#
+# baseline_l3_interfaces:
+#   - name: GigabitEthernet0/0.100
+#     ipv4_address: x.x.x.x
+#     ipv4_netmask: 255.255.255.0
+baseline_l3_interfaces: []
+
+# Static routes, pushed with the ios_static_routes resource module.
+#
+# baseline_static_routes:
+#   - dest: x.x.x.x/24
+#     next_hop: x.x.x.x
+baseline_static_routes: []
+
+# OSPFv2, pushed with ios_ospfv2. Empty process_id skips the task - routing
+# protocol config is the one place where a half-rendered intent is worse than
+# no intent at all, so the role requires both the process and at least one
+# network statement before it sends anything.
+#
+# baseline_ospf:
+#   process_id: 1
+#   router_id: x.x.x.x
+#   networks:
+#     - address: x.x.x.x
+#       wildcard_bits: 0.0.0.255
+#       area: 0
+baseline_ospf: {}
+
+baseline_ntp_servers:
+  - x.x.x.x
+  - x.x.x.x
+baseline_syslog_servers:
+  - x.x.x.x
+
+baseline_lldp_enabled: true

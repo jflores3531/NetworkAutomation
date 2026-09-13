@@ -1,0 +1,186 @@
+---
+# IOS / IOS-XE half of cisco_baseline: the resource-module config path, for the
+# domains where comparing parsed device state beats pushing a config file. The
+# NAPALM path for the same devices is roles/napalm_config_push - see this
+# role's tasks/main.yml for which does what and why both exist.
+#
+# Each domain is assembled into ONE module call rather than looped per
+# interface. A resource module call is a device round trip, so a 48-port switch
+# looped per port is 48 of them; the same list handed over once is one, and the
+# module diffs the whole set against what the device reports.
+
+- name: Gather the resource facts this role manages
+  cisco.ios.ios_facts:
+    gather_subset: min
+    gather_network_resources:
+      - interfaces
+      - l2_interfaces
+      - l3_interfaces
+      - vlans
+
+- name: Set the hostname from inventory
+  cisco.ios.ios_hostname:
+    config:
+      hostname: "{{ inventory_hostname }}"
+    state: merged
+  when: baseline_set_hostname | bool
+
+# ip domain-name has no resource module in cisco.ios, so this is the one task
+# in the role that falls back to ios_config. Deliberately narrow - the reason
+# the rest of the role uses resource modules is written up in main.yml.
+- name: Set the IP domain name
+  cisco.ios.ios_config:
+    lines:
+      - ip domain-name {{ baseline_domain_name }}
+  when: baseline_domain_name | length > 0
+
+- name: Configure VLANs
+  cisco.ios.ios_vlans:
+    config: "{{ baseline_vlans }}"
+    state: "{{ baseline_state }}"
+  when: baseline_vlans | length > 0
+
+# --- interfaces -------------------------------------------------------------
+# One inventory entry per port carries both its description (ios_interfaces)
+# and its VLAN membership (ios_l2_interfaces), because that is how a port is
+# actually thought about. The role splits each entry between the two modules
+# that own those halves, rather than making inventory carry the same port list
+# twice in two shapes that can disagree about which ports exist.
+
+- name: Assemble the interface descriptions
+  ansible.builtin.set_fact:
+    ios_interface_config: >-
+      {{ ios_interface_config | default([])
+         + [{'name': item.name, 'enabled': true}
+            | combine({'description': item.description} if item.description is defined else {})] }}
+  loop: "{{ baseline_access_ports + baseline_trunk_ports }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure interface descriptions and admin state
+  cisco.ios.ios_interfaces:
+    config: "{{ ios_interface_config }}"
+    state: merged
+  when: ios_interface_config | default([]) | length > 0
+
+- name: Assemble the access-port layer 2 config
+  ansible.builtin.set_fact:
+    ios_l2_config: >-
+      {{ ios_l2_config | default([])
+         + [{'name': item.name, 'mode': 'access', 'access': {'vlan': item.vlan}}] }}
+  loop: "{{ baseline_access_ports }}"
+  loop_control:
+    label: "{{ item.name }} -> vlan {{ item.vlan }}"
+
+- name: Assemble the trunk-port layer 2 config
+  ansible.builtin.set_fact:
+    ios_l2_config: >-
+      {{ ios_l2_config | default([])
+         + [{'name': item.name, 'mode': 'trunk', 'trunk': trunk_cfg}] }}
+  vars:
+    # allowed_vlans as strings because the module's value is a VLAN-range list
+    # ("10-20", "30"), not a list of integers.
+    trunk_cfg: >-
+      {{ ({'allowed_vlans': item.allowed_vlans | map('string') | list}
+           if item.allowed_vlans is defined else {})
+         | combine({'native_vlan': item.native_vlan} if item.native_vlan is defined else {}) }}
+  loop: "{{ baseline_trunk_ports }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure access and trunk ports
+  cisco.ios.ios_l2_interfaces:
+    config: "{{ ios_l2_config }}"
+    state: merged
+  when: ios_l2_config | default([]) | length > 0
+
+- name: Assemble layer 3 addressing
+  ansible.builtin.set_fact:
+    ios_l3_config: >-
+      {{ ios_l3_config | default([])
+         + [{'name': item.name, 'ipv4': [{'address': item.ipv4_cidr}]}] }}
+  loop: "{{ baseline_l3_interfaces }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.ipv4_cidr }}"
+  # Refuses the shipped placeholder rather than sending `ip address x.x.x.x`,
+  # the same preflight stance the ACL role takes on a placeholder
+  # automation_host. An unset address is a skipped feature; a placeholder
+  # address pushed to an interface is an outage.
+  when: item.ipv4_cidr is not search('x\.x\.x\.x')
+
+- name: Configure layer 3 addressing
+  cisco.ios.ios_l3_interfaces:
+    config: "{{ ios_l3_config }}"
+    state: merged
+  when: ios_l3_config | default([]) | length > 0
+
+# --- services ---------------------------------------------------------------
+
+- name: Assemble the NTP server list
+  ansible.builtin.set_fact:
+    ios_ntp_config: "{{ ios_ntp_config | default([]) + [{'server': item}] }}"
+  loop: "{{ baseline_ntp_servers | reject('equalto', 'x.x.x.x') | list }}"
+
+- name: Configure NTP servers
+  cisco.ios.ios_ntp_global:
+    config:
+      servers: "{{ ios_ntp_config }}"
+    state: merged
+  when: ios_ntp_config | default([]) | length > 0
+
+- name: Assemble the syslog host list
+  ansible.builtin.set_fact:
+    ios_syslog_config: "{{ ios_syslog_config | default([]) + [{'hostname': item}] }}"
+  loop: "{{ baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list }}"
+
+- name: Configure syslog hosts
+  cisco.ios.ios_logging_global:
+    config:
+      hosts: "{{ ios_syslog_config }}"
+    state: merged
+  when: ios_syslog_config | default([]) | length > 0
+
+- name: Enable LLDP globally
+  cisco.ios.ios_lldp_global:
+    config:
+      run: true
+    state: merged
+  when: baseline_lldp_enabled | bool
+
+# --- routing ----------------------------------------------------------------
+
+- name: Assemble static routes
+  ansible.builtin.set_fact:
+    ios_route_config: >-
+      {{ ios_route_config | default([])
+         + [{'dest': item.dest,
+             'next_hops': [{'forward_router_address': item.next_hop}]}] }}
+  loop: "{{ baseline_static_routes }}"
+  loop_control:
+    label: "{{ item.dest }} via {{ item.next_hop }}"
+  when: item.next_hop is not search('x\.x\.x\.x')
+
+- name: Configure static routes
+  cisco.ios.ios_static_routes:
+    config:
+      - address_families:
+          - afi: ipv4
+            routes: "{{ ios_route_config }}"
+    state: merged
+  when: ios_route_config | default([]) | length > 0
+
+- name: Configure OSPFv2
+  cisco.ios.ios_ospfv2:
+    config:
+      processes:
+        - process_id: "{{ baseline_ospf.process_id }}"
+          router_id: "{{ baseline_ospf.router_id | default(omit) }}"
+          networks: "{{ baseline_ospf.networks }}"
+    state: merged
+  when:
+    - baseline_ospf.process_id is defined
+    - baseline_ospf.networks | default([]) | length > 0
+
+# Nothing writes startup-config here - see ../../../docs/DESIGN.md. Until
+# scripts/save_config.py runs, a reload reverts the device, which is the
+# recovery path this project deliberately keeps open.

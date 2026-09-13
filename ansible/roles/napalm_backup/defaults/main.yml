@@ -1,0 +1,19 @@
+---
+# Latest-copy-plus-archive layout, matching what ../../../scripts/backup_config.py
+# already writes on the Python side (backups/ with dated copies under
+# backups/archive/) so both toolchains leave backups in one place and
+# config_diff.py can still read them.
+napalm_backup_latest_dir: "{{ napalm_backup_dir }}"
+napalm_backup_archive_dir: "{{ napalm_backup_dir }}/archive"
+
+# By default a timestamped archive copy is written only when the running
+# config actually changed since the last backup. A daily run against a stable
+# lab otherwise fills the archive with identical files, and "which of these 40
+# copies is the one where it changed" is exactly the question a backup archive
+# exists to answer. Set true to keep a copy per run regardless.
+napalm_backup_archive_always: false
+
+# Also save startup-config where the driver returns it. Off by default: the
+# useful artefact is the running config, and on some drivers the startup
+# getter comes back empty, which would write an empty file over a good one.
+napalm_backup_startup: false

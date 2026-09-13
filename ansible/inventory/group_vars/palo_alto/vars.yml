@@ -1,0 +1,100 @@
+---
+# Palo Alto firewall settings, consumed by the panos_baseline role. See
+# ../../../NAPALM.md.
+#
+# HOW THIS PLATFORM DIFFERS from everything else in this inventory, because all
+# three points change how the role is written:
+#
+#   1. No Ansible connection plugin. paloaltonetworks.panos modules run on the
+#      controller and talk to the firewall's XML API through pan-os-python,
+#      taking the provider dict below. Same shape as napalm_provider, and the
+#      reason the palo_alto group sets ansible_connection: local.
+#   2. Candidate configuration, like Junos. Nothing a module writes is live
+#      until a commit, so panos_baseline ends with an explicit commit task -
+#      and a run that fails before it leaves the firewall unchanged in
+#      operation, with the edits sitting in the candidate.
+#   3. API key, not a password. Generated once from admin credentials and used
+#      thereafter, which keeps the admin password out of the automation path.
+
+# Consumed by every panos_* module. Mirrors napalm_provider's role for the
+# Cisco/Juniper gear - one dict defined once rather than four arguments per
+# task.
+panos_provider:
+  ip_address: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+  api_key: "{{ panos_api_key }}"
+
+# From the vaulted file next to this one. default('') so a vault.yml predating
+# this key produces the role's own assert rather than an undefined-variable
+# traceback - the same treatment radius_key gets in ../l2_switches/vars.yml.
+panos_api_key: "{{ vault_panos_api_key | default('') }}"
+
+# Virtual system. "vsys1" is the only one present until vsys are explicitly
+# created, so it is the right default and also the first thing to change if this
+# ever runs against a multi-vsys firewall - security rules written into the
+# wrong vsys are rules that never match anything.
+panos_vsys: vsys1
+
+# Virtual router that static routes are written into. "default" is what a
+# factory-fresh PAN-OS ships with.
+panos_virtual_router: default
+
+# --- Intended configuration -------------------------------------------------
+# Placeholders, per the committed-file convention - see ../ios_switches/vars.yml.
+
+baseline_timezone: ""
+baseline_ntp_servers:
+  - x.x.x.x
+baseline_syslog_servers:
+  - x.x.x.x
+
+# Security zones. Created before interfaces are assigned to them, because
+# PAN-OS rejects an interface referencing a zone that does not exist.
+#
+# baseline_zones:
+#   - name: trust
+#     mode: layer3
+#     interfaces: [ethernet1/2]
+#   - name: untrust
+#     mode: layer3
+#     interfaces: [ethernet1/1]
+baseline_zones: []
+
+# Layer 3 interfaces.
+#
+# baseline_interfaces:
+#   - name: ethernet1/2
+#     ipv4_cidr: x.x.x.x/24
+#     zone: trust
+#     comment: inside
+baseline_interfaces: []
+
+# Address objects, defined before any rule references them.
+#
+# baseline_address_objects:
+#   - name: LAN_USERS
+#     value: x.x.x.x/24
+#     description: user subnet
+baseline_address_objects: []
+
+# Security rules. Order matters on a firewall - PAN-OS evaluates top to bottom -
+# so these are pushed in list order and the list IS the policy order.
+#
+# baseline_security_rules:
+#   - name: users-to-internet
+#     source_zone: [trust]
+#     destination_zone: [untrust]
+#     source_ip: [LAN_USERS]
+#     destination_ip: [any]
+#     application: [web-browsing, ssl]
+#     service: [application-default]
+#     action: allow
+baseline_security_rules: []
+
+# Static routes, written into panos_virtual_router above.
+#
+# baseline_static_routes:
+#   - name: default
+#     destination: 0.0.0.0/0
+#     nexthop: x.x.x.x
+#     interface: ethernet1/1
+baseline_static_routes: []

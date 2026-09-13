@@ -1,0 +1,24 @@
+---
+# Baseline configuration for the Juniper switches, with junipernetworks.junos
+# resource modules over NETCONF.
+#
+#   ansible-playbook playbooks/junos_baseline.yml -e ansible_user=admin --ask-pass
+#   ansible-playbook playbooks/junos_baseline.yml --ask-pass --check -D --limit JSW1
+#
+# --check -D is worth running first and is more truthful here than on any other
+# platform in this repo: in check mode the junos modules load the candidate onto
+# the switch, return the switch's own `show | compare` output, and roll it back.
+# The diff you read is the device's, not a controller-side guess.
+#
+# PRECONDITION: `set system services netconf ssh` on every target. Without it
+# this fails in a way that looks like bad credentials - see ../inventory/hosts.yml.
+#
+# Scope: ordinary per-feature configuration. For a change that could cost you
+# access to the switch (management addressing, NETCONF itself, the uplink) use
+# playbooks/junos_safe_push.yml instead, which puts one config through a
+# `commit confirmed` the switch will revert on its own.
+- name: Apply the Junos baseline
+  hosts: juniper_switches
+  gather_facts: false
+  roles:
+    - junos_baseline

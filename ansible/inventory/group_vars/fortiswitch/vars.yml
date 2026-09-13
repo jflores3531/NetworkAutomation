@@ -1,0 +1,63 @@
+---
+# FortiSwitch settings, consumed by the fortiswitch_baseline role.
+#
+# IMPORTANT - this group assumes STANDALONE FortiSwitches, i.e. switches in
+# their own management mode with their own REST API reachable. A FortiSwitch
+# that has been adopted by the FortiGate over FortiLink is a different
+# automation target entirely: FortiOS owns its configuration, its local API is
+# mostly closed off, and the way to configure it is the FortiGate's
+# switch-controller modules (fortios_switch_controller_managed_switch and
+# friends) rather than anything in fortinet.fortiswitch.
+#
+# Decide which mode the lab switches will run in before writing intent into
+# this file - it is not a detail that can be abstracted over. See
+# ../../../NAPALM.md.
+
+# The httpapi connection plugin authenticates with these. No API-token path
+# here, unlike the FortiGate group: standalone FortiSwitch REST auth is the
+# admin login.
+ansible_user: "{{ vault_fortiswitch_username | default('admin') }}"
+ansible_password: "{{ vault_fortiswitch_password | default('') }}"
+
+# --- Intended configuration -------------------------------------------------
+# Placeholders, per the committed-file convention - see ../ios_switches/vars.yml.
+
+baseline_ntp_servers:
+  - x.x.x.x
+baseline_syslog_servers:
+  - x.x.x.x
+
+# VLANs, pushed with fortiswitch_switch_vlan.
+#
+# baseline_vlans:
+#   - vlan_id: 10
+#     name: USERS
+baseline_vlans: []
+
+# Access ports. FortiSwitch models a port's untagged VLAN as `native_vlan` and
+# its tagged set as `allowed_vlans`, so an "access port" here is a port with a
+# native VLAN and nothing allowed on top - the same end state as IOS
+# `switchport mode access`, expressed the way the platform expresses it.
+#
+# baseline_access_ports:
+#   - name: port1
+#     vlan: 10
+#     description: user port
+baseline_access_ports: []
+
+# Trunk/uplink ports.
+#
+# baseline_trunk_ports:
+#   - name: port47
+#     description: uplink to FGT1
+#     native_vlan: 999
+#     allowed_vlans: [10, 20]
+baseline_trunk_ports: []
+
+# Management interface addressing, pushed with fortiswitch_system_interface.
+#
+# baseline_interfaces:
+#   - name: internal
+#     ip: "x.x.x.x 255.255.255.0"
+#     allowaccess: "ping https ssh"
+baseline_interfaces: []

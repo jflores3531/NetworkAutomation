@@ -1,0 +1,174 @@
+---
+# NX-OS half of cisco_baseline. Same domains as ios.yml, same one-call-per-
+# domain assembly, but three real platform differences rather than a renamed
+# copy of it:
+#
+#   1. features must be enabled before their config exists (nxos_feature)
+#   2. a port is layer3 by default - `switchport` is explicit, and it is
+#      nxos_interfaces' `mode: layer2` rather than anything in the l2 module
+#   3. defaults are omitted from `show running-config`, which is what makes
+#      string-diffing NX-OS unreliable and resource modules worth the most
+#      here. ../../README.md has the two bugs that taught this project that
+#      (`radius-server retransmit 1`, and V-220690 matching zero of 59
+#      disabled ports).
+
+- name: Gather the resource facts this role manages
+  cisco.nxos.nxos_facts:
+    gather_subset: min
+    gather_network_resources:
+      - interfaces
+      - l2_interfaces
+      - l3_interfaces
+      - vlans
+
+- name: Set the hostname from inventory
+  cisco.nxos.nxos_hostname:
+    config:
+      hostname: "{{ inventory_hostname }}"
+    state: merged
+  when: baseline_set_hostname | bool
+
+# Enabled before the config that needs them, because NX-OS rejects the config
+# outright otherwise - not a warning, a rejection. Same ordering requirement
+# the nxos_stig_harden role documents for its own feature set.
+- name: Enable the features this baseline needs
+  cisco.nxos.nxos_feature:
+    feature: "{{ item }}"
+    state: enabled
+  loop: "{{ ['lldp'] if baseline_lldp_enabled | bool else [] }}"
+
+- name: Configure VLANs
+  cisco.nxos.nxos_vlans:
+    config: "{{ baseline_vlans }}"
+    state: "{{ baseline_state }}"
+  when: baseline_vlans | length > 0
+
+# --- interfaces -------------------------------------------------------------
+
+- name: Assemble the interface descriptions and layer 2 mode
+  ansible.builtin.set_fact:
+    nxos_interface_config: >-
+      {{ nxos_interface_config | default([])
+         + [{'name': item.name, 'enabled': true, 'mode': 'layer2'}
+            | combine({'description': item.description} if item.description is defined else {})] }}
+  loop: "{{ baseline_access_ports + baseline_trunk_ports }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# mode: layer2 is the `switchport` command. On an IOS access switch that is the
+# default and ios.yml never mentions it; on NX-OS a physical port is routed
+# until told otherwise, so leaving this out means every VLAN assignment below
+# is rejected.
+- name: Configure interface descriptions, admin state and switchport mode
+  cisco.nxos.nxos_interfaces:
+    config: "{{ nxos_interface_config }}"
+    state: merged
+  when: nxos_interface_config | default([]) | length > 0
+
+- name: Assemble the access-port layer 2 config
+  ansible.builtin.set_fact:
+    nxos_l2_config: >-
+      {{ nxos_l2_config | default([])
+         + [{'name': item.name, 'mode': 'access', 'access': {'vlan': item.vlan}}] }}
+  loop: "{{ baseline_access_ports }}"
+  loop_control:
+    label: "{{ item.name }} -> vlan {{ item.vlan }}"
+
+- name: Assemble the trunk-port layer 2 config
+  ansible.builtin.set_fact:
+    nxos_l2_config: >-
+      {{ nxos_l2_config | default([])
+         + [{'name': item.name, 'mode': 'trunk', 'trunk': trunk_cfg}] }}
+  vars:
+    trunk_cfg: >-
+      {{ ({'allowed_vlans': item.allowed_vlans | map('string') | join(',')}
+           if item.allowed_vlans is defined else {})
+         | combine({'native_vlan': item.native_vlan} if item.native_vlan is defined else {}) }}
+  loop: "{{ baseline_trunk_ports }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure access and trunk ports
+  cisco.nxos.nxos_l2_interfaces:
+    config: "{{ nxos_l2_config }}"
+    state: merged
+  when: nxos_l2_config | default([]) | length > 0
+
+- name: Assemble layer 3 addressing
+  ansible.builtin.set_fact:
+    nxos_l3_config: >-
+      {{ nxos_l3_config | default([])
+         + [{'name': item.name, 'ipv4': [{'address': item.ipv4_cidr}]}] }}
+  loop: "{{ baseline_l3_interfaces }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.ipv4_cidr }}"
+  when: item.ipv4_cidr is not search('x\.x\.x\.x')
+
+- name: Configure layer 3 addressing
+  cisco.nxos.nxos_l3_interfaces:
+    config: "{{ nxos_l3_config }}"
+    state: merged
+  when: nxos_l3_config | default([]) | length > 0
+
+# --- services ---------------------------------------------------------------
+
+- name: Assemble the NTP server list
+  ansible.builtin.set_fact:
+    nxos_ntp_config: "{{ nxos_ntp_config | default([]) + [{'server': item}] }}"
+  loop: "{{ baseline_ntp_servers | reject('equalto', 'x.x.x.x') | list }}"
+
+- name: Configure NTP servers
+  cisco.nxos.nxos_ntp_global:
+    config:
+      servers: "{{ nxos_ntp_config }}"
+    state: merged
+  when: nxos_ntp_config | default([]) | length > 0
+
+- name: Assemble the syslog host list
+  ansible.builtin.set_fact:
+    nxos_syslog_config: "{{ nxos_syslog_config | default([]) + [{'host': item}] }}"
+  loop: "{{ baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list }}"
+
+- name: Configure syslog hosts
+  cisco.nxos.nxos_logging_global:
+    config:
+      hosts: "{{ nxos_syslog_config }}"
+    state: merged
+  when: nxos_syslog_config | default([]) | length > 0
+
+- name: Enable LLDP globally
+  cisco.nxos.nxos_lldp_global:
+    config:
+      timer: 30
+    state: merged
+  when: baseline_lldp_enabled | bool
+  # `feature lldp` above is what actually turns LLDP on; this only sets the
+  # global timers, which is why it carries a value rather than a bare enable.
+  # NX-OS has no `lldp run` equivalent for nxos_lldp_global to send.
+
+# --- routing ----------------------------------------------------------------
+
+- name: Assemble static routes
+  ansible.builtin.set_fact:
+    nxos_route_config: >-
+      {{ nxos_route_config | default([])
+         + [{'dest': item.dest,
+             'next_hops': [{'forward_router_address': item.next_hop}]}] }}
+  loop: "{{ baseline_static_routes }}"
+  loop_control:
+    label: "{{ item.dest }} via {{ item.next_hop }}"
+  when: item.next_hop is not search('x\.x\.x\.x')
+
+- name: Configure static routes
+  cisco.nxos.nxos_static_routes:
+    config:
+      - address_families:
+          - afi: ipv4
+            routes: "{{ nxos_route_config }}"
+    state: merged
+  when: nxos_route_config | default([]) | length > 0
+
+# No OSPF task here, unlike ios.yml: OSPF on NX-OS needs `feature ospf` and
+# cisco.nxos models it across nxos_ospfv2 plus nxos_ospf_interfaces, and this
+# lab has no NX-OS device routing anything yet. Left out rather than shipped
+# untested - the same call ../../README.md makes about nxos_aaa_server_host.

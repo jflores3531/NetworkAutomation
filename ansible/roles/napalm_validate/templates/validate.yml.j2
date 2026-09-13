@@ -1,0 +1,34 @@
+---
+# Rendered per device by the napalm_validate role - do not edit a copy of this
+# under reports/, edit the template.
+#
+# This is NAPALM's validation format: a list of single-key mappings, each
+# naming a getter and the state its output must match. NAPALM runs the getter
+# on the device and compares, returning a compliance report rather than a
+# boolean, so a failure says which key differed and what it found.
+#
+# The value of this format over a hand-written audit: the expectations come
+# from the same inventory variables the config roles push, so "is the device
+# configured the way inventory says" is one question asked against one source
+# of truth - not a second set of literals to keep in step.
+- get_facts:
+    vendor: {{ napalm_expected_vendor }}
+{% if napalm_expected_up_interfaces | length > 0 %}
+
+- get_interfaces:
+{% for iface in napalm_expected_up_interfaces %}
+    {{ iface }}:
+      is_up: true
+      is_enabled: true
+{% endfor %}
+{% endif %}
+{% if napalm_expected_ntp_servers | length > 0 and 'x.x.x.x' not in napalm_expected_ntp_servers %}
+
+- get_ntp_servers:
+{% if napalm_validate_strict %}
+    _mode: strict
+{% endif %}
+{% for server in napalm_expected_ntp_servers %}
+    {{ server }}: {}
+{% endfor %}
+{% endif %}

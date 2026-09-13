@@ -1,5 +1,12 @@
 # Ansible replication of the STIG hardening scripts
 
+> **Looking for the multi-vendor work?** See [`NAPALM.md`](NAPALM.md). The
+> NAPALM-based layer for the Cisco / Juniper / Palo Alto lab shares this
+> directory and this inventory file, and changes nothing described below — the
+> `l2_switches` and `nxos_switches` groups gained NAPALM coverage by becoming
+> children of its driver groups, which added variables and altered none.
+> Everything in this document is still about the STIG roles.
+
 Ansible roles/playbooks that replicate the bulk STIG hardening passes the
 Python scripts perform, using `cisco.ios` and `cisco.nxos` instead of
 Netmiko:

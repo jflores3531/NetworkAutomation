@@ -1,0 +1,43 @@
+# Controller-side Python dependencies for the Ansible work in this directory.
+#
+# Separate from ../requirements.txt, which is the Python scripts' own set
+# (netmiko, pyyaml) and is what gets installed on the offline/SecureCRT
+# deployment target. Nothing here belongs on that host - it cannot install
+# Ansible either.
+#
+#   pip install -r requirements.txt
+#   ansible-galaxy collection install -r requirements.yml
+#
+# See NAPALM.md for why this needs a newer ansible-core than the STIG roles'
+# 2.13.13 host can run, and the two ways to keep both working.
+
+ansible-core>=2.15
+
+# NAPALM itself - the napalm.ansible collection's modules import this library on
+# the controller, and nothing in it is bundled with the collection. Pulls in
+# netmiko (ios/nxos_ssh drivers), junos-eznc (junos), ncclient, and pyeapi.
+napalm>=4.1.0
+
+# Juniper. junos-eznc and ncclient arrive with napalm above, but they are listed
+# because junipernetworks.junos needs them in its own right - the resource
+# modules use the netconf connection plugin (ncclient), and several modules use
+# PyEZ directly. Do not rely on NAPALM to keep providing them.
+junos-eznc>=2.6.0
+ncclient>=0.6.13
+
+# Palo Alto. The SDK every paloaltonetworks.panos module imports.
+pan-os-python>=1.7.0
+
+# OPTIONAL: NAPALM's community PAN-OS driver, needed only to put the firewall in
+# the napalm_panos group and read it with the NAPALM roles. Commented out
+# because it is not required for anything the panos_baseline role does, and
+# because its getter coverage (facts, config, interfaces) is thin enough that
+# panos_facts plus the config export in playbooks/napalm_backup.yml cover the
+# same ground with a supported module. Uncomment deliberately, then prove it
+# against the firewall before adding PA1 to that group.
+# napalm-panos>=0.6.0
+
+# PARKED with the Fortinet gear: only a handful of legacy fortinet.fortios
+# modules need this SDK (the collection's own httpapi plugin covers the rest).
+# Harmless to leave installed.
+fortiosapi>=20230130.0

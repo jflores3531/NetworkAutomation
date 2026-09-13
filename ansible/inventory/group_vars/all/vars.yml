@@ -1,0 +1,65 @@
+---
+# Variables shared by the NAPALM / multi-vendor layer - see ../../../NAPALM.md.
+#
+# This file applies to EVERY host in the inventory, including the STIG groups,
+# so everything in it is namespaced `napalm_*` or `multivendor_*` and nothing
+# here is referenced by any of the l2s_/nxos_/stig_audit roles. That is a
+# deliberate constraint, not a style preference: group_vars beats role
+# defaults/, so defining a bare name those roles already use (report_dir,
+# audit_script, ssh_username, ...) here would silently retarget the STIG
+# toolchain from a file it never mentions.
+
+# --- NAPALM connection ------------------------------------------------------
+# The napalm_* modules do not use Ansible's connection plugins at all. They
+# import the napalm Python library and connect from the controller, so every
+# connection detail is a module argument instead - that is what this dict is,
+# and it is why the NAPALM playbooks all run with `connection: local` even
+# though the same hosts carry ansible_connection: network_cli for the
+# cisco.ios/cisco.nxos resource modules.
+#
+# napalm_dev_os comes from group_vars/napalm_ios|napalm_nxos. It is undefined
+# for the Fortinet hosts on purpose: NAPALM has no FortiOS driver, so a
+# napalm_* task aimed at one should fail loudly on the undefined var rather
+# than half-work. Jinja is lazy, so that only bites if it is actually used.
+#
+# hostname reads through hostvars rather than as a bare {{ ansible_host }},
+# which is not defensive style but a correctness fix: the napalm tasks carry
+# delegate_to: localhost, and for a delegated task Ansible resolves the
+# connection variables - ansible_host among them - against the DELEGATE. A
+# bare ansible_host there evaluates to localhost's, so every device in the play
+# would be "reached" by connecting to the controller. Going through
+# hostvars[inventory_hostname] pins it to the device the task is for.
+napalm_provider:
+  hostname: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+  username: "{{ napalm_username }}"
+  password: "{{ napalm_password }}"
+  dev_os: "{{ napalm_dev_os }}"
+  timeout: "{{ napalm_timeout }}"
+  optional_args: "{{ napalm_optional_args }}"
+
+# Credentials are NOT defaulted here. Every NAPALM playbook prompts for them
+# with vars_prompt (same pattern as playbooks/stig_audit.yml), or takes them
+# from `-e`/vault, matching this project's "never hardcode credentials"
+# convention on the Python side. A default here would be the one place a real
+# password could end up committed.
+
+# Seconds. NAPALM's own default is 60; stated explicitly because the lab's
+# AAA fallback delay (RADIUS configured, unreachable) has already cost this
+# project a one-second timeout failure once - see ../../../ansible.cfg.
+napalm_timeout: 60
+
+# Passed straight to the driver's optional_args. Per-group overrides are the
+# point of having it here: NX-OS over SSH wants `{"port": 22}` at most, while
+# an IOS device behind a jump host or needing `secret` for enable mode sets it
+# here rather than in a task. Enable secret for the IOS driver, for example:
+#
+#   napalm_optional_args:
+#     secret: "{{ vault_enable_secret }}"
+napalm_optional_args: {}
+
+# --- Where NAPALM output lands ---------------------------------------------
+# Both are gitignored: `backups/` and `ansible/reports/` are already in
+# ../../../../.gitignore, and everything written here is live device output -
+# real addressing, real neighbour tables, real config.
+napalm_backup_dir: "{{ playbook_dir }}/../backups"
+napalm_report_dir: "{{ playbook_dir }}/../reports"

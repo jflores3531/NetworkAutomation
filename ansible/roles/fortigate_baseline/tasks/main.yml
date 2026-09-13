@@ -1,0 +1,188 @@
+---
+# FortiGate baseline with fortinet.fortios.
+#
+# Why this role is not NAPALM, stated once here because it is the first
+# question anyone reading this directory will have: NAPALM has no FortiOS
+# driver. Not "an unmaintained one" - none in napalm core, and no community
+# driver this project would put a firewall behind. Fortinet maintains its own
+# certified collection that speaks the FortiOS REST API directly, one module
+# per API endpoint, and that is a better client than a screen-scraping driver
+# would be even if one existed. So the multi-vendor story here is NAPALM for
+# everything NAPALM drives, Fortinet's own collection for the Fortinet gear,
+# and one inventory describing all of it.
+#
+# Every task talks to the device over the httpapi connection plugin
+# (inventory/hosts.yml sets it), not SSH and not network_cli.
+
+- name: Fail early if the API token is missing
+  ansible.builtin.assert:
+    that:
+      - fortios_access_token | length > 0
+      - fortios_access_token != 'CHANGE_ME'
+    fail_msg: >-
+      fortios_access_token is unset or still CHANGE_ME. Fill in
+      inventory/group_vars/fortigate/vault.yml (see the .example next to it)
+      and encrypt it with ansible-vault. Refusing to send unauthenticated
+      calls at a firewall.
+
+- name: Read the FortiGate's status
+  fortinet.fortios.fortios_monitor_fact:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    selectors:
+      - selector: system_status
+  register: fortigate_status
+  # Read-only. Registered so a play has the model/firmware/serial in it before
+  # anything is written - the FortiOS equivalent of what napalm_facts collects
+  # from the Cisco gear, and the thing to check first when a module argument
+  # turns out to be version-specific.
+
+- name: Report what answered
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ fortigate_status.meta.results.version | default('firmware unknown') }}
+      serial {{ fortigate_status.meta.results.serial | default('unknown') }}
+  when: fortigate_status.meta is defined
+
+# --- system -----------------------------------------------------------------
+
+- name: Configure global system settings
+  fortinet.fortios.fortios_system_global:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    system_global: >-
+      {{ ({'hostname': inventory_hostname} if baseline_set_hostname | bool else {})
+         | combine({'timezone': baseline_timezone} if baseline_timezone | length > 0 else {})
+         | combine({'admintimeout': baseline_admin_timeout} if baseline_admin_timeout | int > 0 else {}) }}
+  when: >-
+    baseline_set_hostname | bool
+    or baseline_timezone | length > 0
+    or baseline_admin_timeout | int > 0
+  # Built up rather than written out because fortios_system_global sends every
+  # key it is given, and a key sent empty is a key set empty. An unset
+  # timezone must not become "timezone: ''" on a firewall.
+
+# ntpserver is a list of {id, server} and the id is the match key, so the
+# list is assembled with an index rather than mapped straight from inventory.
+- name: Assemble the NTP server list
+  ansible.builtin.set_fact:
+    fortios_ntp_entries: >-
+      {{ fortios_ntp_entries | default([])
+         + [{'id': (fortios_ntp_entries | default([]) | length) + 1, 'server': item}] }}
+  loop: "{{ baseline_ntp_servers | reject('equalto', 'x.x.x.x') | list }}"
+
+- name: Configure NTP servers
+  fortinet.fortios.fortios_system_ntp:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    system_ntp:
+      ntpsync: enable
+      type: custom
+      server_mode: disable
+      ntpserver: "{{ fortios_ntp_entries }}"
+  when: fortios_ntp_entries | default([]) | length > 0
+
+- name: Configure syslog
+  fortinet.fortios.fortios_log_syslogd_setting:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    log_syslogd_setting:
+      status: enable
+      server: "{{ (baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list)[0] }}"
+      mode: udp
+      port: 514
+  when: baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list | length > 0
+  # Only the first server: log_syslogd_setting is a single-server object, and
+  # FortiOS models additional collectors as separate settings
+  # (log_syslogd2_setting, log_syslogd3_setting). Two syslog servers is a STIG
+  # requirement on the Cisco side of this repo (V-220516), so if that carries
+  # over to the firewall this is the task to extend - deliberately not
+  # invented before the requirement is confirmed.
+
+# --- interfaces -------------------------------------------------------------
+
+- name: Configure interfaces
+  fortinet.fortios.fortios_system_interface:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    state: present
+    system_interface:
+      name: "{{ item.name }}"
+      vdom: "{{ fortios_vdom }}"
+      mode: static
+      ip: "{{ item.ip }}"
+      allowaccess: "{{ item.allowaccess | default('ping') }}"
+      description: "{{ item.description | default(omit) }}"
+  loop: "{{ baseline_interfaces }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.ip }}"
+  when: item.ip is not search('x\.x\.x\.x')
+  # allowaccess defaults to ping alone rather than to the item's absence:
+  # sending no allowaccess leaves whatever is there, but a typo'd key silently
+  # meaning "management wide open" is the failure worth designing out.
+
+# --- firewall ---------------------------------------------------------------
+
+# Address objects before policies, because FortiOS rejects a policy naming an
+# address object that does not exist. Task order is the dependency.
+- name: Configure firewall address objects
+  fortinet.fortios.fortios_firewall_address:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    state: present
+    firewall_address:
+      name: "{{ item.name }}"
+      subnet: "{{ item.subnet }}"
+      comment: "{{ item.comment | default(omit) }}"
+  loop: "{{ baseline_firewall_addresses }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.subnet }}"
+  when: item.subnet is not search('x\.x\.x\.x')
+
+- name: Configure firewall policies
+  fortinet.fortios.fortios_firewall_policy:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    state: present
+    firewall_policy:
+      policyid: "{{ item.policyid }}"
+      name: "{{ item.name }}"
+      srcintf:
+        - name: "{{ item.srcintf }}"
+      dstintf:
+        - name: "{{ item.dstintf }}"
+      srcaddr:
+        - name: "{{ item.srcaddr }}"
+      dstaddr:
+        - name: "{{ item.dstaddr }}"
+      service:
+        - name: "{{ item.service }}"
+      action: "{{ item.action | default('accept') }}"
+      schedule: "{{ item.schedule | default('always') }}"
+      nat: "{{ item.nat | default('disable') }}"
+      logtraffic: "{{ item.logtraffic | default('all') }}"
+  loop: "{{ baseline_firewall_policies }}"
+  loop_control:
+    label: "{{ item.policyid }} {{ item.name }}"
+  when: push_firewall_policy | bool
+  # schedule defaults to `always` because FortiOS requires one and a policy
+  # without it is rejected; logtraffic defaults to `all` because a permit rule
+  # nobody logs is a rule nobody can audit, which is the same argument the
+  # STIG side of this repo makes for `log-input` on the vty ACL's trailing
+  # deny.
+
+- name: Configure static routes
+  fortinet.fortios.fortios_router_static:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    state: present
+    router_static:
+      seq_num: "{{ item.seq_num }}"
+      dst: "{{ item.dst }}"
+      gateway: "{{ item.gateway }}"
+      device: "{{ item.device }}"
+  loop: "{{ baseline_static_routes }}"
+  loop_control:
+    label: "{{ item.dst }} via {{ item.gateway }}"
+  when: item.gateway is not search('x\.x\.x\.x')

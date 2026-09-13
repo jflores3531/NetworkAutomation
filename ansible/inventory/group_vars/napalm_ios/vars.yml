@@ -1,0 +1,39 @@
+---
+# NAPALM settings for every IOS / IOS-XE device - the existing STIG lab
+# switches (l2_switches), the new lab's Cisco switches (ios_switches) and its
+# router(s) (ios_routers). See ../../../NAPALM.md.
+
+# NAPALM's IOS driver covers IOS and IOS-XE, switch and router alike - one
+# driver for the whole family, which is the reason this group exists at all.
+# It is a Netmiko/SSH driver, so it needs nothing enabled on the device that
+# SSH access does not already give (no NX-API, no eAPI, no NETCONF).
+napalm_dev_os: ios
+
+# Getters collected by the napalm_facts role. Driver support varies per
+# platform and NAPALM raises NotImplementedError for a getter its driver does
+# not have, so the role requests each one in its own task and tolerates
+# individual failures rather than losing the whole gather to one gap. That
+# means an over-long list here costs a failed task, not a failed run.
+#
+# Everything below is supported by the IOS driver. `config` is deliberately
+# absent - it is what the napalm_backup role collects, and it is large enough
+# that pulling it into a facts run as well just duplicates a backup.
+napalm_getters:
+  - facts
+  - interfaces
+  - interfaces_ip
+  - lldp_neighbors
+  - arp_table
+  - mac_address_table
+  - ntp_servers
+  - users
+  - environment
+
+# Interfaces expected up by the napalm_validate role. Empty ships as "check
+# nothing", the same "an empty value means skip that feature" convention the
+# STIG roles use - so validation reports on what it was told about rather
+# than inventing expectations. Uplinks are the useful thing to list:
+#
+#   napalm_expected_up_interfaces:
+#     - GigabitEthernet0/1
+napalm_expected_up_interfaces: []

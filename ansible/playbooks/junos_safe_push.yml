@@ -1,0 +1,29 @@
+---
+# Confirmed-commit config push for Junos - the safest push path in this
+# repository.
+#
+# Dry run first (loads the candidate on the switch, prints the switch's own
+# diff, rolls it back):
+#
+#   ansible-playbook playbooks/junos_safe_push.yml --ask-pass \
+#       -e ansible_user=admin -e junos_config_template=example_junos.j2 --limit JSW1
+#
+# Then, having read the diff:
+#
+#   ansible-playbook playbooks/junos_safe_push.yml --ask-pass \
+#       -e ansible_user=admin -e junos_config_template=example_junos.j2 \
+#       -e junos_commit=true --limit JSW1
+#
+# The real run applies the change behind `commit confirmed 5`, drops the NETCONF
+# session, proves a brand-new one can be made, and only then confirms. If that
+# new connection cannot be made - because the change just locked the controller
+# out - the play stops and sends nothing, and the SWITCH reverts the commit on
+# its own when the timer expires. No console trip, no reload, nothing to undo by
+# hand.
+#
+# Run one device at a time while learning what a change does. `--limit` is how.
+- name: Push configuration to Junos behind a confirmed commit
+  hosts: juniper_switches
+  gather_facts: false
+  roles:
+    - junos_safe_push

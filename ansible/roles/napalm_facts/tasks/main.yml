@@ -1,0 +1,116 @@
+---
+# Multi-vendor fact gathering through NAPALM. One role, one code path, for
+# IOS/IOS-XE routers, IOS switches and NX-OS - which is the actual argument
+# for NAPALM in this project: cisco.ios and cisco.nxos need two different
+# modules and two different result shapes to answer "what is this device and
+# what are its interfaces doing", and NAPALM answers it with one.
+#
+# The napalm_* modules run from the controller (delegate_to: localhost, and
+# the playbook sets connection: local), taking their connection details from
+# napalm_provider rather than from an Ansible connection plugin. See
+# inventory/group_vars/all/vars.yml.
+
+- name: Fail early if NAPALM credentials were not supplied
+  ansible.builtin.assert:
+    that:
+      - napalm_username is defined
+      - napalm_username | length > 0
+      - napalm_password is defined
+      - napalm_password | length > 0
+    fail_msg: >-
+      napalm_username/napalm_password are unset. The NAPALM playbooks prompt
+      for them; pass -e napalm_username=... or supply them from vault when
+      running non-interactively.
+  run_once: true
+  delegate_to: localhost
+
+# One task per getter, deliberately, instead of one task with
+# filter: "facts,interfaces,...".
+#
+# NAPALM raises NotImplementedError for any getter its driver does not
+# implement, and the module turns that into a task failure. Bundled into a
+# single filter string, one unsupported getter on one platform loses the
+# entire gather for that host - the same failure mode ../../README.md
+# documents for ios_config batches, where a rejected command silently drops
+# every command after it.
+#
+# Split, an unsupported getter costs exactly itself: the task is tolerated,
+# named in the "unsupported" list below, and everything else is still
+# collected. That matters most on nxos_ssh, whose getter coverage is the
+# thinnest of the drivers this project uses.
+- name: Gather each NAPALM getter
+  napalm.ansible.napalm_get_facts:
+    provider: "{{ napalm_provider }}"
+    filter: "{{ item }}"
+  loop: "{{ napalm_getters }}"
+  register: napalm_gathered
+  ignore_errors: true
+  delegate_to: localhost
+
+- name: Merge the getters that succeeded into one structure
+  ansible.builtin.set_fact:
+    napalm_collected: "{{ napalm_collected | default({}) | combine(item.ansible_facts) }}"
+  loop: "{{ napalm_gathered.results | selectattr('ansible_facts', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Record the getters this driver could not answer
+  ansible.builtin.set_fact:
+    napalm_unsupported: >-
+      {{ napalm_gathered.results
+         | selectattr('failed', 'defined') | selectattr('failed')
+         | map(attribute='item') | list }}
+
+# Printed rather than buried in the JSON, because this is the line that tells
+# you whether the getter list in group_vars is describing the driver honestly.
+# A getter that quietly never returns is how a validation suite ends up
+# passing on evidence it never had.
+- name: Report unsupported getters
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} ({{ napalm_dev_os }}) did not answer:
+      {{ napalm_unsupported | join(', ') }}
+  when: napalm_unsupported | length > 0
+
+- name: Summarise the device
+  ansible.builtin.debug:
+    msg: >-
+      {{ napalm_collected.napalm_facts.hostname | default(inventory_hostname) }}
+      | {{ napalm_collected.napalm_facts.vendor | default('?') }}
+      {{ napalm_collected.napalm_facts.model | default('?') }}
+      | os {{ napalm_collected.napalm_facts.os_version | default('?') }}
+      | serial {{ napalm_collected.napalm_facts.serial_number | default('?') }}
+      | up {{ napalm_collected.napalm_facts.uptime | default('?') }}s
+      | {{ napalm_collected.napalm_facts.interface_list | default([]) | length }} interfaces
+  when: napalm_collected.napalm_facts is defined
+
+- name: Ensure the facts directory exists
+  ansible.builtin.file:
+    path: "{{ napalm_facts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  when: napalm_facts_save | bool
+
+# Structured JSON rather than command output, which is the other half of
+# NAPALM's value here: what lands on disk is the same shape for every vendor,
+# so anything consuming it later (a diff, a report, the Python side of this
+# repo) does not need a per-platform parser. The STIG toolchain's parsers
+# exist because screen-scraped output forced them; this path avoids creating
+# more of them.
+- name: Write {{ inventory_hostname }} facts to JSON
+  ansible.builtin.copy:
+    content: |
+      {{ {
+           'device': inventory_hostname,
+           'address': hostvars[inventory_hostname].ansible_host | default(inventory_hostname),
+           'driver': napalm_dev_os,
+           'collected_utc': lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ'),
+           'unsupported_getters': napalm_unsupported,
+           'data': napalm_collected | default({}),
+         } | to_nice_json }}
+    dest: "{{ napalm_facts_dir }}/{{ inventory_hostname }}.json"
+    mode: "0640"
+  delegate_to: localhost
+  when: napalm_facts_save | bool

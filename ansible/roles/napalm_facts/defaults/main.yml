@@ -1,0 +1,19 @@
+---
+# Fallbacks for hosts whose group does not set them. The real lists live in
+# inventory/group_vars/napalm_ios|napalm_nxos/vars.yml, where they can differ
+# per driver - which they must, because getter support does.
+#
+# This list is the intersection every NAPALM driver implements, so it is a
+# safe floor for a platform nobody has characterised yet (the FortiGate is not
+# one of those platforms - it has no NAPALM driver at all and is never in a
+# play that uses this role).
+napalm_getters:
+  - facts
+  - interfaces
+
+# Where the per-device JSON lands. Under reports/, which is already gitignored
+# - a facts dump carries real hostnames, addressing, MAC and ARP tables.
+napalm_facts_dir: "{{ napalm_report_dir }}/facts"
+
+# Set false to gather and print without writing anything to disk.
+napalm_facts_save: true

@@ -1,0 +1,37 @@
+---
+# Where the config to push comes from. Exactly one of these:
+#
+#   napalm_config_template - a Jinja template rendered per device (the usual
+#                            case; templates/example_ios.j2 is a worked one)
+#   napalm_config_file     - a config file already on the controller, pushed
+#                            verbatim (e.g. a fragment written by hand, or a
+#                            backup from ../napalm_backup being restored)
+napalm_config_template: ""
+napalm_config_file: ""
+
+# DRY RUN BY DEFAULT. false means NAPALM loads the config as a candidate, asks
+# the device for the diff, prints it, and discards it without committing.
+#
+# This is the repository roadmap's "config push dry-run / diff-before-push
+# mode", and it is the single strongest argument for NAPALM in this project:
+# ios_config/nxos_config compare literal strings on the controller and can only
+# tell you which of YOUR lines they intend to send, which is why so much of
+# ../../README.md is a catalogue of lines that never matched (three-space ACL
+# alignment, `storm-control broadcast level 40.00`, default-valued lines absent
+# from show running-config). A NAPALM diff is computed by the DEVICE against
+# the candidate, so it says what would actually change.
+napalm_commit: false
+
+# replace_config: false = merge the rendered config into the running config.
+# true = REPLACE the entire running config with it, on IOS via `configure
+# replace`, which removes anything the file does not contain.
+#
+# Both knobs must be set for a replace to happen, and the role asserts on it.
+# A replace whose template forgot the management interface or the vty config
+# locks you out as completely as the vty ACL the l2s_stig_harden_acl role
+# builds a reload safety net for - and unlike that role, there is no
+# `reload in` armed here. Arm one by hand first, or be on console.
+napalm_replace: false
+napalm_replace_confirmed: false
+
+napalm_diff_dir: "{{ napalm_report_dir }}/diffs"

@@ -1,0 +1,139 @@
+---
+# Confirmed-commit config push for Junos: load, diff, commit confirmed, prove a
+# fresh connection still works, then confirm.
+#
+# The full cycle:
+#   1. render the intended config
+#   2. load it into the candidate and read the DEVICE's `show | compare` diff
+#   3. (dry run stops here, candidate rolled back)
+#   4. commit confirmed <n> - applied, with the switch holding a revert timer
+#   5. tear the NETCONF session down and open a brand new one
+#   6. confirm the commit, which cancels the timer
+#
+# Step 5 is what makes step 6 meaningful, and it is the same reasoning the
+# l2s_stig_harden_aaa role uses `meta: reset_connection` for: a connection that
+# predates the change proves nothing about whether a new one can be made. The
+# difference is what happens when the new connection fails. On IOS that role is
+# left with nothing to revert through, and recovery is via console. Here the
+# switch reverts on its own, because the timer was already running before the
+# session was dropped.
+#
+# So this is the one push path in the repository that is genuinely safe against
+# locking yourself out, and it is safe because of Junos, not because of
+# anything clever here.
+
+- name: Require exactly one config source
+  ansible.builtin.assert:
+    that:
+      - (junos_config_template | length > 0) != (junos_config_file | length > 0)
+      - junos_confirm_minutes | int > 0
+    fail_msg: >-
+      Set exactly one of junos_config_template or junos_config_file, and keep
+      junos_confirm_minutes above 0. A zero confirm window turns this role into
+      a plain commit and removes the only reason to use it.
+
+- name: Ensure the diff directory exists
+  ansible.builtin.file:
+    path: "{{ junos_diff_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+
+- name: Render the intended config for {{ inventory_hostname }}
+  ansible.builtin.template:
+    src: "{{ junos_config_template }}"
+    dest: "{{ junos_diff_dir }}/{{ inventory_hostname }}_candidate.conf"
+    mode: "0640"
+  delegate_to: localhost
+  when: junos_config_template | length > 0
+
+- name: Select the file to push
+  ansible.builtin.set_fact:
+    junos_push_source: >-
+      {{ junos_config_file if junos_config_file | length > 0
+         else junos_diff_dir ~ '/' ~ inventory_hostname ~ '_candidate.conf' }}
+
+# Dry run through check mode, which on Junos is a real operation rather than a
+# simulation: the module loads the candidate on the device, asks it for
+# `show | compare`, and rolls the candidate back. The diff is the switch's, not
+# a controller-side guess about which lines are missing.
+#
+# check_mode is forced per-task rather than relying on --check, so a dry run is
+# what `junos_commit=false` MEANS and cannot be lost by forgetting a flag.
+- name: Load the candidate and read the device's diff (nothing committed)
+  junipernetworks.junos.junos_config:
+    src: "{{ junos_push_source }}"
+    src_format: set
+    comment: "{{ junos_commit_comment }} (dry run)"
+  check_mode: true
+  diff: true
+  register: junos_dry_run
+  when: not junos_commit | bool
+
+- name: Show the diff
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} would change:
+      {{ junos_dry_run.diff.prepared | default('(no differences)') }}
+  when: not junos_commit | bool
+
+- name: Note that nothing was committed
+  ansible.builtin.debug:
+    msg: >-
+      Dry run - candidate loaded, diffed against the running config and rolled
+      back. Re-run with -e junos_commit=true to apply it behind a
+      `commit confirmed {{ junos_confirm_minutes }}`.
+  run_once: true
+  when: not junos_commit | bool
+
+# --- the real push ----------------------------------------------------------
+
+- name: Commit confirmed {{ junos_confirm_minutes }}
+  junipernetworks.junos.junos_config:
+    src: "{{ junos_push_source }}"
+    src_format: set
+    comment: "{{ junos_commit_comment }}"
+    confirm: "{{ junos_confirm_minutes }}"
+  register: junos_committed
+  when: junos_commit | bool
+
+# From here until the confirm, the switch is holding a revert timer. Anything
+# that goes wrong - a lockout, an aborted play, a dead controller - ends with
+# the configuration back where it started.
+- name: Drop the NETCONF session so the next task must build a new one
+  ansible.builtin.meta: reset_connection
+
+- name: Prove a brand-new connection to the device still works
+  junipernetworks.junos.junos_facts:
+    gather_subset: min
+  register: junos_reconnect
+  # Tolerated so the play reaches the report below instead of aborting. A failure
+  # here must NOT stop the play silently: the switch is holding a revert timer,
+  # and the operator needs to be told to let it expire rather than left guessing.
+  ignore_errors: true
+  when: junos_commit | bool
+
+- name: Confirm the commit, cancelling the revert timer
+  junipernetworks.junos.junos_config:
+    confirm_commit: true
+    comment: "{{ junos_commit_comment }} (confirmed)"
+  when:
+    - junos_commit | bool
+    - junos_reconnect is succeeded
+
+# Deliberately no rescue block. If the new connection cannot be made, the right
+# outcome is to do NOTHING and let the timer expire - the switch restores the
+# previous configuration on its own. A rescue that tried to "fix" it would have
+# to reach the device through the very change that just broke access, and if it
+# somehow did, it might confirm a commit that should have been reverted.
+- name: Stop, and report what the device was left holding
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: reconnect failed after the confirmed commit.
+      NOTHING further was sent. The switch reverts this commit by itself within
+      {{ junos_confirm_minutes }} minute(s) - wait it out, then check
+      `show system commit` before trying again.
+  when:
+    - junos_commit | bool
+    - junos_reconnect is not succeeded

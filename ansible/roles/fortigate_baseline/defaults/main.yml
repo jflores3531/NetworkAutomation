@@ -1,0 +1,27 @@
+---
+# Defaults for the FortiGate baseline. Real values come from
+# inventory/group_vars/fortigate/vars.yml; everything empty here is a skipped
+# task, the same convention the rest of this project uses.
+
+fortios_vdom: root
+fortios_access_token: ""
+
+baseline_timezone: ""
+baseline_admin_timeout: 0
+baseline_ntp_servers: []
+baseline_syslog_servers: []
+baseline_interfaces: []
+baseline_firewall_addresses: []
+baseline_firewall_policies: []
+baseline_static_routes: []
+
+baseline_set_hostname: true
+
+# Firewall policy is the one thing in this role that decides what traffic the
+# network passes, so it is opt-in per run rather than part of a general
+# baseline. Same reasoning that keeps l2_stig_harden_trunk_ports.py and the
+# vty ACL role out of their platforms' bulk passes: a wrong VLAN list or a
+# wrong policy is not a failed audit, it is an outage.
+#
+#   ansible-playbook playbooks/fortinet_baseline.yml -e push_firewall_policy=true
+push_firewall_policy: false

@@ -1,0 +1,35 @@
+---
+# NAPALM settings for the NX-OS switches. See ../../../NAPALM.md.
+
+# `nxos_ssh`, not `nxos`. NAPALM ships two NX-OS drivers and the difference is
+# the transport, not the platform:
+#
+#   nxos      - NX-API over HTTPS. Faster and returns structured JSON, but the
+#               device must have `feature nxapi` enabled first.
+#   nxos_ssh  - Netmiko over SSH. Screen-scrapes, supports a few getters less,
+#               and needs nothing enabled that SSH access does not already
+#               give.
+#
+# Nothing in this lab has enabled `feature nxapi`, and the STIG toolchain
+# reaches NXCore1 over SSH today (both nxos_stig_*.py via Netmiko and the
+# nxos_stig_harden roles via network_cli). Defaulting to NX-API would mean
+# this layer silently required a config change on the device before it could
+# read anything - so SSH it is. Switch to `nxos` per-host once nxapi is
+# deliberately turned on and verified, not before.
+napalm_dev_os: nxos_ssh
+
+# Same per-getter-task design as the IOS group - see the note there. This list
+# is shorter because the nxos_ssh driver implements fewer getters than the IOS
+# one, and `environment` in particular is unreliable on virtual Nexus images
+# (nothing to read a real PSU or fan tray from). Add getters as the lab proves
+# they work rather than assuming from the support matrix.
+napalm_getters:
+  - facts
+  - interfaces
+  - interfaces_ip
+  - lldp_neighbors
+  - arp_table
+  - ntp_servers
+  - users
+
+napalm_expected_up_interfaces: []

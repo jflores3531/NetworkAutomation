@@ -1,0 +1,30 @@
+{#
+  Worked example of a Junos config template for junos_safe_push - copy it,
+  don't extend it in place.
+
+  `set` format, matching the role's src_format: set. Junos also takes curly-brace
+  and XML formats; set commands are used here because they are what you would
+  type at the CLI, so a diff between this file and a device's
+  `show configuration | display set` is readable line for line.
+
+  Scope: use this role for changes where a mistake costs you access - management
+  addressing, NETCONF, the uplink, firewall filters on the management interface.
+  Ordinary per-feature config (VLANs, descriptions, NTP) belongs in
+  ../../junos_baseline, where resource modules report state honestly and there is
+  nothing to roll back.
+
+  Every value renders from inventory, so this file holds no site data.
+#}
+set system host-name {{ inventory_hostname }}
+{% if baseline_domain_name | default('') | length > 0 %}
+set system domain-name {{ baseline_domain_name }}
+{% endif %}
+{% for server in baseline_ntp_servers | default([]) if server != 'x.x.x.x' %}
+set system ntp server {{ server }}
+{% endfor %}
+{% for server in baseline_syslog_servers | default([]) if server != 'x.x.x.x' %}
+set system syslog host {{ server }} any notice
+{% endfor %}
+{% if baseline_lldp_enabled | default(false) %}
+set protocols lldp interface all
+{% endif %}

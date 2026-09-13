@@ -1,0 +1,73 @@
+---
+# Intended configuration for the new lab's Cisco IOS/IOS-XE switches, consumed
+# by the cisco_baseline role. See ../../../NAPALM.md.
+#
+# Every value is a committed-file placeholder - x.x.x.x for addresses, [] and
+# "" for everything site-specific - same convention as ../../hosts.yml and
+# ../../../../inventory.yaml.example. The role skips any feature whose var is
+# empty, so a play run against this file as it stands configures less than it
+# should rather than configuring something wrong.
+#
+# Variables here are `baseline_*` so they cannot collide with the STIG roles'
+# own ntp_servers/syslog_servers/native_vlan/etc. The two toolchains share an
+# inventory file, not a variable namespace.
+
+# ios_domain? IOS needs a domain name before it will generate RSA keys for
+# SSH. Empty skips the task entirely.
+baseline_domain_name: ""
+
+# VLANs to create, pushed with the cisco.ios.ios_vlans RESOURCE module
+# (state: merged) rather than raw ios_config lines - a state-based module
+# compares parsed device state instead of literal config strings, which is
+# what makes it idempotent without the string-matching traps documented all
+# over ../../../README.md (`storm-control broadcast level 40.00`,
+# `spanning-tree portfast edge`, three-space ACL alignment).
+#
+# baseline_vlans:
+#   - vlan_id: 10
+#     name: USERS
+#   - vlan_id: 20
+#     name: VOICE
+baseline_vlans: []
+
+# Access ports, pushed with ios_l2_interfaces + ios_interfaces.
+#
+# baseline_access_ports:
+#   - name: GigabitEthernet0/2
+#     vlan: 10
+#     description: user port
+baseline_access_ports: []
+
+# Trunk ports. allowed_vlans/native_vlan are what ios_l2_interfaces expects,
+# so the shape here matches the module's rather than being translated in a
+# task.
+#
+# baseline_trunk_ports:
+#   - name: GigabitEthernet0/1
+#     description: uplink to R1
+#     allowed_vlans: [10, 20]
+#     native_vlan: 999
+baseline_trunk_ports: []
+
+# Layer 3 / SVI addressing, pushed with ios_l3_interfaces.
+#
+# baseline_l3_interfaces:
+#   - name: Vlan10
+#     ipv4_address: x.x.x.x
+#     ipv4_netmask: 255.255.255.0
+baseline_l3_interfaces: []
+
+# NTP (ios_ntp_global) and syslog (ios_logging_global) - the two things worth
+# having on a device before anything else, because without them nothing that
+# happens next has a trustworthy timestamp or anywhere to land.
+baseline_ntp_servers:
+  - x.x.x.x
+  - x.x.x.x
+baseline_syslog_servers:
+  - x.x.x.x
+
+# LLDP globally on, so napalm_facts' lldp_neighbors getter has something to
+# report and the lab's topology can be read off the devices rather than off a
+# diagram. CDP would also work on all-Cisco, but LLDP is the one the Fortinet
+# gear will also speak.
+baseline_lldp_enabled: true

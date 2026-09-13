@@ -1,0 +1,199 @@
+---
+# Baseline configuration for Juniper switches with junipernetworks.junos
+# resource modules, over NETCONF.
+#
+# Where this sits relative to the NAPALM roles: identical to cisco_baseline's
+# position. NAPALM reads (facts, backups, validation) and computes diffs;
+# resource modules write per-feature config. The difference on Junos is that
+# BOTH paths are structured - NETCONF at one end, NETCONF at the other - so
+# none of the string-matching caveats that fill ../../README.md for IOS apply
+# here. Junos computes its own diff against the candidate, which means even the
+# junos_config fallbacks below report `changed` honestly.
+#
+# Two platform facts shape this file:
+#
+#   1. VLANs are referenced BY NAME in ethernet-switching, so
+#      baseline_access_ports carries `vlan: USERS` where the Cisco groups carry
+#      `vlan: 10`. See inventory/group_vars/juniper_switches/vars.yml.
+#   2. Everything commits per module - see defaults/main.yml on transactions,
+#      and use ../junos_safe_push for changes that can lock you out.
+
+- name: Gather the resource facts this role manages
+  junipernetworks.junos.junos_facts:
+    gather_subset: min
+    gather_network_resources:
+      - interfaces
+      - l2_interfaces
+      - l3_interfaces
+      - vlans
+
+- name: Set the hostname from inventory
+  junipernetworks.junos.junos_hostname:
+    config:
+      hostname: "{{ inventory_hostname }}"
+    state: merged
+  when: baseline_set_hostname | bool
+
+- name: Set the domain name
+  junipernetworks.junos.junos_config:
+    lines:
+      - set system domain-name {{ baseline_domain_name }}
+    comment: "{{ baseline_commit_comment }}"
+  when: baseline_domain_name | length > 0
+
+- name: Configure VLANs
+  junipernetworks.junos.junos_vlans:
+    config: "{{ baseline_vlans }}"
+    state: "{{ baseline_state }}"
+  when: baseline_vlans | length > 0
+
+# --- interfaces -------------------------------------------------------------
+# Assembled into one call per domain rather than looped per port: a resource
+# module call is a NETCONF round trip AND a commit here, so looping 48 ports
+# would mean 48 commits in the device's rollback history, pushing anything worth
+# rolling back to out of reach of `rollback 49`.
+
+- name: Assemble the interface descriptions
+  ansible.builtin.set_fact:
+    junos_interface_config: >-
+      {{ junos_interface_config | default([])
+         + [{'name': item.name, 'enabled': true}
+            | combine({'description': item.description} if item.description is defined else {})] }}
+  loop: "{{ baseline_access_ports + baseline_trunk_ports }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure interface descriptions and admin state
+  junipernetworks.junos.junos_interfaces:
+    config: "{{ junos_interface_config }}"
+    state: merged
+  when: junos_interface_config | default([]) | length > 0
+
+- name: Assemble the access-port layer 2 config
+  ansible.builtin.set_fact:
+    junos_l2_config: >-
+      {{ junos_l2_config | default([])
+         + [{'name': item.name, 'unit': item.unit | default(0),
+             'access': {'vlan': item.vlan}}] }}
+  loop: "{{ baseline_access_ports }}"
+  loop_control:
+    label: "{{ item.name }} -> vlan {{ item.vlan }}"
+
+- name: Assemble the trunk-port layer 2 config
+  ansible.builtin.set_fact:
+    junos_l2_config: >-
+      {{ junos_l2_config | default([])
+         + [{'name': item.name, 'unit': item.unit | default(0), 'trunk': trunk_cfg}] }}
+  vars:
+    # allowed_vlans are VLAN names; native_vlan is an ID, because Junos models
+    # it as native-vlan-id. That asymmetry is the platform's, not this role's.
+    trunk_cfg: >-
+      {{ ({'allowed_vlans': item.allowed_vlans} if item.allowed_vlans is defined else {})
+         | combine({'native_vlan': item.native_vlan} if item.native_vlan is defined else {}) }}
+  loop: "{{ baseline_trunk_ports }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure access and trunk ports
+  junipernetworks.junos.junos_l2_interfaces:
+    config: "{{ junos_l2_config }}"
+    state: merged
+  when: junos_l2_config | default([]) | length > 0
+
+- name: Assemble layer 3 addressing
+  ansible.builtin.set_fact:
+    junos_l3_config: >-
+      {{ junos_l3_config | default([])
+         + [{'name': item.name, 'unit': item.unit | default(0),
+             'ipv4': [{'address': item.ipv4_cidr}]}] }}
+  loop: "{{ baseline_l3_interfaces }}"
+  loop_control:
+    label: "{{ item.name }}.{{ item.unit | default(0) }} {{ item.ipv4_cidr }}"
+  when: item.ipv4_cidr is not search('x\.x\.x\.x')
+  # Junos splits the logical unit from the physical interface, so an RVI is
+  # name: irb + unit: 10 rather than IOS's single "Vlan10". Inventory carries
+  # both fields for that reason.
+
+- name: Configure layer 3 addressing
+  junipernetworks.junos.junos_l3_interfaces:
+    config: "{{ junos_l3_config }}"
+    state: merged
+  when: junos_l3_config | default([]) | length > 0
+
+# --- services ---------------------------------------------------------------
+
+- name: Assemble the NTP server list
+  ansible.builtin.set_fact:
+    junos_ntp_config: "{{ junos_ntp_config | default([]) + [{'server': item}] }}"
+  loop: "{{ baseline_ntp_servers | reject('equalto', 'x.x.x.x') | list }}"
+
+- name: Configure NTP servers
+  junipernetworks.junos.junos_ntp_global:
+    config:
+      servers: "{{ junos_ntp_config }}"
+    state: merged
+  when: junos_ntp_config | default([]) | length > 0
+
+# junos_config rather than junos_logging_global, deliberately. Junos requires a
+# facility and severity on a syslog host (`set system syslog host <ip> any
+# notice` - there is no host-without-facility form), and the resource module
+# models that as a nested structure whose exact schema differs across
+# collection versions. A guessed schema on a config push is how this project
+# burned a week on nxos_logging_global once (see ../../README.md); a set
+# command whose syntax is checked by the device is not a guess.
+#
+# On Junos this costs nothing in idempotency: the device diffs the candidate,
+# so a re-run reports no change.
+- name: Configure syslog hosts
+  junipernetworks.junos.junos_config:
+    lines: >-
+      {{ baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list
+         | map('regex_replace', '^(.*)$', 'set system syslog host \1 any notice') | list }}
+    comment: "{{ baseline_commit_comment }}"
+  when: baseline_syslog_servers | reject('equalto', 'x.x.x.x') | list | length > 0
+
+- name: Enable LLDP globally
+  junipernetworks.junos.junos_lldp_global:
+    config:
+      enabled: true
+    state: merged
+  when: baseline_lldp_enabled | bool
+
+- name: Assemble the LLDP interface list
+  ansible.builtin.set_fact:
+    junos_lldp_config: "{{ junos_lldp_config | default([]) + [{'name': item.name, 'enabled': true}] }}"
+  loop: "{{ baseline_access_ports + baseline_trunk_ports }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: baseline_lldp_enabled | bool
+
+- name: Enable LLDP per interface
+  junipernetworks.junos.junos_lldp_interfaces:
+    config: "{{ junos_lldp_config }}"
+    state: merged
+  when: junos_lldp_config | default([]) | length > 0
+  # Per-interface, because Junos has no single global `lldp run` - the global
+  # stanza above only turns the protocol on, and an interface not listed here
+  # never speaks it. The IOS role's one-line equivalent is the exception, not
+  # this.
+
+# --- routing ----------------------------------------------------------------
+
+- name: Assemble static routes
+  ansible.builtin.set_fact:
+    junos_route_config: >-
+      {{ junos_route_config | default([])
+         + [{'dest': item.dest, 'next_hop': [{'forward_router_address': item.next_hop}]}] }}
+  loop: "{{ baseline_static_routes }}"
+  loop_control:
+    label: "{{ item.dest }} via {{ item.next_hop }}"
+  when: item.next_hop is not search('x\.x\.x\.x')
+
+- name: Configure static routes
+  junipernetworks.junos.junos_static_routes:
+    config:
+      - address_families:
+          - afi: ipv4
+            routes: "{{ junos_route_config }}"
+    state: merged
+  when: junos_route_config | default([]) | length > 0

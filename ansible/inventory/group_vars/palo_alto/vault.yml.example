@@ -1,0 +1,28 @@
+---
+# Secrets for the palo_alto group. Copy to vault.yml, fill in, THEN encrypt
+# before committing anything:
+#
+#   ansible-vault encrypt inventory/group_vars/palo_alto/vault.yml
+#
+# vault.yml is gitignored (see ../../../../.gitignore) - this .example is the
+# only tracked version. Never commit the real file in plaintext. CHANGE_ME
+# matches the convention in ../l2_switches/vault.yml.example.
+
+# PAN-OS XML API key. Generate it once from an admin account:
+#
+#   curl -k -X GET 'https://<firewall>/api/?type=keygen&user=<admin>&password=<pw>'
+#
+# and take the <key> value out of the response. Two things worth doing while
+# you are in there, both of which matter more than the key itself:
+#
+#   - give the automation its own admin account with a role-based profile
+#     limited to what these roles actually write, not a superuser
+#   - restrict that account's permitted IPs to the automation host, so a leaked
+#     key is useless from anywhere else
+#
+# The key does not expire on its own, so rotate it deliberately (regenerating
+# it invalidates the previous one).
+#
+# panos_baseline refuses to run while this is empty or still CHANGE_ME rather
+# than sending unauthenticated calls at a firewall.
+vault_panos_api_key: CHANGE_ME

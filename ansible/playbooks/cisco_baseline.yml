@@ -1,0 +1,26 @@
+---
+# Baseline configuration for the new lab's Cisco devices, with cisco.ios /
+# cisco.nxos resource modules.
+#
+#   ansible-playbook playbooks/cisco_baseline.yml -e ansible_user=admin --ask-pass
+#   ansible-playbook playbooks/cisco_baseline.yml --ask-pass --check -D --limit SW1
+#
+# --check -D is meaningful here, unlike for the AAA/ACL roles on the STIG side:
+# every module in this role is state-comparing, so a check run reports the diff
+# it would push without touching anything. (../README.md's warnings about
+# --check apply to roles whose risk IS the push - an armed reload, an auth
+# flip - not to these.)
+#
+# Reaches devices over network_cli, not NAPALM: resource modules compare parsed
+# device state, which is what makes them idempotent, and that is the right tool
+# for per-feature config. NAPALM's role in this project is reads, diffs and
+# whole-file pushes - see ../NAPALM.md for the division and why it is drawn
+# there.
+#
+# Targets only the new lab's groups. The STIG-managed switches converge through
+# their own roles and are deliberately out of scope.
+- name: Apply the Cisco baseline
+  hosts: ios_switches:ios_routers:nxos_lab
+  gather_facts: false
+  roles:
+    - cisco_baseline

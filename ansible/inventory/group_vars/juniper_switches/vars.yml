@@ -1,0 +1,65 @@
+---
+# Intended configuration for the Juniper (EX/QFX-class) switches, consumed by
+# the junos_baseline role. Placeholders for the same reason as every other
+# committed group_vars file here - see ../ios_switches/vars.yml.
+#
+# ONE SHAPE DIFFERENCE FROM THE CISCO GROUPS, and it is a platform fact rather
+# than a style choice: Junos ethernet-switching references VLANs BY NAME, not
+# by ID. `set interfaces ge-0/0/2 unit 0 family ethernet-switching vlan members
+# USERS` is the real command, and the ID lives only in the `vlans USERS
+# vlan-id 10` stanza. So baseline_access_ports carries `vlan: USERS` here where
+# ios_switches carries `vlan: 10`.
+#
+# Deliberately not abstracted behind a shared shape. A translation layer that
+# let one inventory entry serve both platforms would have to map name to ID and
+# back, and the failure mode of getting that wrong (a port on the wrong VLAN)
+# is worse than the duplication it would save.
+
+baseline_domain_name: ""
+
+# VLANs. vlan_id is what goes into the `vlans <name> vlan-id <id>` stanza; name
+# is what every interface below refers to.
+#
+# baseline_vlans:
+#   - name: USERS
+#     vlan_id: 10
+#   - name: VOICE
+#     vlan_id: 20
+baseline_vlans: []
+
+# Access ports. `vlan` is a VLAN NAME - see the note above.
+#
+# baseline_access_ports:
+#   - name: ge-0/0/2
+#     vlan: USERS
+#     description: user port
+baseline_access_ports: []
+
+# Trunk ports. allowed_vlans and native_vlan are names too, with one
+# exception: Junos takes the native VLAN as an ID (`native-vlan-id`), which is
+# why the example gives a number there and names everywhere else.
+#
+# baseline_trunk_ports:
+#   - name: ge-0/0/0
+#     description: uplink to R1
+#     allowed_vlans: [USERS, VOICE]
+#     native_vlan: 999
+baseline_trunk_ports: []
+
+# Layer 3 interfaces, including RVIs (irb.N on ELS switches).
+#
+# baseline_l3_interfaces:
+#   - name: irb.10
+#     ipv4_cidr: x.x.x.x/24
+baseline_l3_interfaces: []
+
+baseline_ntp_servers:
+  - x.x.x.x
+  - x.x.x.x
+baseline_syslog_servers:
+  - x.x.x.x
+
+# LLDP on, so the lldp_neighbors getter can map the lab's topology off the
+# devices themselves. On Junos this is per-interface configuration (`protocols
+# lldp interface all`), unlike IOS's single `lldp run`.
+baseline_lldp_enabled: true

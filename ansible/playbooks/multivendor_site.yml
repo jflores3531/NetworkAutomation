@@ -1,0 +1,37 @@
+---
+# The whole multi-vendor run, in the order the steps actually depend on each
+# other:
+#
+#   1. health check    - do not start changing a device that is already unhappy
+#   2. backup          - a restore point that predates the change
+#   3. Cisco baseline  - cisco.ios/cisco.nxos resource modules, over network_cli
+#   4. Junos baseline  - junipernetworks.junos resource modules, over NETCONF
+#   5. Palo Alto       - paloaltonetworks.panos, over the XML API
+#   6. validate        - did the fleet end up matching what inventory declares
+#
+#   ansible-playbook playbooks/multivendor_site.yml --ask-vault-pass \
+#       -e napalm_username=admin -e napalm_password=... -e ansible_user=admin --ask-pass
+#
+# Pass the NAPALM credentials with -e (or from vault) for a run like this: each
+# imported playbook prompts on its own otherwise, and answering the same prompt
+# five times is how a typo gets made. Nothing in this file removes the need to
+# read what steps 3-5 would do first - run each baseline playbook with
+# --check -D on its own before letting it run from here.
+#
+# What this chain deliberately leaves out:
+#   - facts collection, which is a read for humans rather than a dependency of
+#     anything here (playbooks/napalm_facts.yml)
+#   - the Palo Alto commit and its security rules, both opt-in
+#     (-e panos_commit=true, -e push_security_rules=true), so step 5 stages
+#     changes into the firewall's candidate config and stops
+#   - the Fortinet gear, parked in favour of Juniper and Palo Alto
+#     (playbooks/fortinet_baseline.yml still runs if invoked directly)
+#   - anything that could lock you out of a Juniper switch, which belongs in
+#     playbooks/junos_safe_push.yml behind a confirmed commit
+
+- import_playbook: napalm_healthcheck.yml
+- import_playbook: napalm_backup.yml
+- import_playbook: cisco_baseline.yml
+- import_playbook: junos_baseline.yml
+- import_playbook: panos_baseline.yml
+- import_playbook: napalm_validate.yml
