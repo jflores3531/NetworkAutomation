@@ -40,4 +40,9 @@ pan-os-python>=1.7.0
 # PARKED with the Fortinet gear: only a handful of legacy fortinet.fortios
 # modules need this SDK (the collection's own httpapi plugin covers the rest).
 # Harmless to leave installed.
-fortiosapi>=20230130.0
+#
+# >=1.0.5, not the date-style >=20230130.0 this used to say. No fortiosapi
+# release has ever had a version like that (1.0.5 is the newest on PyPI), so
+# the old line could not resolve and the whole file failed to install: first
+# found building the lab controller, 2026-09-13.
+fortiosapi>=1.0.5
