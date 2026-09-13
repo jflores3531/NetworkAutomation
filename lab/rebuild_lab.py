@@ -46,8 +46,8 @@ import yaml
 TOPOLOGY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'topology.yaml')
 
 
-def load_topology():
-    with open(TOPOLOGY_PATH, encoding='utf-8') as f:
+def load_topology(path=None):
+    with open(path or TOPOLOGY_PATH, encoding='utf-8') as f:
         return yaml.safe_load(f)
 
 
@@ -383,6 +383,23 @@ def provision_container(api, project_id, topo, nodes, public_key, gns3_host):
                     'pgrep -x sshd > /dev/null || /usr/sbin/sshd')
         ok('sshd configured and running (key-only root login)')
 
+        # git is not in this container image. The original automation host had
+        # it because somebody installed it by hand once, which is exactly the
+        # kind of undocumented step that made the lab unrebuildable the first
+        # time - so it is checked and installed here like everything else.
+        out = console.run("command -v git > /dev/null 2>&1 && echo GIT_''YES || echo GIT_''NO")
+        if 'GIT_NO' in out:
+            ok('installing git (needs VMnet8 internet)...')
+            console.run('apt-get update > /tmp/apt.log 2>&1', quiet_seconds=5)
+            console.send('DEBIAN_FRONTEND=noninteractive apt-get install -y git '
+                         '> /tmp/git_install.log 2>&1; echo GIT_DONE_RC=$?')
+            got = console.expect(r'GIT_DONE_RC=\d+', timeout=420)
+            if got is None or 'GIT_DONE_RC=0' not in got:
+                raise RebuildError(
+                    'git install did not finish cleanly - check '
+                    '/tmp/git_install.log on the container console.')
+            ok('git installed')
+
         out = console.run(f"ls -d {host_cfg['repo_path']}/.git > /dev/null 2>&1 "
                           "&& echo REPO_''YES || echo REPO_''NO")
         if 'REPO_NO' in out:
@@ -449,6 +466,64 @@ SWITCH_CONFIG_TEMPLATE = [
 ]
 
 
+def ios_reach_privileged_exec(console, username, password):
+    """Drive an IOS console from whatever state it is in to privileged EXEC.
+
+    Extracted from configure_switch so the multi-vendor lab's routers and
+    switches get the same proven path rather than a second implementation of
+    it - this is the part with the scar tissue, and two copies would drift.
+    """
+    # The gate accepts config-mode prompts too ((config)#, (config-line)#
+    # ...) - a previous run that died mid-config leaves the shared console
+    # sitting at one, and a gate that only knows bare >/# pokes at it for
+    # the full timeout without ever recognising it. The state loop below
+    # is what backs out of config mode; the gate just has to let it run.
+    if console.expect(
+            r'(initial configuration dialog|Press RETURN|Username:|Password:'
+            r'|[\r\n][\w.-]+(\([\w-]+\))?[>#])',
+            timeout=420, poke=True) is None:
+        raise RebuildError('console never reached a prompt - still booting?')
+
+    # Reach privileged EXEC via a state loop: drain whatever is stale in
+    # the buffer, poke, classify only the freshest line, and act on it.
+    # A GNS3 console is one shared TTY - a previous session may have left
+    # it mid-login, mid-config, or with queued garbage, and matching
+    # against accumulated history (the first version of this) meant
+    # confidently typing 'enable' into a Username: prompt. The states:
+    # setup dialog (factory-fresh), Username: (this repo's own AAA harden
+    # puts login on the console line), bare > or #, or a config prompt.
+    console.read(1.5)  # discard stale buffer
+    for _ in range(15):
+        console.send('')
+        text = console.read(2.0)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        last = lines[-1] if lines else ''
+        if re.search(r'initial configuration dialog', text, re.I):
+            console.send('no')
+        elif re.search(r'\[confirm\]|\[yes/no\]', last, re.I):
+            console.send('')
+        elif re.search(r'Username:$', last):
+            console.send(username)
+            if console.expect(r'Password:', timeout=15) is None:
+                raise RebuildError('console login: no Password: prompt after username')
+            console.send(password)
+        elif re.search(r'Password:$', last):
+            console.send(password)  # a stale enable/login password prompt
+        elif re.search(r'\(config[\w-]*\)#$', last):
+            console.send('end')
+        elif last.endswith('#'):
+            return
+        elif last.endswith('>'):
+            console.send('enable')
+            got = console.expect(r'(Password:|[\r\n][\w.-]+#[ \t]*\r?$)', timeout=15) or ''
+            if got.rstrip().endswith('Password:'):
+                console.send(password)
+        # anything else (banner text, syslog burst): loop and re-poke
+    raise RebuildError(
+        'could not reach privileged EXEC on the console - wrong device '
+        'credentials, or the console is wedged (connect to it manually and look)')
+
+
 def configure_switch(api, project_id, topo, nodes, gns3_host, username, password):
     """Push the base config over the switch console, prompt-synchronized.
 
@@ -491,56 +566,7 @@ def configure_switch(api, project_id, topo, nodes, gns3_host, username, password
         return seen
 
     try:
-        # The gate accepts config-mode prompts too ((config)#, (config-line)#
-        # ...) - a previous run that died mid-config leaves the shared console
-        # sitting at one, and a gate that only knows bare >/# pokes at it for
-        # the full timeout without ever recognising it. The state loop below
-        # is what backs out of config mode; the gate just has to let it run.
-        if console.expect(
-                r'(initial configuration dialog|Press RETURN|Username:|Password:'
-                r'|[\r\n][\w.-]+(\([\w-]+\))?[>#])',
-                timeout=420, poke=True) is None:
-            raise RebuildError('switch console never reached a prompt - still booting?')
-
-        # Reach privileged EXEC via a state loop: drain whatever is stale in
-        # the buffer, poke, classify only the freshest line, and act on it.
-        # A GNS3 console is one shared TTY - a previous session may have left
-        # it mid-login, mid-config, or with queued garbage, and matching
-        # against accumulated history (the first version of this) meant
-        # confidently typing 'enable' into a Username: prompt. The states:
-        # setup dialog (factory-fresh), Username: (this repo's own AAA harden
-        # puts login on the console line), bare > or #, or a config prompt.
-        console.read(1.5)  # discard stale buffer
-        for _ in range(15):
-            console.send('')
-            text = console.read(2.0)
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
-            last = lines[-1] if lines else ''
-            if re.search(r'initial configuration dialog', text, re.I):
-                console.send('no')
-            elif re.search(r'\[confirm\]|\[yes/no\]', last, re.I):
-                console.send('')
-            elif re.search(r'Username:$', last):
-                console.send(username)
-                if console.expect(r'Password:', timeout=15) is None:
-                    raise RebuildError('console login: no Password: prompt after username')
-                console.send(password)
-            elif re.search(r'Password:$', last):
-                console.send(password)  # a stale enable/login password prompt
-            elif re.search(r'\(config[\w-]*\)#$', last):
-                console.send('end')
-            elif last.endswith('#'):
-                break
-            elif last.endswith('>'):
-                console.send('enable')
-                got = console.expect(r'(Password:|[\r\n][\w.-]+#[ \t]*\r?$)', timeout=15) or ''
-                if got.rstrip().endswith('Password:'):
-                    console.send(password)
-            # anything else (banner text, syslog burst): loop and re-poke
-        else:
-            raise RebuildError(
-                'could not reach privileged EXEC on the console - wrong device '
-                'credentials, or the console is wedged (connect to it manually and look)')
+        ios_reach_privileged_exec(console, username, password)
         ok('console responsive, privileged EXEC')
 
         run_synced('terminal length 0')
@@ -592,6 +618,348 @@ def configure_switch(api, project_id, topo, nodes, gns3_host, username, password
         console.close()
 
 
+def start_nodes(api, project_id, nodes, names):
+    """Start everything first so the images boot concurrently.
+
+    Configuring device-by-device would otherwise serialise the boots, and an
+    IOSv takes minutes to reach a console prompt - six of them in sequence is
+    most of an hour spent waiting rather than working.
+    """
+    step('starting nodes')
+    for name in names:
+        node = nodes[name]
+        if node['status'] == 'started':
+            ok(f'{name}: already running')
+            continue
+        api.post(f'/projects/{project_id}/nodes/{node["node_id"]}/start')
+        ok(f'{name}: started')
+
+
+def configure_ios_device(api, project_id, name, node, spec, gns3_host,
+                         username, password):
+    """Push one device's config lines over its console, prompt-synchronized.
+
+    The lines come from the topology file, not from this function - see the
+    devices: section there. This only knows how to type them safely.
+    """
+    step(f'{name}: base config')
+    prompt = r'[\r\n][\w.-]+(\((?:config[\w-]*)\))?#[ \t]*\r?$'
+    console = Console(gns3_host, node['console'])
+
+    def run_synced(command, timeout=30, error_ok=False):
+        console.send(command)
+        seen = console.expect(prompt, timeout)
+        if seen is None:
+            raise RebuildError(f'{name}: no prompt back after {command!r} within {timeout}s')
+        if not error_ok and ('% Invalid' in seen or '% Incomplete' in seen):
+            raise RebuildError(f'{name} rejected: {command!r}')
+        return seen
+
+    try:
+        ios_reach_privileged_exec(console, username, password)
+        ok(f'{name}: console responsive, privileged EXEC')
+        run_synced('terminal length 0')
+
+        # Skip key generation when SSH is already up - regenerating
+        # invalidates known_hosts everywhere for no benefit.
+        needs_keys = 'SSH Enabled' not in run_synced('show ip ssh', timeout=20,
+                                                     error_ok=True)
+
+        run_synced('configure terminal')
+        for line in spec['config']:
+            # 90s, not the 30s a config line normally needs: creating the first
+            # VLAN makes IOSvL2 write vlan.dat to flash, and on this emulated
+            # disk that took longer than 30s - the run died on 'name USERS'
+            # with the switch sitting perfectly healthy at (config-vlan)#.
+            # A generous ceiling costs nothing on the lines that are instant.
+            run_synced(line.format(username=username, password=password), timeout=90)
+        ok(f'{name}: {len(spec["config"])} config lines pushed')
+
+        if needs_keys:
+            ok(f'{name}: generating RSA keys (slow)...')
+            console.send('crypto key generate rsa modulus 2048')
+            got = console.expect(r'(\[OK\]|Replace them|\[yes/no\])', timeout=240)
+            if got is None:
+                raise RebuildError(f'{name}: RSA key generation produced no output')
+            if re.search(r'Replace them|\[yes/no\]', got, re.I):
+                console.send('yes')
+                console.expect(r'\[OK\]', timeout=240)
+            console.expect(prompt, timeout=60, poke=True)
+        run_synced('end')
+
+        run_synced('write memory', timeout=90)
+        # Trust the startup-config, not the [OK] banner - the banner can
+        # interleave with config-change syslog lines.
+        saved = run_synced('show startup-config | include ^hostname', timeout=30,
+                           error_ok=True)
+        if f'hostname {name}' not in saved:
+            raise RebuildError(f'{name}: startup-config does not carry the hostname - save failed?')
+        ok(f'{name}: saved to startup-config (verified by reading it back)')
+    finally:
+        console.close()
+
+
+def junos_reach_cli(console, password):
+    """Drive a Junos console from whatever state it is in to operational CLI.
+
+    Same idea as ios_reach_privileged_exec, different states. A vJunos that has
+    never been configured logs in as root with NO password and lands in a
+    FreeBSD shell; once this script has run once, root HAS a password and the
+    same console lands in the CLI instead. Both have to work, because the
+    second run of a rebuild is the one that matters.
+    """
+    # Deadline, not an iteration count. The first version allowed 20 pokes -
+    # about 40 seconds - which is nothing against a vJunos boot: the image
+    # brings up a Linux wrapper, then Junos inside a nested QEMU, and prints
+    # plenty of '#'-terminated chatter on the way that looks like a prompt.
+    # It gave up every time on a switch that was simply still booting.
+    deadline = time.time() + 1200
+    console.read(1.5)  # discard stale buffer
+    while time.time() < deadline:
+        console.send('')
+        text = console.read(2.0)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        # Scan the last few lines, not only the final one: the ZTP DHCP client
+        # prints a status line every couple of seconds, so on a fresh vJunos
+        # the true last line is almost always chatter and a strict
+        # "classify lines[-1]" loop never sees the prompt at all.
+        prompt_line = next(
+            (line for line in reversed(lines[-6:])
+             if re.search(r'(login:|[%>#]$)', line)), '')
+        last = prompt_line or (lines[-1] if lines else '')
+        # Escape the pager FIRST. Junos pages any long output with
+        # '---(more NN%)---', and inside the pager single keystrokes are
+        # commands: 's' means "save to a file", so a 'set ...' typed at a
+        # pager is read as save-to-file named "et ...". Every command after
+        # that vanishes into the pager and the device looks wedged while it
+        # is simply waiting for a keypress.
+        if '(more' in text or 'Filename:' in text:
+            console.send('q')
+            continue
+        if re.search(r'login:$', last):
+            console.send('root')
+            got = console.expect(r'(Password:|[%#>]\s*$)', timeout=30) or ''
+            if 'Password:' in got:
+                console.send(password)
+        elif re.search(r'Password:$', last):
+            console.send(password)
+        elif last.endswith('>'):
+            return                      # operational CLI - where we want to be
+        elif re.search(r'^root@[\w.-]*:.*#$', last) or last.endswith('%'):
+            console.send('cli')         # FreeBSD shell -> CLI
+        elif last.endswith('#'):
+            console.send('exit')        # configuration mode -> operational
+        # anything else (boot chatter, DHCP client noise): loop and re-poke
+    raise RebuildError(
+        'could not reach the Junos operational CLI within 20 minutes - connect '
+        'to the console manually and look at what state it is in')
+
+
+def junos_wait_ready(console, password, timeout=900):
+    """Wait until the CLI is stable enough to configure, not merely present.
+
+    A vJunos reaches a login prompt minutes before it is actually usable: mgd
+    is still starting and the PFE is still printing tnp_hello_tx chatter onto
+    the console. Configuring in that window fails in a specific and confusing
+    way - the CLI session dies with 'remote side unexpectedly closed
+    connection' and drops to the FreeBSD shell, where the next set-command is
+    typed into sh and simply hangs.
+
+    Readiness is defined as 'show version' answering cleanly twice in a row.
+    Twice, because it answers once during the unstable window too.
+    """
+    deadline = time.time() + timeout
+    clean_runs = 0
+    while time.time() < deadline:
+        junos_reach_cli(console, password)
+        # Disable paging BEFORE running anything that can page. Doing it the
+        # other way round is what put the console into the pager in the first
+        # place, where the command meant to disable paging was itself eaten.
+        console.run('set cli screen-length 0', quiet_seconds=3)
+        out = console.run('show version', quiet_seconds=6)
+        if 'Junos:' in out and 'closed connection' not in out:
+            clean_runs += 1
+            if clean_runs >= 2:
+                ok('CLI stable (show version answered cleanly twice)')
+                return
+        else:
+            clean_runs = 0
+        time.sleep(15)
+    raise RebuildError('Junos CLI never became stable enough to configure')
+
+
+def configure_junos_device(name, node, spec, gns3_host, username, password):
+    """Push one Junos device's set-commands over its console and commit.
+
+    Scope matches the IOS devices: enough that Ansible can reach it. On Junos
+    that specifically means `set system services netconf ssh` - every path this
+    project has into a Junos box speaks NETCONF, and without it SSH to the CLI
+    still works, which makes the failure look like bad credentials.
+    """
+    step(f'{name}: base config')
+    console = Console(gns3_host, node['console'])
+    # Junos echoes the command then returns a prompt ending in > or #.
+    #
+    # NOT anchored to end-of-buffer, unlike the IOS prompt. A freshly booted
+    # vJunos whose fxp0 has no DHCP server prints
+    #   Auto Image Upgrade: DHCP INET6 Client State Reset : fxp0.0
+    # every couple of seconds forever, so there is almost always chatter
+    # sitting after the prompt and an anchored match never fires - the switch
+    # looks hung while it is sitting there perfectly idle. Accepting a prompt
+    # followed by a newline is what makes this work; `delete chassis
+    # auto-image-upgrade` in the config then stops the noise for good.
+    cli_prompt = r'[\r\n][\w.-]*@?[\w.-]*[>#][ \t]*(\r?\n|$)'
+
+    def run_synced(command, timeout=60):
+        console.send(command)
+        seen = console.expect(cli_prompt, timeout)
+        if seen is None:
+            raise RebuildError(f'{name}: no prompt back after {command!r} within {timeout}s')
+        # The CLI dying mid-config demotes the console to the FreeBSD shell,
+        # whose prompt also ends in '#'. Without this check the next command is
+        # typed into sh, which is how a run ends up hung on a healthy switch.
+        if 'closed connection' in seen or re.search(r'root@[\w.-]*:~\s*#\s*$', seen):
+            raise RebuildError(
+                f'{name}: the CLI session dropped to the shell while running '
+                f'{command!r} - the device was not ready to be configured')
+        for bad in ('syntax error', 'unknown command', 'error:'):
+            if bad in seen.lower():
+                raise RebuildError(f'{name} rejected: {command!r}\n{seen.strip()[-200:]}')
+        return seen
+
+    try:
+        junos_wait_ready(console, password)   # also disables paging
+        ok(f'{name}: console responsive, operational CLI')
+        run_synced('configure', timeout=60)
+
+        for line in spec['config']:
+            command = line.format(username=username, password=password)
+            if command.endswith('plain-text-password'):
+                # The one interactive command in the set. Junos will not take a
+                # password as an argument here, and the encrypted-password form
+                # needs a crypt hash this script has no portable way to make
+                # (python's crypt module is gone as of 3.13), so the prompts
+                # are answered instead.
+                console.send(command)
+                for expect_prompt in (r'New password:', r'Retype new password:'):
+                    if console.expect(expect_prompt, timeout=30) is None:
+                        raise RebuildError(f'{name}: no {expect_prompt!r} prompt')
+                    console.send(password)
+                if console.expect(cli_prompt, timeout=30) is None:
+                    raise RebuildError(f'{name}: console did not return after setting the password')
+            else:
+                run_synced(command)
+        ok(f'{name}: {len(spec["config"])} set-commands applied')
+
+        # commit check first: it validates without changing anything, so a bad
+        # config fails here rather than half-applied on a device the script can
+        # no longer reach.
+        seen = run_synced('commit check', timeout=180)
+        if 'configuration check succeeds' not in seen.lower():
+            raise RebuildError(f'{name}: commit check did not succeed\n{seen.strip()[-300:]}')
+        ok(f'{name}: commit check passed')
+
+        seen = run_synced('commit and-quit', timeout=240)
+        if 'commit complete' not in seen.lower():
+            raise RebuildError(f'{name}: commit did not complete\n{seen.strip()[-300:]}')
+        ok(f'{name}: committed')
+    finally:
+        console.close()
+
+
+def configure_vpcs(name, node, spec, gns3_host):
+    """Configure a VPCS endpoint. Its console is not IOS - no enable, no
+    config mode, and the prompt is the node name followed by '>'."""
+    step(f'{name}: endpoint config')
+    console = Console(gns3_host, node['console'])
+    try:
+        if console.expect(r'>\s*$', timeout=60, poke=True) is None:
+            raise RebuildError(f'{name}: VPCS console never showed a prompt')
+        for line in spec['config']:
+            console.send(line)
+            if console.expect(r'>\s*$', timeout=20) is None:
+                raise RebuildError(f'{name}: no prompt back after {line!r}')
+        out = console.run('show ip', quiet_seconds=3)
+        ok(f'{name}: {" ".join(out.split())[:120]}')
+    finally:
+        console.close()
+
+
+def configure_devices(api, project_id, topo, nodes, gns3_host, username, password,
+                      only=None):
+    """Configure every device in the topology's devices: section.
+
+    `only` narrows it to named devices. Useful because the slow devices are
+    slow in a way the fast ones are not: re-pushing four Cisco boxes to retry
+    one vJunos costs ten minutes of nothing, every attempt.
+    """
+    for name, spec in topo['devices'].items():
+        if only and name not in only:
+            continue
+        node = nodes[name]
+        platform = spec['platform']
+        if platform == 'ios':
+            configure_ios_device(api, project_id, name, node, spec, gns3_host,
+                                 username, password)
+        elif platform == 'junos':
+            configure_junos_device(name, node, spec, gns3_host, username, password)
+        elif platform == 'vpcs':
+            configure_vpcs(name, node, spec, gns3_host)
+        else:
+            raise RebuildError(f'{name}: unknown platform {platform!r}')
+
+
+def run_verify_pings(topo, nodes, gns3_host):
+    """Run the topology's verify_pings over each source node's console.
+
+    Driven over the console rather than over SSH so a failure here means the
+    data path is broken, not that management or credentials are - those are
+    separate problems and conflating them wastes the morning.
+    """
+    step('end-to-end pings')
+    failures = []
+    for check in topo.get('verify_pings', []):
+        source, target = check['from'], check['to']
+        node = nodes[source]
+        platform = topo['devices'].get(source, {}).get('platform')
+        console = Console(gns3_host, node['console'])
+        try:
+            console.send('')
+            if platform == 'vpcs':
+                console.expect(r'>\s*$', timeout=20, poke=True)
+                console.run(f'ping {target} -c 1', quiet_seconds=5)   # prime ARP
+                out = console.run(f'ping {target} -c 3', quiet_seconds=8)
+                good = 'bytes from' in out
+            elif platform == 'junos':
+                console.expect(r'>\s*$', timeout=30, poke=True)
+                console.run(f'ping {target} count 1', quiet_seconds=6)   # prime ARP
+                out = console.run(f'ping {target} count 3', quiet_seconds=10)
+                good = 'bytes from' in out and '100% packet loss' not in out
+            elif platform == 'ios':
+                console.expect(r'#\s*\r?$', timeout=20, poke=True)
+                # Prime ARP first and assert on the second run. The first
+                # packet to an unresolved neighbour is dropped while ARP
+                # completes, so a cold 'repeat 3' reports 66% on a segment that
+                # is perfectly healthy - which failed this check on the transit
+                # link the first time it was cabled.
+                console.run(f'ping {target} repeat 2', quiet_seconds=8)
+                out = console.run(f'ping {target} repeat 3', quiet_seconds=10)
+                good = 'Success rate is 100' in out
+            else:
+                # The automation container: a plain Linux shell.
+                console.expect(r'#\s*$', timeout=20, poke=True)
+                out = console.run(f'ping -c2 -W3 {target}', quiet_seconds=8)
+                good = ' 0% packet loss' in out
+            if good:
+                ok(f'{source} -> {target} ({check["why"]})')
+            else:
+                failures.append(f'{source} -> {target}: {check["why"]}\n      '
+                                f'{" ".join(out.split())[-200:]}')
+        finally:
+            console.close()
+    return failures
+
+
 def verify(topo, nodes, gns3_host):
     step('verify')
     host_cfg = topo['automation_host']
@@ -633,32 +1001,83 @@ def verify(topo, nodes, gns3_host):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Rebuild or verify the GNS3 lab from lab/topology.yaml')
+    parser = argparse.ArgumentParser(description='Rebuild or verify a GNS3 lab from a topology file')
     parser.add_argument('--verify', action='store_true',
                         help='only run the end-state checks; create and change nothing')
+    parser.add_argument('--only', default=None,
+                        help='comma-separated device names to configure (multi-vendor '
+                             'topology only). Skips node/link creation and the end-to-end '
+                             'pings - use it to retry one slow device.')
+    parser.add_argument('--topology', default=None,
+                        help='topology file to build (default: lab/topology.yaml, the '
+                             'single-switch STIG lab). Use lab/topology_multivendor.yaml '
+                             'for the R1/R2/SW1/SW2 lab in the "Network Automation" project.')
     args = parser.parse_args()
 
-    topo = load_topology()
+    topo = load_topology(args.topology)
     api = Gns3(topo['gns3']['server'])
     gns3_host = topo['gns3']['server'].split('//', 1)[-1].split(':')[0].split('/')[0]
 
     templates, public_key = preflight(api, topo)
     project_id = ensure_project(api, topo)
 
+    # Two labs, one script. The multi-vendor topology carries a devices:
+    # section and configures every device from it; the original single-switch
+    # topology carries a switch: section and its own bespoke path. Branching on
+    # the data rather than on a flag means neither lab can be built with the
+    # other's logic by passing the wrong argument.
+    multivendor = 'devices' in topo
+
     if args.verify:
         nodes = {n['name']: n for n in api.get(f'/projects/{project_id}/nodes')}
         missing = [name for name in topo['nodes'] if name not in nodes]
         if missing:
             raise RebuildError(f'nodes missing from the project: {", ".join(missing)}')
-        verify(topo, nodes, gns3_host)
+        if multivendor:
+            failures = run_verify_pings(topo, nodes, gns3_host)
+            if failures:
+                raise RebuildError('verification failed:\n  - ' + '\n  - '.join(failures))
+            print('\nLab verified.')
+        else:
+            verify(topo, nodes, gns3_host)
         return
 
     username, password = get_device_credentials()
+
+    if args.only:
+        if not multivendor:
+            raise RebuildError('--only applies to the multi-vendor topology only')
+        only = [n.strip() for n in args.only.split(',') if n.strip()]
+        unknown = [n for n in only if n not in topo['devices']]
+        if unknown:
+            raise RebuildError(f'--only names devices not in the topology: {unknown}')
+        nodes = {n['name']: n for n in api.get(f'/projects/{project_id}/nodes')}
+        configure_devices(api, project_id, topo, nodes, gns3_host, username,
+                          password, only=only)
+        print(f'\nConfigured: {", ".join(only)}. End-to-end pings skipped '
+              '(--only); run --verify for the full check.')
+        return
+
     nodes = ensure_nodes(api, project_id, topo, templates)
     ensure_links(api, project_id, topo, nodes)
-    provision_container(api, project_id, topo, nodes, public_key, gns3_host)
-    configure_switch(api, project_id, topo, nodes, gns3_host, username, password)
-    verify(topo, nodes, gns3_host)
+
+    if multivendor:
+        start_nodes(api, project_id, nodes, list(topo['devices']))
+        provision_container(api, project_id, topo, nodes, public_key, gns3_host)
+        # Re-read: provisioning and the adapter changes above both mutate node
+        # state, and the console ports are read from it.
+        nodes = {n['name']: n for n in api.get(f'/projects/{project_id}/nodes')}
+        configure_devices(api, project_id, topo, nodes, gns3_host, username, password)
+        failures = run_verify_pings(topo, nodes, gns3_host)
+        if failures:
+            raise RebuildError('verification failed:\n  - ' + '\n  - '.join(failures))
+        host_cfg = topo['automation_host']
+        print(f'\nLab verified. Jump host: root@{host_cfg["vmnet_ip"]} '
+              f'-> devices on {host_cfg["lab_ip"].rsplit(".", 1)[0]}.0/24')
+    else:
+        provision_container(api, project_id, topo, nodes, public_key, gns3_host)
+        configure_switch(api, project_id, topo, nodes, gns3_host, username, password)
+        verify(topo, nodes, gns3_host)
 
 
 if __name__ == '__main__':

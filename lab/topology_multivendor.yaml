@@ -1,0 +1,563 @@
+# lab/topology_multivendor.yaml
+# The multi-vendor lab, declared as data - consumed by lab/rebuild_lab.py:
+#
+#     python lab/rebuild_lab.py --topology lab/topology_multivendor.yaml
+#
+# SEPARATE FILE, SEPARATE PROJECT, on purpose. topology.yaml describes the
+# single-switch STIG lab in the "Switch automation" project and is left alone;
+# this one builds the "Network Automation" project that the ansible/ inventory
+# describes. Two labs on one GNS3 server, neither able to break the other.
+#
+# ADDRESSING comes from ansible/inventory/hosts.yml and its group_vars - this
+# file must agree with them or the playbooks reach the wrong device:
+#
+#   management  10.10.50.0/24   container .10  R1 .11  SW1 .12  SW2 .13
+#                               JSW1 .14  JSW2 .15  PA1 .16  R2 .17
+#   VLAN 10     10.0.10.0/24    VIP .1  R1 .2  R2 .3   (USERS)
+#   VLAN 20     10.0.20.0/24    VIP .1  R1 .2  R2 .3   (SERVERS)
+#   transit     10.0.1.0/29     PA1 .1  R1 .2  R2 .3  VIP .4
+#
+# NOT BUILT YET, and both are recorded here as comments rather than omitted
+# silently, because "why is the diagram bigger than the lab" is the first
+# question the next person asks:
+#
+#   JSW1/JSW2 (vJunos-switch) - the image needs an AMD patch to boot on this
+#     host (see lab/images.yaml). MgmtSw ports 5 and 6 are held for them.
+#   PA1 (PAN-OS)  - no image. Licensed, and nobody has downloaded it. Without
+#     it there is no untrust zone and no default route off the lab. The transit
+#     segment is still built and addressed, so HSRP group 1 forms between the
+#     routers; PA1 is a cable onto TransitSw port 2 plus MgmtSw port 7.
+
+gns3:
+  # Port 80 on this install, not the usual 3080 - same as the other lab.
+  server: http://192.168.33.130
+  project: Network Automation
+
+templates:
+  router: Cisco IOSv
+  switch: Cisco IOSvL2
+  juniper_switch: vJunos-switch
+  automation_host: Network Automation
+
+nodes:
+  # --- management plane ---------------------------------------------------
+  # An unmanaged switch, so every device's management port lands in one
+  # untagged broadcast domain regardless of how its own platform models
+  # management (a routed port on the IOSv routers, an access port plus SVI on
+  # the IOSvL2 switches, fxp0 on the Juniper switches when they arrive).
+  MgmtSw:
+    builtin: ethernet_switch
+    x: -300
+    y: 250
+  NetworkAutomation-1:
+    template: automation_host
+    adapters: 2          # eth0 -> MgmtSw, eth1 -> VMnet8; stock template has 1
+    x: -550
+    y: 250
+  Cloud1:
+    builtin: cloud
+    x: -750
+    y: 250
+
+  # The transit segment between the routers and the firewall. Unmanaged, so it
+  # costs no RAM. PA1 attaches to port 2 when its image exists; until then the
+  # segment still earns its place, because HSRP group 1 forms across it and
+  # gives the pair a third group to fail over.
+  TransitSw:
+    builtin: ethernet_switch
+    x: 0
+    y: -320
+
+  # --- routed core --------------------------------------------------------
+  R1:
+    template: router
+    x: -150
+    y: -200
+  R2:
+    template: router
+    x: 150
+    y: -200
+
+  # --- distribution -------------------------------------------------------
+  SW1:
+    template: switch
+    x: -150
+    y: -50
+  SW2:
+    template: switch
+    x: 150
+    y: -50
+
+  # --- Juniper access layer -----------------------------------------------
+  # 5 GB and 4 vCPU each, and slow: a vJunos boot is ~10 minutes because the
+  # image runs Junos inside a nested QEMU. Both need the AMD patches described
+  # in lab/images.yaml to boot at all on this host.
+  #
+  # Adapter 0 is fxp0 (management), so ge-0/0/0 is adapter 1 - see the links
+  # section. Getting that wrong puts a trunk on the management port.
+  JSW1:
+    template: juniper_switch
+    x: -330
+    y: 100
+  JSW2:
+    template: juniper_switch
+    x: 330
+    y: 100
+
+  # --- endpoints ----------------------------------------------------------
+  # VPCS costs no RAM and pings, which is the whole requirement for proving
+  # inter-VLAN routing and HSRP failover. Kept on the Cisco switches even now
+  # that the Juniper pair exists, so the Cisco-only path stays testable when
+  # the (slow, memory-hungry) vJunos nodes are shut down.
+  PC10:
+    builtin: vpcs
+    x: -300
+    y: 80
+  PC20:
+    builtin: vpcs
+    x: 300
+    y: 80
+
+# Adapter/port pairs, not interface names: GNS3 addresses ports by number and
+# the mapping is per-platform. Getting it wrong does not error - it cables the
+# wrong interface - so both mappings in use here are written down:
+#
+#   IOSv (4 adapters)     adapter N      -> GigabitEthernet0/N
+#   IOSvL2 (16 adapters)  adapter N      -> GigabitEthernet<N/4>/<N%4>
+#
+# IOSvL2 groups its ports in fours, so adapter 4 is Gi1/0 and adapter 7 is
+# Gi1/3. There is no Gi0/4 or Gi0/7 on this platform at all - the first build
+# died on 'interface GigabitEthernet0/4' being rejected outright, which is the
+# good failure. The bad one is assuming Gi0/1 and Gi0/3 map to adapters 1 and
+# 3 (they do) and then extending the pattern past adapter 3 (it does not).
+links:
+  # --- data plane ---------------------------------------------------------
+  # R1 Gi0/2 <-> SW1 Gi0/0   (802.1Q trunk, VLANs 10/20, native 999)
+  - [[R1, 2, 0], [SW1, 0, 0]]
+  # R2 Gi0/2 <-> SW2 Gi0/0
+  - [[R2, 2, 0], [SW2, 0, 0]]
+  # SW1 Gi0/2 <-> SW2 Gi0/2  (inter-switch trunk, also carries mgmt VLAN 99)
+  - [[SW1, 2, 0], [SW2, 2, 0]]
+
+  # Transit: both routers onto TransitSw. Port 2 is held for PA1's
+  # ethernet1/2, which is the only thing missing from the edge.
+  - [[R1, 1, 0], [TransitSw, 0, 0]]
+  - [[R2, 1, 0], [TransitSw, 0, 1]]
+
+  # --- endpoints ----------------------------------------------------------
+  # PC10 <-> SW1 Gi1/0 (access VLAN 10), PC20 <-> SW2 Gi1/0 (access VLAN 20).
+  # Deliberately on different switches: a ping between them has to cross the
+  # inter-switch trunk AND be routed, so one test exercises both.
+  - [[PC10, 0, 0], [SW1, 4, 0]]
+  - [[PC20, 0, 0], [SW2, 4, 0]]
+
+  # --- Juniper access layer -----------------------------------------------
+  # Each JSW is dual-homed to BOTH distribution switches; STP blocks one of the
+  # two uplinks. Cabling matches ansible/inventory/group_vars: JSW ge-0/0/0
+  # goes to SW1 and ge-0/0/1 to SW2, while SW1/SW2 use Gi0/1 for JSW1 and Gi0/3
+  # for JSW2. There is deliberately NO direct JSW1<->JSW2 link.
+  #
+  # vJunos adapter numbers are off by one against the interface name because
+  # adapter 0 is fxp0: ge-0/0/0 is adapter 1, ge-0/0/1 is adapter 2.
+  - [[JSW1, 1, 0], [SW1, 1, 0]]     # JSW1 ge-0/0/0 <-> SW1 Gi0/1
+  - [[JSW1, 2, 0], [SW2, 1, 0]]     # JSW1 ge-0/0/1 <-> SW2 Gi0/1
+  - [[JSW2, 1, 0], [SW1, 3, 0]]     # JSW2 ge-0/0/0 <-> SW1 Gi0/3
+  - [[JSW2, 2, 0], [SW2, 3, 0]]     # JSW2 ge-0/0/1 <-> SW2 Gi0/3
+
+  # --- management ---------------------------------------------------------
+  # MgmtSw port 7 is intentionally left free for PA1.
+  - [[NetworkAutomation-1, 0, 0], [MgmtSw, 0, 0]]
+  - [[R1, 0, 0], [MgmtSw, 0, 1]]
+  - [[R2, 0, 0], [MgmtSw, 0, 2]]
+  - [[SW1, 7, 0], [MgmtSw, 0, 3]]
+  - [[SW2, 7, 0], [MgmtSw, 0, 4]]
+  # fxp0 is adapter 0 on vJunos - genuinely out-of-band, unlike the Cisco
+  # switches whose "management port" is just another switchport.
+  - [[JSW1, 0, 0], [MgmtSw, 0, 5]]
+  - [[JSW2, 0, 0], [MgmtSw, 0, 6]]
+
+  # container eth1 <-> the GNS3 VM's eth1 (VMnet8, port 1 on the Cloud).
+  # This is the leg Windows/SecureCRT can actually reach, which makes the
+  # container the jump host into 10.10.50.0/24.
+  - [[NetworkAutomation-1, 1, 0], [Cloud1, 0, 1]]
+
+automation_host:
+  # eth0: lab management segment. Must match ansible/inventory/hosts.yml.
+  lab_ip: 10.10.50.10
+  lab_netmask: 255.255.255.0
+  # eth1: VMnet8 (VMware NAT). Static and below the DHCP pool so the
+  # SecureCRT/PyCharm target never moves on a lease change. Gateway .2 is
+  # VMware's NAT router on every default VMnet8.
+  vmnet_ip: 192.168.231.50
+  vmnet_netmask: 255.255.255.0
+  vmnet_gateway: 192.168.231.2
+  ssh_public_key: ~/.ssh/netauto_ed25519.pub
+  repo_url: https://github.com/jflores3531/NetworkAutomation.git
+  repo_path: /root/NetworkAutomation
+
+# Per-device bootstrap config, as literal lines in the order they are typed.
+#
+# LINES, NOT A MODEL, and that is the point: this file is the only place the
+# lab's config lives, so a change here is the whole change. {username} and
+# {password} are filled at runtime from the prompt (or SSH_USERNAME /
+# SSH_PASSWORD), so no credential is written down here.
+#
+# Scope is deliberately "enough that Ansible can take over": addressing,
+# VLANs, trunks, SSH and HSRP. Everything beyond that - NTP, syslog, LLDP,
+# hardening - belongs to ansible/roles/cisco_baseline, which is the thing
+# this lab exists to exercise.
+devices:
+  R1:
+    platform: ios
+    config:
+      - hostname R1
+      - no ip domain-lookup
+      - ip domain-name lab.local
+      - username {username} privilege 15 secret {password}
+      - enable secret {password}
+      - ip routing
+      # Management: a routed port straight onto MgmtSw. IOSv has no dedicated
+      # management interface, so this is as out-of-band as the platform gets -
+      # a separate physical link in its own broadcast domain.
+      - interface GigabitEthernet0/0
+      - description management to MgmtSw
+      - ip address 10.10.50.11 255.255.255.0
+      - no shutdown
+      - exit
+      # Router-on-a-stick down to SW1. The physical port carries no address.
+      - interface GigabitEthernet0/2
+      - description trunk to SW1
+      - no ip address
+      - no shutdown
+      - exit
+      - interface GigabitEthernet0/2.10
+      - description USERS gateway
+      - encapsulation dot1Q 10
+      - ip address 10.0.10.2 255.255.255.0
+      # HSRP v2 throughout: v1 cannot carry a group number above 255 and its
+      # hello packets are not IPv6-capable, so starting on v2 avoids a
+      # migration later. R1 is priority 110 with preempt, so it takes the
+      # active role back after a reboot instead of leaving the pair inverted.
+      - standby version 2
+      - standby 10 ip 10.0.10.1
+      - standby 10 priority 110
+      - standby 10 preempt
+      - exit
+      - interface GigabitEthernet0/2.20
+      - description SERVERS gateway
+      - encapsulation dot1Q 20
+      - ip address 10.0.20.2 255.255.255.0
+      - standby version 2
+      - standby 20 ip 10.0.20.1
+      - standby 20 priority 110
+      - standby 20 preempt
+      - exit
+      # Transit toward PA1. Addressed now so the firewall is a cable-and-go
+      # when its image exists; nothing routes over it yet.
+      - interface GigabitEthernet0/1
+      - description transit to PA1
+      - ip address 10.0.1.2 255.255.255.248
+      - standby version 2
+      - standby 1 ip 10.0.1.4
+      - standby 1 priority 110
+      - standby 1 preempt
+      - no shutdown
+      - exit
+      - ip ssh version 2
+      - line vty 0 4
+      - login local
+      - transport input ssh
+      - exec-timeout 5 0
+      - exit
+
+  R2:
+    platform: ios
+    config:
+      - hostname R2
+      - no ip domain-lookup
+      - ip domain-name lab.local
+      - username {username} privilege 15 secret {password}
+      - enable secret {password}
+      - ip routing
+      - interface GigabitEthernet0/0
+      - description management to MgmtSw
+      - ip address 10.10.50.17 255.255.255.0
+      - no shutdown
+      - exit
+      - interface GigabitEthernet0/2
+      - description trunk to SW2
+      - no ip address
+      - no shutdown
+      - exit
+      - interface GigabitEthernet0/2.10
+      - description USERS gateway
+      - encapsulation dot1Q 10
+      - ip address 10.0.10.3 255.255.255.0
+      - standby version 2
+      - standby 10 ip 10.0.10.1
+      - standby 10 priority 100
+      - exit
+      - interface GigabitEthernet0/2.20
+      - description SERVERS gateway
+      - encapsulation dot1Q 20
+      - ip address 10.0.20.3 255.255.255.0
+      - standby version 2
+      - standby 20 ip 10.0.20.1
+      - standby 20 priority 100
+      - exit
+      - interface GigabitEthernet0/1
+      - description transit to PA1
+      - ip address 10.0.1.3 255.255.255.248
+      - standby version 2
+      - standby 1 ip 10.0.1.4
+      - standby 1 priority 100
+      - no shutdown
+      - exit
+      - ip ssh version 2
+      - line vty 0 4
+      - login local
+      - transport input ssh
+      - exec-timeout 5 0
+      - exit
+
+  SW1:
+    platform: ios
+    config:
+      - hostname SW1
+      - no ip domain-lookup
+      - ip domain-name lab.local
+      - username {username} privilege 15 secret {password}
+      - enable secret {password}
+      # No 'ip routing'. These switches are pure layer 2 by design - every
+      # gateway address is HSRP on R1/R2 - so the only L3 here is the
+      # management SVI below.
+      - vlan 10
+      - name USERS
+      - exit
+      - vlan 20
+      - name SERVERS
+      - exit
+      - vlan 99
+      - name MGMT
+      - exit
+      - vlan 999
+      - name NATIVE_UNUSED
+      - exit
+      - interface GigabitEthernet0/0
+      - description trunk to R1
+      - switchport trunk encapsulation dot1q
+      - switchport mode trunk
+      - switchport trunk allowed vlan 10,20
+      - switchport trunk native vlan 999
+      - no shutdown
+      - exit
+      # VLAN 99 rides this trunk so a management SVI stays reachable if one
+      # switch loses its own link to MgmtSw.
+      - interface GigabitEthernet0/2
+      - description inter-switch trunk
+      - switchport trunk encapsulation dot1q
+      - switchport mode trunk
+      - switchport trunk allowed vlan 10,20,99
+      - switchport trunk native vlan 999
+      - no shutdown
+      - exit
+      - interface GigabitEthernet1/0
+      - description PC10 access port
+      - switchport mode access
+      - switchport access vlan 10
+      - spanning-tree portfast
+      - no shutdown
+      - exit
+      - interface GigabitEthernet1/3
+      - description management to MgmtSw
+      - switchport mode access
+      - switchport access vlan 99
+      - spanning-tree portfast
+      - no shutdown
+      - exit
+      - interface Vlan99
+      - ip address 10.10.50.12 255.255.255.0
+      - no shutdown
+      - exit
+      # A default gateway, not a route: with no 'ip routing' the switch needs
+      # this to answer anything off 10.10.50.0/24. Points at R1's management
+      # address rather than an HSRP VIP - there is no HSRP on this segment.
+      - ip default-gateway 10.10.50.11
+      - ip ssh version 2
+      - line vty 0 4
+      - login local
+      - transport input ssh
+      - exec-timeout 5 0
+      - exit
+
+  SW2:
+    platform: ios
+    config:
+      - hostname SW2
+      - no ip domain-lookup
+      - ip domain-name lab.local
+      - username {username} privilege 15 secret {password}
+      - enable secret {password}
+      - vlan 10
+      - name USERS
+      - exit
+      - vlan 20
+      - name SERVERS
+      - exit
+      - vlan 99
+      - name MGMT
+      - exit
+      - vlan 999
+      - name NATIVE_UNUSED
+      - exit
+      - interface GigabitEthernet0/0
+      - description trunk to R2
+      - switchport trunk encapsulation dot1q
+      - switchport mode trunk
+      - switchport trunk allowed vlan 10,20
+      - switchport trunk native vlan 999
+      - no shutdown
+      - exit
+      - interface GigabitEthernet0/2
+      - description inter-switch trunk
+      - switchport trunk encapsulation dot1q
+      - switchport mode trunk
+      - switchport trunk allowed vlan 10,20,99
+      - switchport trunk native vlan 999
+      - no shutdown
+      - exit
+      - interface GigabitEthernet1/0
+      - description PC20 access port
+      - switchport mode access
+      - switchport access vlan 20
+      - spanning-tree portfast
+      - no shutdown
+      - exit
+      - interface GigabitEthernet1/3
+      - description management to MgmtSw
+      - switchport mode access
+      - switchport access vlan 99
+      - spanning-tree portfast
+      - no shutdown
+      - exit
+      - interface Vlan99
+      - ip address 10.10.50.13 255.255.255.0
+      - no shutdown
+      - exit
+      - ip default-gateway 10.10.50.11
+      - ip ssh version 2
+      - line vty 0 4
+      - login local
+      - transport input ssh
+      - exec-timeout 5 0
+      - exit
+
+  # JSW1 / JSW2 ARE PARKED - the nodes and their cabling above are real and
+  # get built, but the console bootstrap below is commented out so a full
+  # rebuild finishes green instead of dying on a device that is not ready.
+  #
+  # WHY, precisely. vJunos boots to a usable CLI (proven: JUNOS 26.2R1.7,
+  # model ex9214, after the two AMD patches in lab/images.yaml), but driving
+  # its console unattended is not reliable yet. Two traps found the hard way,
+  # both now handled in rebuild_lab.py, and at least one more that is not:
+  #
+  #   * the '---(more NN%)---' pager. Inside it, single keys are commands:
+  #     's' means save-to-file, so 'set cli screen-length 0' typed at a pager
+  #     becomes a save with the filename "et cli screen-length 0", and every
+  #     command after it disappears. Paging must be disabled BEFORE anything
+  #     that pages, and the driver has to be able to escape a pager it finds.
+  #   * ZTP. With fxp0 on a segment that has no DHCP server, Junos prints
+  #     'Auto Image Upgrade: DHCP INET6 Client State Reset' every couple of
+  #     seconds forever, so the prompt is almost never the last thing in the
+  #     buffer. 'delete chassis auto-image-upgrade' stops it - but that is
+  #     config, and config needs the console to work first.
+  #
+  # To finish by hand once a switch has booted (~10 min), and then move these
+  # blocks back under devices::
+  #
+  #     python lab/rebuild_lab.py --topology lab/topology_multivendor.yaml --only JSW1
+  #
+  # RAM: 5 GB each, and their RSS grows past that. Two of them alongside the
+  # Cisco lab took this 24 GB GNS3 VM to 178 MB free. Run ONE at a time until
+  # the VM is bigger.
+  #
+  # JSW1:
+  #   platform: junos
+  #   config:
+  #     - set system host-name JSW1
+  #     - set system domain-name lab.local
+  #     # Answered interactively by the console driver - Junos will not take a
+  #     # password as an argument on this command.
+  #     - set system root-authentication plain-text-password
+  #     - set system login user {username} class super-user
+  #     - set system login user {username} authentication plain-text-password
+  #     - set system services ssh
+  #     # THE PRECONDITION: every path this project has into a Junos box
+  #     # speaks NETCONF. Without it SSH to the CLI still works, which makes
+  #     # the failure look like bad credentials rather than a missing service.
+  #     - set system services netconf ssh
+  #     - set interfaces fxp0 unit 0 family inet address 10.10.50.14/24
+  #     - delete chassis auto-image-upgrade
+  # JSW2:
+  #   platform: junos
+  #   config:
+  #     - set system host-name JSW2
+  #     - set system domain-name lab.local
+  #     - set system root-authentication plain-text-password
+  #     - set system login user {username} class super-user
+  #     - set system login user {username} authentication plain-text-password
+  #     - set system services ssh
+  #     - set system services netconf ssh
+  #     - set interfaces fxp0 unit 0 family inet address 10.10.50.15/24
+  #     - delete chassis auto-image-upgrade
+
+# VPCS endpoints. Its console takes plain commands, not IOS - the platform
+# key is what tells rebuild_lab.py which driver to use. 'save' persists the
+# address so a restarted PC does not come back unconfigured.
+  PC10:
+    platform: vpcs
+    config:
+      - ip 10.0.10.100/24 10.0.10.1
+      - save
+  PC20:
+    platform: vpcs
+    config:
+      - ip 10.0.20.100/24 10.0.20.1
+      - save
+
+# End-to-end checks run after the config is pushed. Each entry is a ping from
+# one node's console to an address, so a failure names the hop that broke
+# rather than just "the lab is down".
+verify_pings:
+  - from: PC10
+    to: 10.0.10.1
+    why: USERS host reaches its HSRP gateway (local VLAN, R1 active)
+  - from: PC10
+    to: 10.0.20.100
+    why: inter-VLAN routing across the inter-switch trunk, end to end
+  - from: PC20
+    to: 10.0.10.100
+    why: the same path in reverse
+  - from: NetworkAutomation-1
+    to: 10.10.50.11
+    why: controller reaches R1 management
+  - from: NetworkAutomation-1
+    to: 10.10.50.17
+    why: controller reaches R2 management
+  - from: NetworkAutomation-1
+    to: 10.10.50.12
+    why: controller reaches SW1 management SVI
+  - from: NetworkAutomation-1
+    to: 10.10.50.13
+    why: controller reaches SW2 management SVI
+  - from: R1
+    to: 10.0.1.3
+    why: transit segment is live between the routers (HSRP group 1 can form)
+  # Re-enable alongside the JSW blocks above, once their fxp0 is addressed.
+  # Left out rather than left failing, so a green --verify means something.
+  # - from: NetworkAutomation-1
+  #   to: 10.10.50.14
+  #   why: controller reaches JSW1 fxp0 (Ansible cannot run until this works)
+  # - from: NetworkAutomation-1
+  #   to: 10.10.50.15
+  #   why: controller reaches JSW2 fxp0
