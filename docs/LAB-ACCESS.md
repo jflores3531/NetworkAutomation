@@ -121,8 +121,12 @@ Check the node's **On close** setting before you stop one. GNS3's default,
 `power_off`, gives qemu 3 seconds and then kills it, so Junos never shuts
 down. The vJunos template now uses `shutdown_signal` (see `lab/images.yaml`):
 the ACPI power button makes the image halt cleanly, telling the inner Junos to
-`halt -p` first. A stop then takes a minute or two instead of seconds, which is
-the point.
+`halt -p` first. On JSW1 that stop took 33 seconds, the next boot's disk check
+came back clean, and the committed config was all still there.
+
+After a start, ping answers well before SSH does. Ports 22 and 830 refused
+connections for about 15 minutes, a few minutes after fxp0 was already up.
+Connection refused during that window is normal.
 
 A node created before that change keeps `power_off`. Fix it once through the
 API while the node is stopped:
