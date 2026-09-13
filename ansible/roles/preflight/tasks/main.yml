@@ -97,7 +97,7 @@
     - preflight_port_check is failed
 
 - name: Attempt a NAPALM login
-  napalm.ansible.napalm_get_facts:
+  napalm.napalm.napalm_get_facts:
     provider: "{{ napalm_provider }}"
     filter: facts
   register: preflight_napalm_login

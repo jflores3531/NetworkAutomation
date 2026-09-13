@@ -89,7 +89,7 @@
   delegate_to: localhost
 
 - name: "{{ 'Apply' if napalm_commit | bool else 'Diff (dry run, nothing committed)' }} config on {{ inventory_hostname }}"
-  napalm.ansible.napalm_install_config:
+  napalm.napalm.napalm_install_config:
     provider: "{{ napalm_provider }}"
     config_file: "{{ napalm_push_source }}"
     commit_changes: "{{ napalm_commit | bool }}"

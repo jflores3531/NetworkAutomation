@@ -193,7 +193,7 @@ declared = None
 path = params.get("validation_file")
 if path and os.path.exists(path):
     with open(path) as fh:
-        match = re.search(r"^\s+vendor:\s*(\S+)", fh.read(), re.M)
+        match = re.search(r"^\\s+vendor:\\s*(\\S+)", fh.read(), re.M)
     if match:
         declared = match.group(1)
 
@@ -278,9 +278,9 @@ print(json.dumps({"changed": False, "meta": meta}))
 '''
 
 SPECIAL = {
-    "napalm.ansible.napalm_get_facts": NAPALM_GET_FACTS,
-    "napalm.ansible.napalm_validate": NAPALM_VALIDATE,
-    "napalm.ansible.napalm_install_config": NAPALM_INSTALL_CONFIG,
+    "napalm.napalm.napalm_get_facts": NAPALM_GET_FACTS,
+    "napalm.napalm.napalm_validate": NAPALM_VALIDATE,
+    "napalm.napalm.napalm_install_config": NAPALM_INSTALL_CONFIG,
     "paloaltonetworks.panos.panos_facts": PANOS_FACTS,
     "paloaltonetworks.panos.panos_export": PANOS_EXPORT,
     "fortinet.fortios.fortios_monitor_fact": FORTIOS_MONITOR_FACT,

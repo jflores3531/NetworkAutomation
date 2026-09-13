@@ -39,7 +39,7 @@
 # collected. That matters most on nxos_ssh, whose getter coverage is the
 # thinnest of the drivers this project uses.
 - name: Gather each NAPALM getter
-  napalm.ansible.napalm_get_facts:
+  napalm.napalm.napalm_get_facts:
     provider: "{{ napalm_provider }}"
     filter: "{{ item }}"
   loop: "{{ napalm_getters }}"

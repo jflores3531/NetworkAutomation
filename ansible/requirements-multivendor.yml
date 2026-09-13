@@ -1,0 +1,62 @@
+---
+# Collections for the MULTI-VENDOR controller (NAPALM, Juniper, Palo Alto, and
+# cisco_baseline across the Cisco gear), for a current ansible-core. See NAPALM.md.
+#
+#   ansible-galaxy collection install -r requirements-multivendor.yml
+#
+# A SEPARATE FILE FROM requirements.yml, because the two controllers need
+# collection sets that cannot be installed together. requirements.yml holds the
+# STIG host at ansible-core 2.13.13 (Ubuntu 20.04 / Python 3.8), which means
+# ansible.netcommon 4.1.0 and cisco.ios / cisco.nxos 4.4.0. Every current
+# collection below needs ansible-core >= 2.16, and cisco.nxos needs
+# ansible.netcommon >= 8.6.0. One file used to hold both sets; that could
+# never resolve for the multi-vendor controller, since the Junos collection
+# alone needs netcommon >= 8.1.0.
+#
+# Floors, not pins: each is the release checked against Galaxy on 2026-09-13
+# and installed on the lab's Python 3.12 / ansible-core 2.21 controller
+# (/opt/mv-ansible on the automation container). A floor lets a fix arrive
+# while stopping the resolver from quietly going back to the 2.13-era versions.
+collections:
+  # Listed explicitly even though the others pull it in. An implicit netcommon
+  # is how the STIG host ended up with a version that broke every network
+  # module - see requirements.yml.
+  - name: ansible.netcommon
+    version: ">=8.6.0"
+  - name: ansible.utils
+    version: ">=6.1.0"
+
+  # cisco_baseline runs on this controller too (playbooks/multivendor_site.yml),
+  # so it needs versions that live alongside netcommon 8.x, not the 4.4.0 pins.
+  - name: cisco.ios
+    version: ">=11.5.1"
+  - name: cisco.nxos
+    version: ">=12.1.0"
+
+  # Juniper. Both paths into the switches speak NETCONF - this collection
+  # through the netconf connection plugin, and NAPALM's junos driver through
+  # junos-eznc - so `set system services netconf ssh` on the device is a
+  # prerequisite for either. juniper.device is its declared dependency, listed
+  # for the same reason as netcommon.
+  - name: junipernetworks.junos
+    version: ">=11.1.1"
+  - name: juniper.device
+    version: ">=2.0.5"
+
+  # NAPALM's collection on Galaxy is napalm.napalm. There is no napalm.ansible
+  # on Galaxy at all, which is what requirements.yml used to ask for. Needs the
+  # `napalm` Python library on the controller - see requirements.txt.
+  - name: napalm.napalm
+    version: ">=0.9.13"
+
+  # Palo Alto firewall. Runs on the controller against the XML API via
+  # pan-os-python; no connection plugin involved.
+  - name: paloaltonetworks.panos
+    version: ">=3.4.2"
+
+  # PARKED with the Fortinet gear - see the note in NAPALM.md. Harmless to keep
+  # installed while playbooks/fortinet_baseline.yml still exists.
+  - name: fortinet.fortios
+    version: ">=2.6.0"
+  - name: fortinet.fortiswitch
+    version: ">=1.3.0"

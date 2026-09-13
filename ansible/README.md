@@ -539,6 +539,11 @@ pip install ansible
 ansible-galaxy collection install -r requirements.yml
 ```
 
+That is the STIG host. The multi-vendor plays (NAPALM, Juniper, Palo Alto) need
+a current ansible-core and a different collection set,
+`requirements-multivendor.yml`. The two sets cannot be installed together - see
+the Controller requirements section of [`NAPALM.md`](NAPALM.md).
+
 The committed inventory carries no site data. `inventory/hosts.yml` has
 `ansible_host: x.x.x.x` for every device, and both `group_vars/*/vars.yml`
 ship `x.x.x.x` for the NTP, syslog and RADIUS servers and the automation host,

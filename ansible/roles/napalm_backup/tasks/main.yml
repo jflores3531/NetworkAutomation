@@ -14,7 +14,7 @@
 # states for captures/.
 
 - name: Retrieve the configuration
-  napalm.ansible.napalm_get_facts:
+  napalm.napalm.napalm_get_facts:
     provider: "{{ napalm_provider }}"
     filter: config
   register: napalm_config_result

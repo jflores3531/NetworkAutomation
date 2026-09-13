@@ -34,60 +34,14 @@ collections:
   - name: arista.eos
     version: ">=6.0.0"
 
-  # ====================================================================
-  # NAPALM / multi-vendor layer - see NAPALM.md
-  # ====================================================================
-  # Unpinned, unlike everything above, and that difference is deliberate. The
-  # pins above exist to hold cisco.ios/cisco.nxos at versions that still
-  # declare requires_ansible >=2.9.10, because the STIG automation host is
-  # Ubuntu 20.04 / Python 3.8 and cannot run newer than ansible-core 2.13.13.
-  #
-  # The multi-vendor work has no such constraint and should not inherit one:
-  # fortinet.fortios in particular moves fast, and its recent releases declare
-  # requires_ansible >=2.15. So THIS SET NEEDS A NEWER CONTROLLER than the
-  # STIG roles do. Two options, both fine:
-  #
-  #   - run the multi-vendor plays from a host with a current ansible-core
-  #     (the simplest, and what the new lab should get), or
-  #   - keep both on one host in separate virtualenvs, since the collection
-  #     path follows the interpreter.
-  #
-  # What does NOT work is installing these on the 2.13.13 host and assuming
-  # the version resolver will pick compatible releases - that is exactly how
-  # ansible.netcommon drifted and took every network module down with it, the
-  # story in the comment above.
-
-  # NAPALM's own modules: napalm_get_facts, napalm_install_config,
-  # napalm_validate (plus the YANG ones, unused here). Needs the `napalm`
-  # Python library on the controller - see requirements.txt.
-  - name: napalm.ansible
-
-  # Juniper switches. Both paths into them speak NETCONF - this collection
-  # through the netconf connection plugin, and NAPALM's junos driver through
-  # junos-eznc - so `set system services netconf ssh` on the device is a
-  # prerequisite for either.
-  - name: junipernetworks.junos
-
-  # Palo Alto firewall. Certified collection, one module per config area
-  # (zones, address objects, security rules, static routes, commit). Runs on
-  # the controller against the XML API via pan-os-python; no connection plugin
-  # involved, which is why the palo_alto group sets connection: local.
-  #
-  # NAPALM can also reach PAN-OS, but only through the community napalm-panos
-  # package, whose getters stop at facts/config/interfaces and model none of
-  # what a firewall is. That package is optional here - see requirements.txt
-  # and the napalm_panos group in inventory/hosts.yml.
-  - name: paloaltonetworks.panos
-
-  # PARKED: the Fortinet collections. The project is moving to Palo Alto in
-  # place of the FortiGate and Juniper in place of the FortiSwitches. Left
-  # installed because playbooks/fortinet_baseline.yml still works and the
-  # FortiGate role is the only worked example here of a
-  # single-object-per-endpoint REST API. Remove these two lines if that
-  # hardware is gone for good.
-  - name: fortinet.fortios
-  - name: fortinet.fortiswitch
-
   # Used by the resource-module roles for data manipulation, and pulled in by
   # netcommon anyway. Listed explicitly for the same reason netcommon is.
   - name: ansible.utils
+
+  # THE MULTI-VENDOR COLLECTIONS ARE NOT HERE. NAPALM, Juniper, Palo Alto,
+  # and the Fortinet gear are in requirements-multivendor.yml, for a controller
+  # with a current ansible-core. They were in this file until 2026-09-13, and
+  # it could not install on either controller. On this 2.13 host they need a
+  # newer ansible-core than it can run. On a current controller,
+  # junipernetworks.junos needs ansible.netcommon >= 8.1.0, which the 4.1.0
+  # pin above rules out - and napalm.ansible does not exist on Galaxy at all.

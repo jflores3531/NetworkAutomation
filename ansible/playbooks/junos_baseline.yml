@@ -5,10 +5,15 @@
 #   ansible-playbook playbooks/junos_baseline.yml -e ansible_user=admin --ask-pass
 #   ansible-playbook playbooks/junos_baseline.yml --ask-pass --check -D --limit JSW1
 #
-# --check -D is worth running first and is more truthful here than on any other
-# platform in this repo: in check mode the junos modules load the candidate onto
-# the switch, return the switch's own `show | compare` output, and roll it back.
-# The diff you read is the device's, not a controller-side guess.
+# --check -D is truthful here in a way it is not on the Cisco gear: each junos
+# module loads the candidate onto the switch, returns the switch's own `show |
+# compare`, and rolls it back. The diff you read is the device's.
+#
+# But it rolls back after EVERY task, so a task cannot see what an earlier one
+# would have added. Against a switch that does not have the VLANs yet, --check
+# fails at the trunk task ("vlan SERVERS ... does not exist") - found on JSW1,
+# 2026-09-13. Use it as the idempotency check after a real run (changed=0 means
+# the switch already matches), not as the first pass on a fresh switch.
 #
 # PRECONDITION: `set system services netconf ssh` on every target. Without it
 # this fails in a way that looks like bad credentials - see ../inventory/hosts.yml.

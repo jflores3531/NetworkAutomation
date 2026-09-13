@@ -452,20 +452,35 @@ address is a skipped task while a placeholder address on a device is an outage.
 
 ```bash
 pip install -r requirements.txt
-ansible-galaxy collection install -r requirements.yml
+ansible-galaxy collection install -r requirements-multivendor.yml
 ```
 
 **This needs a newer `ansible-core` than the STIG roles' host can run**, and
 that is the one real friction between the two toolchains in this directory.
-`requirements.yml` pins `cisco.ios`/`cisco.nxos` to 4.4.0 because the STIG
-automation host is Ubuntu 20.04 / Python 3.8, capped at `ansible-core`
-2.13.13 — while current `paloaltonetworks.panos` and `junipernetworks.junos`
-releases declare `requires_ansible >= 2.15`. Either run the multi-vendor plays
-from a host with a current `ansible-core`, or keep both on one machine in
-separate virtualenvs. What does not work is installing everything on the 2.13
-host and trusting the resolver — that is exactly how `ansible.netcommon`
-drifted and took every network module down with it, the story in
-[`README.md`](README.md).
+The STIG automation host is Ubuntu 20.04 / Python 3.8, capped at
+`ansible-core` 2.13.13, so `requirements.yml` holds it at `ansible.netcommon`
+4.1.0 and `cisco.ios`/`cisco.nxos` 4.4.0. Every current collection in
+`requirements-multivendor.yml` declares `requires_ansible >= 2.16`, and the
+Junos and NX-OS collections need `ansible.netcommon` >= 8.1 and >= 8.6. **The
+two sets cannot share one controller**: the netcommon pins exclude each other.
+They were one file until 2026-09-13, and that file could not install anywhere.
+
+The lab builds the multi-vendor controller next to the STIG toolchain without
+touching it. `uv` downloads a standalone Python, since apt on 20.04 has
+nothing newer than 3.8:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv venv --python 3.12 /opt/mv-ansible
+uv pip install --python /opt/mv-ansible/bin/python -r requirements.txt
+/opt/mv-ansible/bin/ansible-galaxy collection install \
+    -r requirements-multivendor.yml -p /opt/mv-ansible/collections
+export PATH=/opt/mv-ansible/bin:$PATH ANSIBLE_COLLECTIONS_PATH=/opt/mv-ansible/collections
+```
+
+What does not work is installing everything on the 2.13 host and trusting the
+resolver. That is exactly how `ansible.netcommon` drifted and took every
+network module down with it, the story in [`README.md`](README.md).
 
 Per-platform prerequisites, each of which fails in a way that looks like
 something else:
@@ -492,33 +507,54 @@ Two items from the main [`README.md`](../README.md) roadmap:
 ### Verify on first contact with the lab
 
 Offline validation cannot check these, and each is a place where a guess would
-be silent rather than loud. In rough order of how much a wrong answer costs:
+be silent rather than loud. In rough order of how much a wrong answer costs.
+Items 1, 2, 3 and 5 were settled against JSW1 on 2026-09-13 (vJunos 26.2R1.7,
+ansible-core 2.21.4, `napalm.napalm` 0.9.13, `junipernetworks.junos` 11.1.1):
 
-1. **`napalm_validate`'s result key.** The role accepts either
-   `compliance_report` or `ansible_facts.napalm_validation_report` because the
-   module has moved it between versions, and asserts that a report came back at
-   all. Confirm which one the installed collection uses and delete the other —
-   an expression that silently fell through to `{}` would report every device
-   compliant.
-2. **Getter coverage per driver.** The getter lists in
-   `group_vars/napalm_*/vars.yml` are from the support matrix, not from these
-   devices. Anything unsupported is named in the run output; move it out of the
-   list once you know.
-3. **`junos_hostname` and `junos_ntp_global` schemas.** Both are used here;
-   `junos_logging_global` deliberately is **not** — syslog goes through
-   `junos_config` set commands instead, because Junos requires a facility and
-   severity on a host and the resource module's nested schema differs across
-   collection versions. A guessed schema on a config push is what the
-   `nxos_logging_global` history in [`README.md`](README.md) cost once.
+1. **`napalm_validate`'s result key — SETTLED: `compliance_report`.** The
+   installed module returns it as a top-level result key. The role used to fall
+   back to `ansible_facts.napalm_validation_report` as well, which nothing
+   returns, so that branch is gone, and the role still asserts a report came
+   back at all. JSW1 came back COMPLIES.
+2. **Getter coverage per driver — SETTLED for junos.** All ten getters in
+   `group_vars/napalm_junos/vars.yml` answered on JSW1
+   (`unsupported_getters: []`). The IOS and NX-OS lists are still from the
+   support matrix, not from these devices.
+3. **`junos_hostname` and `junos_ntp_global` schemas — SETTLED.** A real
+   `junos_baseline` run committed through both, and an immediate `--check -D`
+   re-run reported `changed=0`. `junos_logging_global` deliberately is still
+   **not** used — syslog goes through `junos_config` set commands instead,
+   because Junos requires a facility and severity on a host and the resource
+   module's nested schema differs across collection versions. A guessed schema
+   on a config push is what the `nxos_logging_global` history in
+   [`README.md`](README.md) cost once.
 4. **PAN-OS module arguments.** `panos_mgtconfig`, `panos_syslog_server`,
    `panos_interface`, `panos_security_rule`, `panos_static_route`,
    `panos_export` and `panos_commit_firewall` are all used with their common
    arguments; confirm against the installed collection's docs before the first
    real commit.
-5. **`--check` behaviour on Junos.** Check mode there is a real device
-   operation — load the candidate, return `show | compare`, roll back — so
-   `--check -D` is more truthful on the Juniper switches than on anything else
-   in this repository. Confirm that, then use it as the default first pass.
+5. **`--check` behaviour on Junos — SETTLED, and not what this said.** Each
+   task really is a device operation: load the candidate, return the switch's
+   own `show | compare`, roll back. JSW1's commit log confirmed that a failed
+   check left nothing behind. But every task rolls back before the next one
+   starts, so a task that depends on an earlier one cannot see it. On a switch
+   without the VLANs, `--check` of `junos_baseline` fails at the trunk task:
+   `vlan SERVERS configured under interface ge-0/0/0.0 does not exist`. So
+   `--check -D` is **not** a usable first pass against a fresh switch. It is an
+   excellent idempotency check once the baseline is in: after the real run it
+   reported `changed=0` across all 15 tasks.
+
+Also found on first contact, and not on the original list:
+
+- **There is no `napalm.ansible` collection on Galaxy.** NAPALM's collection is
+  `napalm.napalm`, and its modules keep their `napalm_` prefix
+  (`napalm.napalm.napalm_get_facts`). Every role here called
+  `napalm.ansible.*`, and the offline stubs registered the same wrong name, so
+  `tests/run_offline.py` passed while no real run could have started.
+- **`junipernetworks.junos` is deprecated in favour of `juniper.device`.**
+  Every module still works through redirects, which are removed after
+  2028-04-01, so each run prints a deprecation warning per task. Moving the
+  Junos roles to `juniper.device.*` names is follow-up work, not a fault today.
 6. **`panos_export`'s output.** The backup play fails if the exported file is
    under 1 KB rather than trusting that something was written.
 

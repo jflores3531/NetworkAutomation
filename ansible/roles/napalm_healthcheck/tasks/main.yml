@@ -20,14 +20,14 @@
 # clean fleet it never looked at.
 
 - name: Gather interface state
-  napalm.ansible.napalm_get_facts:
+  napalm.napalm.napalm_get_facts:
     provider: "{{ napalm_provider }}"
     filter: interfaces
   register: hc_interfaces
   delegate_to: localhost
 
 - name: Gather interface counters
-  napalm.ansible.napalm_get_facts:
+  napalm.napalm.napalm_get_facts:
     provider: "{{ napalm_provider }}"
     filter: interfaces_counters
   register: hc_counters
@@ -35,7 +35,7 @@
   delegate_to: localhost
 
 - name: Gather environment
-  napalm.ansible.napalm_get_facts:
+  napalm.napalm.napalm_get_facts:
     provider: "{{ napalm_provider }}"
     filter: environment
   register: hc_environment

@@ -31,7 +31,7 @@
   delegate_to: localhost
 
 - name: Validate {{ inventory_hostname }} against declared state
-  napalm.ansible.napalm_validate:
+  napalm.napalm.napalm_validate:
     provider: "{{ napalm_provider }}"
     validation_file: "{{ napalm_validate_report_dir }}/{{ inventory_hostname }}_intent.yml"
   register: napalm_validation
@@ -41,17 +41,15 @@
   ignore_errors: true
   delegate_to: localhost
 
-# The module has returned its report under different keys across versions of
-# napalm-ansible, so both are accepted rather than guessing one. CONFIRM which
-# one the installed collection actually uses on the first live run and simplify
-# this - an expression that silently falls through to {} would report every
-# device compliant, which is the worst possible failure for a validation role.
+# compliance_report, a top-level result key: what napalm.napalm's
+# napalm_validate returns, confirmed against JSW1 on 2026-09-13. This used to
+# also fall back to ansible_facts.napalm_validation_report from older
+# napalm-ansible releases, which nothing installed here returns. The default({})
+# stays only so a module error produces an empty report for the assert below to
+# refuse - an empty report must never read as a compliant device.
 - name: Extract the compliance report
   ansible.builtin.set_fact:
-    napalm_compliance: >-
-      {{ napalm_validation.compliance_report
-         | default(napalm_validation.ansible_facts.napalm_validation_report
-                   | default({}, true), true) }}
+    napalm_compliance: "{{ napalm_validation.compliance_report | default({}, true) }}"
 
 - name: Fail if no compliance report came back
   ansible.builtin.assert:
