@@ -1,0 +1,52 @@
+# The inventory the test suites run against - set by tests/fixtures.py through
+# NETAUTO_INVENTORY, so no suite depends on the gitignored inventory.yaml.
+#
+# It describes the synthetic switch in tests/fixtures.py and nothing else, and
+# uses RFC 5737 documentation addressing, so it is safe to commit. Suites that
+# assert on a site fact pass it on the command line instead
+# (--non-user-vlans, --management-subnet, --core-switch-tags, ...), so the
+# values below are only what an audit reads when a suite does not pin one.
+
+devices:
+  TESTSW01:
+    host: 192.0.2.5
+    device_type: cisco_ios
+
+services:
+  ntp_servers:
+    - 192.0.2.30
+    - 192.0.2.31
+  syslog_servers:
+    - 192.0.2.20
+    - 192.0.2.21
+  radius_servers:
+    - 192.0.2.50
+
+# The fixture's VLANs: 1 default, 10 MGMT, 999 native, 1000 unused. Same list
+# every suite passes as --non-user-vlans.
+non_user_vlans:
+  - 1
+  - 10
+  - 999
+  - 1000
+non_user_vlans_by_device: {}
+non_user_vlan_names: []
+user_vlan_names: []
+
+# Vlan10 carries 192.0.2.5 in the fixture config.
+management_subnet: 192.0.2.0/24
+automation_host: 192.0.2.10
+
+# The fixture parks its disabled port (Gi1/0/2) in VLAN 1000 UNUSED and trunks
+# with native VLAN 999.
+unused_vlan: 1000
+native_vlan: 999
+default_access_vlan: 20
+
+# Empty on purpose: exempts nothing and marks no description as an uplink.
+# The suites that exercise V-220671 pass both on the command line.
+core_switch_hostname_tags: []
+uplink_port_description_keywords: []
+
+vtp_domain: TEST
+external_interfaces_by_device: {}

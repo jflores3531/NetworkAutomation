@@ -25,7 +25,13 @@ import yaml
 # audit_logs/ all sit at the root, beside scripts/ rather than inside it.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-INVENTORY_PATH = os.path.join(PROJECT_ROOT, 'inventory.yaml')
+# NETAUTO_INVENTORY points every script at a different inventory file. It exists
+# for the test suites, which set it to tests/inventory.test.yaml. Without it,
+# every suite that runs an audit died on a checkout with no inventory.yaml,
+# because inventory.yaml is gitignored and so never in a fresh clone - and a
+# suite that only passes beside one person's site inventory is testing that
+# inventory as much as the code. Unset, nothing changes: the root file is used.
+INVENTORY_PATH = os.environ.get('NETAUTO_INVENTORY') or os.path.join(PROJECT_ROOT, 'inventory.yaml')
 SECRETS_PATH = os.path.join(PROJECT_ROOT, 'secrets.yaml')
 BACKUP_DIR = os.path.join(PROJECT_ROOT, 'backups')
 AUDIT_LOG_PATH = os.path.join(PROJECT_ROOT, 'audit_logs', 'audit.log')

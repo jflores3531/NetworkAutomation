@@ -14,7 +14,18 @@ the out-of-band management port GigabitEthernet0/0 (in Mgmt-vrf, and never a
 switchport on Catalyst hardware) and a routed uplink carrying 'no switchport'.
 Both used to land in the access bucket and draw findings from every per-access-
 port rule at once. Every suite that reads this config now exercises that.
+
+Importing this module also points every script at tests/inventory.test.yaml,
+through NETAUTO_INVENTORY, including the audits the suites start as
+subprocesses. It is an assignment rather than a default, deliberately: a
+suite's verdicts must not change with whatever inventory the machine running
+it happens to have.
 """
+
+import os
+
+os.environ['NETAUTO_INVENTORY'] = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'inventory.test.yaml')
 
 RUNNING_CONFIG = """Building configuration...
 

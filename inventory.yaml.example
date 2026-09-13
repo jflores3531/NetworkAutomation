@@ -20,6 +20,11 @@
 # Quote any value starting with '*'. A bare leading asterisk is a YAML alias,
 # not a wildcard, in this parser and in PyYAML alike.
 #
+# The scripts read inventory.yaml at the repository root, unless the
+# NETAUTO_INVENTORY environment variable names another file. The test suites
+# use that override to point every audit at tests/inventory.test.yaml, so they
+# pass on a fresh clone and never read a real site inventory.
+#
 # WHY MISSING KEYS ARE DANGEROUS
 # Only 'devices' is required. Every other key is read with .get() and a
 # default, so an absent or wrong value does NOT raise - it silently returns
