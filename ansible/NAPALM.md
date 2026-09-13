@@ -39,9 +39,10 @@ implement a collection that does not exist.
 ### Not yet run against hardware
 
 Everything Cisco (`cisco_baseline`, and the `router_on_a_stick` template with
-its HSRP), everything Palo Alto (`panos_baseline`, the config export in the
-backup play), and `napalm_backup`, `napalm_healthcheck`, `napalm_push`,
-`junos_safe_push` and `preflight` on any real device. JSW2 is bootstrapped and
+its HSRP), everything Palo Alto (`panos_baseline`, `panos_vpn`, the config
+export in the backup play), the whole hybrid/AWS scenario, and `napalm_backup`,
+`napalm_healthcheck`, `napalm_push`, `junos_safe_push` and `preflight` on any
+real device. JSW2 is bootstrapped and
 answers NETCONF, but the roles have only been run against JSW1.
 
 ### What offline validation covers
@@ -49,8 +50,8 @@ answers NETCONF, but the roles have only been run against JSW1.
 Every playbook and role executed end to end against stub modules returning
 realistic device data, with these results:
 
-- all 14 playbooks pass `--syntax-check`
-- `ansible/tests/run_offline.py` drives all of it as 22 scenarios and asserts on
+- all 15 playbooks pass `--syntax-check`
+- `ansible/tests/run_offline.py` drives all of it as 27 scenarios and asserts on
   what each run printed and wrote, not just its exit code — every one of the
   bugs below exited 0 while being wrong. The suite is mutation-tested: breaking
   the fix again fails it
@@ -269,6 +270,96 @@ ansible-playbook playbooks/napalm_push.yml --limit R1 \
 One router at a time. Pushing HSRP to both at once, with a mistake in it, takes
 out the gateway for every VLAN simultaneously.
 
+## The hybrid scenario: a VM-Series in AWS
+
+A second, self-contained scenario rather than a change to the local topology.
+The lab above is proven; this sits beside it so a tunnel problem cannot block
+the Cisco and Juniper work that is still unverified.
+
+```
+   lab VLAN 10/20 ──┐
+                    │  R1 Tunnel1 (169.254.1.2/30)
+                    │      ║
+                    │      ║  IKEv2 / ESP over the internet, NAT-T on UDP 4500
+                    │      ║  lab end initiates: its address is dynamic
+                    │      ▼
+                 PA-AWS tunnel.1 (169.254.1.1/30) ── zone vpn-lab
+                    │
+                    │ ethernet1/1 ── zone untrust ── AWS IGW ── internet
+```
+
+| | |
+|---|---|
+| Firewall | VM-Series in AWS, its own inventory group `palo_alto_aws` (a child of `palo_alto`) |
+| Lab end | R1 only, a route-based VTI — `templates/site_to_site_vpn.j2` |
+| Tunnel transit | `169.254.1.0/30`, APIPA, carries no user traffic |
+| Authentication | pre-shared key + IKE identity, because the lab's address is dynamic |
+| Egress | `vpn_default_via_tunnel`, **false by default** |
+
+```bash
+# the firewall's end - staged into the candidate, nothing in force
+ansible-playbook playbooks/hybrid_vpn.yml --ask-vault-pass
+ansible-playbook playbooks/hybrid_vpn.yml --ask-vault-pass -e panos_commit=true
+
+# the lab's end
+ansible-playbook playbooks/napalm_push.yml --limit R1 \
+    -e napalm_config_template=site_to_site_vpn.j2                     # diff only
+ansible-playbook playbooks/napalm_push.yml --limit R1 \
+    -e napalm_config_template=site_to_site_vpn.j2 -e napalm_commit=true
+
+# only after traffic is proven to cross it
+ansible-playbook playbooks/napalm_push.yml --limit R1 \
+    -e napalm_config_template=site_to_site_vpn.j2 \
+    -e vpn_default_via_tunnel=true -e napalm_commit=true
+```
+
+**What this proves about the automation:** `panos_baseline` is the same role for
+a firewall in AWS as for one in the lab. It talks to the XML API with an API
+key and has no idea where the device is, so the entire difference is inventory —
+which is why `palo_alto_aws` is a child group rather than a new code path. A
+scenario in the offline suite asserts exactly that: the AWS firewall's routes
+point down the tunnel and its untrust address comes from the vault, from the
+same tasks that configure PA1.
+
+**Five things this design gets deliberately right, each because the obvious
+version fails:**
+
+- **The peer is dynamic on one end and static on the other.** A home connection's
+  address changes, so the firewall matches an IKE *identity* (`peer_id_type:
+  fqdn`) while R1 matches the firewall's Elastic IP. Only one end of such a pair
+  can match on address, and both ends read the same identity variable so they
+  cannot drift apart.
+- **Both ends render from one set of crypto variables.** "No proposal chosen" is
+  the most common site-to-site failure and neither platform says which attribute
+  disagreed, so the proposals are written out explicitly and shared rather than
+  left to defaults.
+- **`ip tcp adjust-mss 1379`.** Without it, ping works, SSH connects, and
+  anything moving real data hangs — the worst failure mode to debug, caused by
+  fragmentation that home connections drop.
+- **The default route is a separate flag.** Pushing `0.0.0.0/0` into a tunnel
+  that is not up replaces a working route with a black hole, so moving lab
+  egress through AWS takes a second explicit `-e`.
+- **The firewall's public address is not committed.** It lives in the group's
+  vaulted file, which is gitignored. A public address in a public repository is
+  an invitation to scan it — the one place in this inventory where a placeholder
+  is about exposure rather than site data.
+
+**What it costs, stated plainly.** A VM-Series needs a ~4 vCPU / 16 GB instance
+plus BYOL or Marketplace PAYG on top of EC2 hours — on the order of a dollar an
+hour while running, so check the current listing and stop the instance between
+sessions. And lab internet egress becomes dependent on an IKE SA once that
+default route is in: a legitimate pattern (cloud-delivered perimeter), but the
+tunnel is then in the path of everything.
+
+**Two gaps left open on purpose.** Source NAT on the firewall is *required* for
+lab egress to work — AWS drops traffic sourced from addresses it does not route —
+and it is not configured, because debugging a tunnel and a NAT policy
+simultaneously means learning neither. And managing PA-AWS *through* the tunnel
+needs a PAN-OS service route, since management leaves its own ENI by default; the
+`lab-mgmt-to-firewall` rule allows it but the service route is follow-up. Until
+then, management is over the internet and the API admin's permitted-IP list is
+what protects it.
+
 ## Layout
 
     inventory/hosts.yml               all groups, STIG and multi-vendor
@@ -395,7 +486,7 @@ the problem completely.
 ## Validating offline
 
 ```bash
-python3 tests/run_offline.py          # 22 scenarios, no devices, no collections
+python3 tests/run_offline.py          # 27 scenarios, no devices, no collections
 python3 tests/run_offline.py -v       # ansible output for anything that fails
 python3 tests/stub_devices.py /tmp/s  # just write the stubs, to poke at by hand
 ```
@@ -587,6 +678,16 @@ Also found on first contact, and not on the original list:
   Every module still works through redirects, which are removed after
   2028-04-01, so each run prints a deprecation warning per task. Moving the
   Junos roles to `juniper.device.*` names is follow-up work, not a fault today.
+
+7. **The whole hybrid scenario is unrun.** `panos_ike_crypto_profile`,
+   `panos_ipsec_profile`, `panos_tunnel`, `panos_ike_gateway` and
+   `panos_ipsec_tunnel` are used with arguments taken from the collection's
+   documentation, not from a device — a lower standard of evidence than the rest
+   of this directory, and the same standard that produced the `napalm.ansible`
+   mistake. Check each against the installed collection before the first commit,
+   and expect `panos_ipsec_profile` in particular to be the one whose name or
+   parameters differ. R1's end renders correctly offline but has never been sent
+   to a router.
 
 ### Then
 

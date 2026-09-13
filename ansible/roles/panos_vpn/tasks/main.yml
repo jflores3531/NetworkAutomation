@@ -1,0 +1,125 @@
+---
+# The PAN-OS half of the lab-to-AWS IPsec tunnel: crypto profiles, IKE gateway,
+# IPsec tunnel and the tunnel interface, in the order PAN-OS requires them.
+#
+# Separate from panos_baseline rather than folded into it, for the same reason
+# the AAA roles are separate from the bulk pass on the STIG side: this is the
+# part that decides whether a remote site can reach anything, and it is the part
+# whose module arguments this project has never run. panos_baseline is shaped by
+# a live firewall's requirements; this is not yet.
+#
+# ORDER IS A DEPENDENCY, not a preference. PAN-OS rejects each of these if what
+# it references does not exist yet:
+#   crypto profiles -> IKE gateway -> IPsec tunnel -> (interface already made)
+# and the tunnel interface has to exist before the IPsec tunnel binds to it.
+#
+# The lab end is R1, configured from
+# ../napalm_config_push/templates/site_to_site_vpn.j2. Both ends must agree on
+# every proposal value, which is why they read the same variables.
+
+- name: Fail early if the tunnel secrets are missing
+  ansible.builtin.assert:
+    that:
+      - panos_api_key | length > 0
+      - panos_api_key != 'CHANGE_ME'
+      - panos_vpn_psk | length > 0
+      - panos_vpn_psk != 'CHANGE_ME'
+      - panos_vpn_peer_id | length > 0
+      - panos_vpn_peer_id != 'CHANGE_ME'
+    fail_msg: >-
+      panos_api_key, panos_vpn_psk and panos_vpn_peer_id must all be set in
+      inventory/group_vars/palo_alto_aws/vault.yml (see the .example next to
+      it). The peer ID is not optional here: the lab's address is dynamic, so
+      it is the only thing identifying the far end.
+
+# --- crypto profiles ----------------------------------------------------------
+# Written out rather than left to the platform defaults, because "no proposal
+# chosen" is the most common site-to-site failure and neither end says which
+# attribute disagreed. Two ends configured from one set of variables cannot
+# disagree.
+- name: Configure the IKE crypto profile
+  paloaltonetworks.panos.panos_ike_crypto_profile:
+    provider: "{{ panos_provider }}"
+    name: "{{ panos_vpn_ike_crypto.name }}"
+    dh_group: "{{ panos_vpn_ike_crypto.dh_group }}"
+    encryption: "{{ panos_vpn_ike_crypto.encryption }}"
+    authentication: "{{ panos_vpn_ike_crypto.authentication }}"
+    lifetime_hours: "{{ panos_vpn_ike_crypto.lifetime_hours }}"
+    state: present
+
+- name: Configure the IPsec crypto profile
+  paloaltonetworks.panos.panos_ipsec_profile:
+    provider: "{{ panos_provider }}"
+    name: "{{ panos_vpn_ipsec_crypto.name }}"
+    dh_group: "{{ panos_vpn_ipsec_crypto.dh_group }}"
+    esp_encryption: "{{ panos_vpn_ipsec_crypto.encryption }}"
+    esp_authentication: "{{ panos_vpn_ipsec_crypto.authentication }}"
+    lifetime_hours: "{{ panos_vpn_ipsec_crypto.lifetime_hours }}"
+    state: present
+
+# --- tunnel interface ---------------------------------------------------------
+# Before the IPsec tunnel, which binds to it. Addressed from APIPA space
+# (169.254.1.0/30), the convention for a route-based VTI transit: it carries no
+# user traffic, it only gives each end a next hop to point routes at.
+- name: Configure the tunnel interface
+  paloaltonetworks.panos.panos_tunnel:
+    provider: "{{ panos_provider }}"
+    if_name: "{{ panos_vpn_tunnel_interface }}"
+    ip: ["{{ panos_vpn_tunnel_ip }}"]
+    zone_name: "{{ panos_vpn_zone }}"
+    vr_name: "{{ panos_virtual_router }}"
+    comment: lab site-to-site
+    state: present
+
+# --- IKE gateway --------------------------------------------------------------
+# peer_ip_type: dynamic is the load-bearing line. The lab is behind a home
+# router whose address changes, so this firewall cannot match the peer by
+# address; it matches the IKE identity R1 sends instead. NAT traversal is on for
+# the same reason - the tunnel rides UDP 4500 because the lab is behind NAT.
+#
+# passive mode stays OFF: with a dynamic peer only the lab can initiate, so a
+# firewall that never initiates is correct, but it must still answer.
+- name: Configure the IKE gateway
+  paloaltonetworks.panos.panos_ike_gateway:
+    provider: "{{ panos_provider }}"
+    name: "{{ panos_vpn_ike_gateway }}"
+    version: ikev2
+    interface: ethernet1/1
+    peer_ip_type: dynamic
+    peer_id_type: fqdn
+    peer_id_value: "{{ panos_vpn_peer_id }}"
+    pre_shared_key: "{{ panos_vpn_psk }}"
+    ikev2_crypto_profile: "{{ panos_vpn_ike_crypto.name }}"
+    enable_nat_traversal: true
+    enable_liveness_check: true
+    state: present
+
+- name: Configure the IPsec tunnel
+  paloaltonetworks.panos.panos_ipsec_tunnel:
+    provider: "{{ panos_provider }}"
+    name: lab-r1-tunnel
+    tunnel_interface: "{{ panos_vpn_tunnel_interface }}"
+    ak_ike_gateway: "{{ panos_vpn_ike_gateway }}"
+    ak_ipsec_crypto_profile: "{{ panos_vpn_ipsec_crypto.name }}"
+    state: present
+
+# Everything above edited the CANDIDATE configuration. Nothing is in force until
+# a commit, which is opt-in exactly as in panos_baseline - and here that staging
+# behaviour is worth more than usual: you can read the whole tunnel config in
+# the commit preview before anything starts answering IKE on a public address.
+- name: Commit the candidate configuration
+  paloaltonetworks.panos.panos_commit_firewall:
+    provider: "{{ panos_provider }}"
+    description: "ansible panos_vpn"
+    timeout: "{{ panos_commit_timeout }}"
+  when: panos_commit | bool
+
+- name: Note that the tunnel is staged but not committed
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: tunnel configuration is in the candidate and NOT
+      in force. Review it in the commit preview, then re-run with
+      -e panos_commit=true. Configure R1's end (site_to_site_vpn.j2) before or
+      after - neither end comes up until both are committed, and only the lab
+      end can initiate.
+  when: not panos_commit | bool

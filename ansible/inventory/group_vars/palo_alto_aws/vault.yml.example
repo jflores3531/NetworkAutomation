@@ -1,0 +1,47 @@
+---
+# Secrets and AWS-account facts for PA-AWS. Copy to vault.yml, fill in, THEN
+# encrypt before committing anything:
+#
+#   ansible-vault encrypt inventory/group_vars/palo_alto_aws/vault.yml
+#
+# vault.yml is gitignored (see ../../../../.gitignore) - this .example is the
+# only tracked version.
+#
+# Note what is in here that is not strictly a secret: the firewall's public
+# address and its AWS subnet. They are here because this repository is public
+# and a committed public address is an invitation to scan it - the vault is
+# simply the gitignored file this project already has.
+
+# Elastic IP (or public DNS name) of the VM-Series. hosts.yml reads this for
+# PA-AWS's ansible_host, so the committed inventory never names it.
+vault_panos_aws_public_ip: CHANGE_ME
+
+# The untrust interface's AWS-assigned address, as CIDR, plus its subnet
+# gateway - always the subnet's .1 in a VPC. From the EC2 console, or
+# `aws ec2 describe-instances`.
+vault_panos_aws_untrust_ip: CHANGE_ME       # e.g. 10.20.1.10/24
+vault_panos_aws_untrust_cidr: CHANGE_ME     # e.g. 10.20.1.0/24
+vault_panos_aws_untrust_gateway: CHANGE_ME  # e.g. 10.20.1.1
+
+# API key for the VM-Series, generated the same way as the local firewall's:
+#
+#   curl -k -X GET 'https://<firewall>/api/?type=keygen&user=<admin>&password=<pw>'
+#
+# Restrict the API admin's permitted IPs, and the AWS security group, to the
+# lab's public address - and expect to update both when a home connection
+# changes address. Reaching management through the tunnel instead is the durable
+# answer, and the lab-mgmt-to-firewall rule in vars.yml is what allows it.
+vault_panos_aws_api_key: CHANGE_ME
+
+# IPsec pre-shared key, shared with R1. Long and random - this is the only thing
+# authenticating a tunnel that terminates on a public address.
+#
+#   openssl rand -base64 32
+vault_lab_ipsec_psk: CHANGE_ME
+
+# IKE identity R1 presents, because the lab's public address is dynamic and the
+# firewall therefore cannot match the peer by IP. Any FQDN-shaped string both
+# ends agree on; it does not have to resolve.
+#
+#   e.g. r1.lab.local
+vault_lab_ike_identity: CHANGE_ME

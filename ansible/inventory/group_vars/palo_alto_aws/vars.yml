@@ -1,0 +1,169 @@
+---
+# PA-AWS - a VM-Series in AWS, reached over the internet, terminating an IPsec
+# tunnel from the lab's R1. Consumed by panos_baseline (the same role that
+# configures the local PA1 - it does not care where a firewall is) and by
+# panos_vpn for the tunnel.
+#
+# THE HYBRID SHAPE:
+#
+#   lab VLAN 10/20 ── R1 Tunnel1 ═══IPsec over internet═══ PA-AWS tunnel.1
+#                                                              │ ethernet1/1
+#                                                         AWS IGW → internet
+#
+# So lab egress leaves through AWS rather than through VMware NAT. That is the
+# instructive half of hybrid and it frees the ~6.5 GB the local VM-Series wanted,
+# but be clear about the cost: every packet the lab sends to the internet now
+# depends on an IKE SA staying up. If you would rather keep local egress and use
+# the tunnel only for lab↔AWS traffic, drop the default route below and leave
+# R1's default pointing at the local firewall - that one change inverts it.
+#
+# WHAT IS DIFFERENT FROM ../palo_alto/vars.yml, and it is only these:
+#   - the address is not committed (see ../../hosts.yml)
+#   - untrust faces an AWS subnet, not VMnet8
+#   - trust is a TUNNEL interface, not a transit segment shared with routers
+#   - routes point down the tunnel rather than at an HSRP VIP
+
+# Same provider shape as the local firewall. ip_address resolves through
+# hostvars, so the vaulted public address flows in without this file naming it.
+panos_provider:
+  ip_address: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+  api_key: "{{ panos_api_key }}"
+
+panos_api_key: "{{ vault_panos_aws_api_key | default('') }}"
+panos_vsys: vsys1
+panos_virtual_router: default
+
+# --- AWS-side facts, all from the vault because they name a real account -------
+# The EC2 subnet the untrust interface sits in. AWS gives ethernet1/1 its address
+# by DHCP from that subnet, and the gateway is always the subnet's .1 - so the
+# only things this needs are the CIDR and the address AWS assigned.
+panos_aws_untrust_cidr: "{{ vault_panos_aws_untrust_cidr | default('') }}"
+panos_aws_untrust_ip: "{{ vault_panos_aws_untrust_ip | default('') }}"
+panos_aws_untrust_gateway: "{{ vault_panos_aws_untrust_gateway | default('') }}"
+
+baseline_timezone: US/Eastern
+
+# NTP and syslog CANNOT be the lab's automation host here, unlike every other
+# device in this inventory: 10.10.50.10 is unreachable from AWS until the tunnel
+# is up, and a firewall that cannot resolve time is a firewall whose logs and
+# certificate checks are wrong. Public NTP, and syslog left unset until there is
+# a collector reachable from AWS.
+baseline_ntp_servers:
+  - 169.254.169.123          # the Amazon Time Sync Service, link-local inside any VPC
+baseline_syslog_servers: []
+
+# --- zones and interfaces -----------------------------------------------------
+# Three zones rather than two: the tunnel is its own zone, so policy can be
+# written about lab traffic specifically rather than lumping it in with anything
+# else that might later arrive on the inside.
+baseline_zones:
+  - name: untrust
+    mode: layer3
+    interfaces: [ethernet1/1]
+  - name: vpn-lab
+    mode: layer3
+    interfaces: [tunnel.1]
+
+# Only the untrust interface is a normal L3 interface here. tunnel.1 is created
+# by panos_vpn, because a tunnel interface plus its IKE gateway and IPsec tunnel
+# are one unit - configuring the interface through panos_baseline and the rest
+# somewhere else would let them exist without each other.
+baseline_interfaces:
+  - name: ethernet1/1
+    ipv4_cidr: "{{ panos_aws_untrust_ip }}"
+    zone: untrust
+    comment: AWS untrust - internet via IGW
+
+# --- the tunnel ---------------------------------------------------------------
+# Consumed by panos_vpn. The lab end is R1; see
+# ../../../roles/napalm_config_push/templates/site_to_site_vpn.j2.
+#
+# peer_ip_type is DYNAMIC, and that is the whole reason this needs thinking
+# about rather than copying: the lab sits behind a home router with an address
+# that changes, so the firewall cannot match the peer by IP. It matches an IKE
+# identity instead, which R1 sends as an FQDN, and NAT-T carries the tunnel over
+# UDP 4500 because the lab is behind NAT.
+panos_vpn_tunnel_interface: tunnel.1
+panos_vpn_tunnel_ip: 169.254.1.1/30        # APIPA, the convention for VTI transit
+panos_vpn_peer_tunnel_ip: 169.254.1.2
+panos_vpn_zone: vpn-lab
+panos_vpn_ike_gateway: lab-r1
+panos_vpn_peer_id: "{{ vault_lab_ike_identity | default('') }}"
+panos_vpn_psk: "{{ vault_lab_ipsec_psk | default('') }}"
+
+# Proposals both ends must agree on exactly. Written out rather than left to
+# defaults because "no proposal chosen" is the most common site-to-site failure
+# and the least informative message either platform produces.
+panos_vpn_ike_crypto:
+  name: lab-ike
+  dh_group: [group14]
+  encryption: [aes-256-cbc]
+  authentication: [sha256]
+  lifetime_hours: 8
+panos_vpn_ipsec_crypto:
+  name: lab-ipsec
+  dh_group: group14
+  encryption: [aes-256-cbc]
+  authentication: [sha256]
+  lifetime_hours: 1
+
+# Lab networks reachable through the tunnel, as address objects and as routes.
+baseline_address_objects:
+  - name: LAB_USERS
+    value: 10.0.10.0/24
+    description: lab VLAN 10
+  - name: LAB_SERVERS
+    value: 10.0.20.0/24
+    description: lab VLAN 20
+  - name: LAB_MGMT
+    value: 10.10.50.0/24
+    description: lab management segment
+
+# Opt-in per run, as on the local firewall.
+baseline_security_rules:
+  - name: lab-to-internet
+    source_zone: [vpn-lab]
+    destination_zone: [untrust]
+    source_ip: [LAB_USERS, LAB_SERVERS]
+    destination_ip: [any]
+    application: [web-browsing, ssl, dns]
+    action: allow
+  # Management of this firewall FROM the lab, over the tunnel - which is the
+  # alternative to exposing its management interface to the internet. Needed
+  # before you can move the API path off the public address.
+  - name: lab-mgmt-to-firewall
+    source_zone: [vpn-lab]
+    destination_zone: [vpn-lab]
+    source_ip: [LAB_MGMT]
+    destination_ip: [any]
+    application: [panorama-ssl, ssh, ping]
+    action: allow
+
+# Default out through AWS, lab subnets back down the tunnel. The tunnel routes
+# are what make this a router rather than a one-way exit.
+baseline_static_routes:
+  - name: default
+    destination: 0.0.0.0/0
+    nexthop: "{{ panos_aws_untrust_gateway }}"
+    interface: ethernet1/1
+  - name: lab-users
+    destination: 10.0.10.0/24
+    nexthop: "{{ panos_vpn_peer_tunnel_ip }}"
+    interface: tunnel.1
+  - name: lab-servers
+    destination: 10.0.20.0/24
+    nexthop: "{{ panos_vpn_peer_tunnel_ip }}"
+    interface: tunnel.1
+  - name: lab-mgmt
+    destination: 10.10.50.0/24
+    nexthop: "{{ panos_vpn_peer_tunnel_ip }}"
+    interface: tunnel.1
+
+# NAT is REQUIRED for lab egress to work through here and is deliberately not
+# configured yet: lab traffic leaving ethernet1/1 needs source NAT to the
+# interface address, or AWS drops it as coming from an address it does not route.
+# panos_nat_rule is the module; it is left out until the tunnel itself is proven,
+# because debugging a tunnel and a NAT policy at the same time is how you learn
+# neither. See NAPALM.md's verify list.
+
+preflight_port: 443

@@ -1,0 +1,33 @@
+---
+# The lab-to-AWS IPsec tunnel: the PAN-OS half.
+#
+# Staging run - everything lands in the firewall's candidate config and nothing
+# is in force:
+#
+#   ansible-playbook playbooks/hybrid_vpn.yml --ask-vault-pass
+#
+# Then, having read the commit preview:
+#
+#   ansible-playbook playbooks/hybrid_vpn.yml --ask-vault-pass -e panos_commit=true
+#
+# The LAB half is R1, and it is a separate command because it is a separate
+# platform and a separate risk:
+#
+#   ansible-playbook playbooks/napalm_push.yml --limit R1 \
+#       -e napalm_config_template=site_to_site_vpn.j2        # diff only
+#   ansible-playbook playbooks/napalm_push.yml --limit R1 \
+#       -e napalm_config_template=site_to_site_vpn.j2 -e napalm_commit=true
+#
+# Order does not matter: neither end comes up until both are committed, and only
+# the lab end can initiate (the firewall has a dynamic peer, so it can only
+# answer). What DOES matter is that R1's default route moves to the tunnel only
+# after the tunnel is proven - see the template's header.
+#
+# Nothing here has run against a real firewall. Every module argument below is
+# from the collection's documentation rather than from a device, which is a
+# lower standard of evidence than the rest of this directory - see NAPALM.md.
+- name: Configure the AWS firewall's end of the lab tunnel
+  hosts: palo_alto_aws
+  gather_facts: false
+  roles:
+    - panos_vpn

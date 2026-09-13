@@ -1,0 +1,99 @@
+{#
+  R1: the lab end of the IPsec tunnel to the AWS VM-Series.
+
+  Route-based (VTI), matching the firewall's tunnel interface - a policy-based
+  tunnel cannot pair with PAN-OS's route-based one, and that mismatch presents
+  as phase 2 never completing with both ends insisting their proposals are fine.
+
+  Why a template and not resource modules: cisco.ios models no crypto at all -
+  no ikev2 proposal, policy, keyring or profile, no transform set, no ipsec
+  profile, and no tunnel-interface protection. This is the same call as
+  router_on_a_stick.j2, for a stronger reason.
+
+  READ BEFORE COMMITTING. Two lines here can cut the lab off:
+
+    - `ip route 0.0.0.0 0.0.0.0 Tunnel1` moves ALL lab egress through AWS. It is
+      guarded by vpn_default_via_tunnel, which defaults to FALSE. Bring the
+      tunnel up first, prove traffic crosses it, and only then re-run with
+      -e vpn_default_via_tunnel=true. Pushing it with the tunnel down replaces a
+      working default route with a black hole.
+    - the tunnel source is Gi0/1, the transit interface to the local firewall.
+      That is also how R1 reaches the internet today, so it must keep its own
+      reachable default route while the tunnel is being built.
+
+  Everything renders from inventory (group_vars/palo_alto_aws + its vault, read
+  through hostvars['PA-AWS']), so the addressing and the PSK are not in this
+  file. Both ends read the same crypto variables, which is what stops them
+  disagreeing about a proposal.
+
+  ONE THING TO KNOW ABOUT THE RENDERED OUTPUT: it contains the pre-shared key in
+  cleartext, because that is what the device command takes. It lands in
+  ansible/reports/diffs/R1_candidate.cfg, mode 0640, in a directory gitignored at
+  the repository root - but it is a secret sitting on the controller's disk, and
+  it stays there until something removes it. Treat that directory the way
+  backups/ and captures/ are treated elsewhere in this repo.
+#}
+{% set fw = hostvars['PA-AWS'] %}
+{% set ike = fw.panos_vpn_ike_crypto %}
+{% set esp = fw.panos_vpn_ipsec_crypto %}
+crypto ikev2 proposal AWS-PROPOSAL
+ encryption aes-cbc-256
+ integrity sha256
+ group 14
+!
+crypto ikev2 policy AWS-POLICY
+ proposal AWS-PROPOSAL
+!
+{# The peer is matched by ADDRESS here, unlike the firewall's end which matches
+   an identity: the firewall has a static Elastic IP, so this end knows exactly
+   who it is calling. The asymmetry is correct - only one end of a
+   dynamic-to-static pair can match on address. #}
+crypto ikev2 keyring AWS-KEYRING
+ peer PA-AWS
+  address {{ fw.ansible_host }}
+  pre-shared-key {{ fw.panos_vpn_psk }}
+ !
+!
+crypto ikev2 profile AWS-PROFILE
+ match identity remote address {{ fw.ansible_host }} 255.255.255.255
+{# The identity this end SENDS. It is what the firewall matches on, because this
+   end's address is dynamic - so this string and the firewall's peer_id_value
+   are the same variable, and a tunnel that authenticates but never establishes
+   is usually these two having drifted apart. #}
+ identity local fqdn {{ fw.panos_vpn_peer_id }}
+ authentication local pre-share
+ authentication remote pre-share
+ keyring local AWS-KEYRING
+{# Dead peer detection, and not optional on a tunnel across a home connection:
+   without it this end keeps an SA the far side has long forgotten, and traffic
+   black-holes until something rekeys. #}
+ dpd 10 3 periodic
+!
+crypto ipsec transform-set AWS-TS esp-aes 256 esp-sha256-hmac
+ mode tunnel
+!
+crypto ipsec profile AWS-IPSEC
+ set transform-set AWS-TS
+ set ikev2-profile AWS-PROFILE
+!
+interface Tunnel1
+ description IPsec to PA-AWS ({{ esp.name }}/{{ ike.name }})
+ ip address {{ fw.panos_vpn_peer_tunnel_ip }} 255.255.255.252
+ tunnel source {{ transit_interface }}
+ tunnel mode ipsec ipv4
+ tunnel destination {{ fw.ansible_host }}
+ tunnel protection ipsec profile AWS-IPSEC
+{# 1379 = 1500 - 20 IP - 20 TCP - ESP/IKE overhead on a NAT-T tunnel. Without a
+   clamp, large packets need fragmentation that home connections frequently drop,
+   and the symptom is the worst kind: ping works, SSH connects, and anything that
+   moves real data hangs. #}
+ ip tcp adjust-mss 1379
+ no shutdown
+!
+{% for net in vpn_remote_networks | default([]) %}
+ip route {{ net.network }} {{ net.netmask }} Tunnel1
+{% endfor %}
+{% if vpn_default_via_tunnel | default(false) %}
+{# Guarded, and the guard is the point - see this file's header. #}
+ip route 0.0.0.0 0.0.0.0 Tunnel1
+{% endif %}

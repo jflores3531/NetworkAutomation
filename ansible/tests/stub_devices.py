@@ -52,6 +52,7 @@ MULTIVENDOR_ROLES = (
     "junos_baseline",
     "junos_safe_push",
     "panos_baseline",
+    "panos_vpn",
     "fortigate_baseline",
     "fortiswitch_baseline",
 )
@@ -67,6 +68,7 @@ MULTIVENDOR_PLAYBOOKS = (
     "junos_baseline.yml",
     "junos_safe_push.yml",
     "panos_baseline.yml",
+    "hybrid_vpn.yml",
     "fortinet_baseline.yml",
 )
 

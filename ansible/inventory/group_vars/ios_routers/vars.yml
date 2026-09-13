@@ -123,3 +123,29 @@ transit_hsrp_vip: 10.0.1.4
 # template skips HSRP authentication entirely rather than sending an empty key
 # if it is unset.
 hsrp_auth_key: "{{ vault_hsrp_auth_key | default('') }}"
+
+# --- the AWS tunnel (hybrid scenario) ----------------------------------------
+# Read by roles/napalm_config_push/templates/site_to_site_vpn.j2, which
+# configures R1 as the lab end of the IPsec tunnel to PA-AWS. Everything about
+# the far end - address, PSK, IKE identity, crypto proposals - is read through
+# hostvars['PA-AWS'] so it cannot drift from what the firewall is configured
+# with. See ../palo_alto_aws/vars.yml and ../../../NAPALM.md.
+
+# Networks reachable THROUGH the tunnel, i.e. on the AWS side. The firewall's
+# untrust subnet, so R1 can reach it once the tunnel is up.
+#
+# Note what this does NOT give you: managing PA-AWS over the tunnel. The
+# firewall's management interface is a separate ENI in a separate subnet, and
+# PAN-OS sends management traffic out of it by default - pointing that at the
+# tunnel needs a service route on the firewall, which is follow-up work rather
+# than something configured here.
+vpn_remote_networks:
+  - network: "{{ (hostvars['PA-AWS'].panos_aws_untrust_cidr | default('')).split('/')[0] }}"
+    netmask: 255.255.255.0
+
+# Moves ALL lab egress through AWS. FALSE by default, and deliberately a
+# separate flag from the rest of the template: pushing a default route into a
+# tunnel that is not up replaces a working route with a black hole. Bring the
+# tunnel up, prove traffic crosses it, then re-run with
+# -e vpn_default_via_tunnel=true.
+vpn_default_via_tunnel: false

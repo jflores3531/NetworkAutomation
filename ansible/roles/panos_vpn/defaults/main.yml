@@ -1,0 +1,35 @@
+---
+# Defaults for the PAN-OS side of the lab-to-AWS tunnel. Real values come from
+# inventory/group_vars/palo_alto_aws/vars.yml and its vault.
+
+panos_api_key: ""
+panos_vsys: vsys1
+panos_virtual_router: default
+
+panos_vpn_tunnel_interface: tunnel.1
+panos_vpn_tunnel_ip: 169.254.1.1/30
+panos_vpn_peer_tunnel_ip: 169.254.1.2
+panos_vpn_zone: vpn-lab
+panos_vpn_ike_gateway: lab-r1
+panos_vpn_peer_id: ""
+panos_vpn_psk: ""
+
+panos_vpn_ike_crypto:
+  name: lab-ike
+  dh_group: [group14]
+  encryption: [aes-256-cbc]
+  authentication: [sha256]
+  lifetime_hours: 8
+panos_vpn_ipsec_crypto:
+  name: lab-ipsec
+  dh_group: group14
+  encryption: [aes-256-cbc]
+  authentication: [sha256]
+  lifetime_hours: 1
+
+# Opt-in, as everywhere else on this platform: PAN-OS holds edits in a candidate
+# configuration, so the default leaves the tunnel staged and reviewable rather
+# than live. Worth more here than usual - this is config that makes a public
+# address start answering IKE.
+panos_commit: false
+panos_commit_timeout: 600

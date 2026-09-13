@@ -96,6 +96,20 @@ PANOS_VARS = {
 }
 
 
+# Stand-in for inventory/group_vars/palo_alto_aws/vault.yml. 203.0.113.0/24 is
+# TEST-NET-3 (RFC 5737), so the "public" address in these scenarios is
+# documentation space rather than anyone's Elastic IP.
+AWS_VAULT = {
+    "vault_panos_aws_public_ip": "203.0.113.10",
+    "vault_panos_aws_untrust_ip": "10.20.1.10/24",
+    "vault_panos_aws_untrust_cidr": "10.20.1.0/24",
+    "vault_panos_aws_untrust_gateway": "10.20.1.1",
+    "vault_panos_aws_api_key": "stub-aws-key",
+    "vault_lab_ipsec_psk": "stub-psk-value",
+    "vault_lab_ike_identity": "r1.lab.local",
+}
+
+
 def scenarios(workdir):
     """(name, playbook, extra_vars, env, limit, expect_rc, must_contain, must_not_contain)."""
     out = str(workdir / "out")
@@ -260,6 +274,69 @@ def scenarios(workdir):
                  "standby 10 authentication md5 key-string",
              ]}),
 
+        # The hybrid scenario. Both ends read one set of crypto variables, so the
+        # assertions check that the router's rendered config carries the values
+        # the firewall is configured with - a tunnel whose ends disagree about a
+        # proposal is the failure this shape exists to prevent.
+        dict(name="site_to_site_vpn renders R1's end from the firewall's own vars",
+             playbook="napalm_push.yml", limit="R1",
+             extra={**common, **AWS_VAULT, "napalm_username": "stub",
+                    "napalm_password": "stub",
+                    "napalm_config_template": "site_to_site_vpn.j2"},
+             file_lines={out + "/reports/diffs/R1_candidate.cfg": [
+                 "address 203.0.113.10",
+                 "pre-shared-key stub-psk-value",
+                 "identity local fqdn r1.lab.local",
+                 "match identity remote address 203.0.113.10 255.255.255.255",
+                 "tunnel mode ipsec ipv4",
+                 "tunnel destination 203.0.113.10",
+                 "tunnel protection ipsec profile AWS-IPSEC",
+                 "ip address 169.254.1.2 255.255.255.252",
+                 "ip tcp adjust-mss 1379",
+                 "ip route 10.20.1.0 255.255.255.0 Tunnel1",
+             ]},
+             # The guard is the point: a default route into a tunnel that is not
+             # up replaces a working route with a black hole, so it must take a
+             # second explicit flag.
+             file_lines_absent={out + "/reports/diffs/R1_candidate.cfg": [
+                 "ip route 0.0.0.0 0.0.0.0 Tunnel1",
+             ]}),
+
+        dict(name="lab egress moves to the tunnel only when explicitly asked",
+             playbook="napalm_push.yml", limit="R1",
+             extra={**common, **AWS_VAULT, "napalm_username": "stub",
+                    "napalm_password": "stub",
+                    "napalm_config_template": "site_to_site_vpn.j2",
+                    "vpn_default_via_tunnel": True},
+             file_lines={out + "/reports/diffs/R1_candidate.cfg": [
+                 "ip route 0.0.0.0 0.0.0.0 Tunnel1",
+             ]}),
+
+        # The claim this scenario exists to check: panos_baseline is the same role
+        # for a firewall in AWS as for one in the lab, and only inventory differs.
+        # The AWS firewall's routes point down the tunnel and its untrust address
+        # comes from the vault, neither of which the local firewall has.
+        # verbose_run because the tunnel next hop and interface are module
+        # ARGUMENTS - they appear in a task result, not in the play's output.
+        dict(name="panos_baseline configures the AWS firewall from its own vars",
+             playbook="panos_baseline.yml", limit="PA-AWS", verbose_run=True,
+             extra={**common, **AWS_VAULT},
+             must_contain=["10.20.1.10/24", "169.254.1.2", "tunnel.1",
+                           "staged but not committed"]),
+
+        dict(name="panos_vpn stages the tunnel without committing it",
+             playbook="hybrid_vpn.yml", extra={**common, **AWS_VAULT},
+             must_contain=["staged but not committed",
+                           "Configure the IKE gateway",
+                           "Configure the IPsec tunnel"],
+             must_not_contain=["ok: [PA-AWS] => (item=commit"]),
+
+        dict(name="panos_vpn refuses to run without a PSK or peer identity",
+             playbook="hybrid_vpn.yml",
+             extra={**common, **{**AWS_VAULT, "vault_lab_ipsec_psk": "CHANGE_ME"}},
+             expect_rc=2,
+             must_contain=["peer ID is not optional"]),
+
         dict(name="cisco_baseline assembles every domain for switches and a router",
              playbook="cisco_baseline.yml", extra=cisco(ansible_connection="local",
                                                         ansible_become=False),
@@ -293,14 +370,18 @@ def scenarios(workdir):
         # still prints its name, so "users-out" and "staged but not committed"
         # both appear either way. Only "skipping: ... (item=" vs "ok: ... (item="
         # distinguishes a gate that held from one that did not.
+        # --limit PA1 because panos_baseline.yml targets the whole palo_alto
+        # group, which now also holds the AWS firewall - these two are about the
+        # LOCAL firewall's gates, and the fixture only carries its vault.
         dict(name="panos_baseline stages without committing and keeps policy shut",
-             playbook="panos_baseline.yml", extra={**PANOS_VARS, **common},
+             playbook="panos_baseline.yml", limit="PA1",
+             extra={**PANOS_VARS, **common},
              must_contain=["PA-440", "PAN-OS 11.1.2", "NOT in force",
                            "skipping: [PA1] => (item=users-out"],
              must_not_contain=["ok: [PA1] => (item=users-out"]),
 
         dict(name="panos_baseline pushes policy and commits when both gates are set",
-             playbook="panos_baseline.yml",
+             playbook="panos_baseline.yml", limit="PA1",
              extra={**PANOS_VARS, **common, "push_security_rules": True,
                     "panos_commit": True},
              must_contain=["ok: [PA1] => (item=users-out"],
